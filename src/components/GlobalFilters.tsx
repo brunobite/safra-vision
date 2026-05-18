@@ -12,7 +12,7 @@ const STATUSES = ["Aberto", "Concluído", "Atrasado", "Cancelado", "Aguardando c
 const ALL = "__all__";
 
 export function GlobalFilters() {
-  const { filters, setFilters } = useAppStore();
+  const { filters, setFilters, vendedores } = useAppStore();
   const upd = (k: keyof typeof filters, v: string) =>
     setFilters(prev => ({ ...prev, [k]: v === ALL ? "" : v }));
 
@@ -22,7 +22,7 @@ export function GlobalFilters() {
         <div className="flex items-center gap-2 text-sm font-medium text-foreground">
           <Filter className="h-4 w-4 text-primary" /> Filtros
         </div>
-        <Button variant="ghost" size="sm" onClick={() => setFilters({ dataInicial: "", dataFinal: "", mes: "", abc: "", prioridade: "", rota: "", status: "", frente: "" })}>
+        <Button variant="ghost" size="sm" onClick={() => setFilters({ dataInicial: "", dataFinal: "", mes: "", abc: "", prioridade: "", rota: "", status: "", frente: "", vendedor: "" })}>
           <X className="mr-1 h-3 w-3" /> Limpar
         </Button>
       </div>
@@ -58,6 +58,12 @@ export function GlobalFilters() {
           <Select value={filters.frente || ALL} onValueChange={v => upd("frente", v)}>
             <SelectTrigger><SelectValue placeholder="Todas" /></SelectTrigger>
             <SelectContent><SelectItem value={ALL}>Todas</SelectItem>{FRENTES.map(v => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent>
+          </Select>
+        </div>
+        <div><Label className="text-xs">Vendedor</Label>
+          <Select value={filters.vendedor || ALL} onValueChange={v => upd("vendedor", v)}>
+            <SelectTrigger><SelectValue placeholder="Todos" /></SelectTrigger>
+            <SelectContent><SelectItem value={ALL}>Todos</SelectItem>{vendedores.map(v => <SelectItem key={v.id} value={v.nome}>{v.nome}</SelectItem>)}</SelectContent>
           </Select>
         </div>
       </div>
