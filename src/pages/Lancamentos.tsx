@@ -68,7 +68,7 @@ export default function Lancamentos() {
         nome: form.oppNome || `Oportunidade ${clienteById(form.clienteId)?.nome}`,
         clienteId: form.clienteId,
         vendedor: form.vendedor || "Bruno",
-        origem: (form.tipo === "Visita" ? "Visita" : form.tipo === "Ligação" ? "Ligação" : form.tipo === "WhatsApp" ? "WhatsApp" : form.tipo === "Evento" ? "Evento" : "Outro") as const,
+        origem: (form.tipo === "Visita" ? "Visita" : form.tipo === "Ligação" ? "Ligação" : form.tipo === "WhatsApp" ? "WhatsApp" : form.tipo === "Evento" ? "Evento" : "Outro") as OrigemNegocio,
         produtos: [],
         categoria: form.oppCategoria || "Adjuvantes",
         valorPotencial: form.oppValor || 0,
