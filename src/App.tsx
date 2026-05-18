@@ -15,6 +15,9 @@ import PrioridadesP1 from "./pages/PrioridadesP1";
 import Eventos from "./pages/Eventos";
 import Configuracoes from "./pages/Configuracoes";
 import NotFound from "./pages/NotFound.tsx";
+import FunilVendas from "./pages/FunilVendas";
+import Produtos from "./pages/Produtos";
+import PrecosEstoque from "./pages/PrecosEstoque";
 
 const queryClient = new QueryClient();
 
@@ -29,6 +32,9 @@ const App = () => (
             <Route element={<AppLayout />}>
               <Route path="/" element={<Dashboard />} />
               <Route path="/lancamentos" element={<Lancamentos />} />
+              <Route path="/funil" element={<FunilVendas />} />
+              <Route path="/produtos" element={<Produtos />} />
+              <Route path="/precos-estoque" element={<PrecosEstoque />} />
               <Route path="/metas" element={<Metas />} />
               <Route path="/relatorios" element={<Relatorios />} />
               <Route path="/clientes" element={<Clientes />} />
