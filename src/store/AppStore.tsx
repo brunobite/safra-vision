@@ -1,55 +1,44 @@
 import { createContext, useContext, useMemo, useState, ReactNode } from "react";
-import { Cliente, Lancamento, MetaEmpresa, MetaPessoal, Evento, PrioridadeP1Item } from "@/types";
 import {
-  initialClientes,
-  initialLancamentos,
-  initialMetasEmpresa,
-  initialMetasPessoais,
-  initialEventos,
-  initialPrioridadesP1,
+  Cliente, Lancamento, MetaEmpresa, MetaPessoal, Evento, PrioridadeP1Item,
+  Negocio, Produto, RegraComissao, Vendedor, MetaVendedor, MetaCategoria,
+} from "@/types";
+import {
+  initialClientes, initialLancamentos, initialMetasEmpresa, initialMetasPessoais,
+  initialEventos, initialPrioridadesP1, initialNegocios, initialProdutos,
+  initialRegrasComissao, initialVendedores, initialMetasVendedor, initialMetasCategoria,
 } from "@/data/mockData";
 
 interface Filters {
-  dataInicial: string;
-  dataFinal: string;
-  mes: string;
-  abc: string;
-  prioridade: string;
-  rota: string;
-  status: string;
-  frente: string;
+  dataInicial: string; dataFinal: string; mes: string;
+  abc: string; prioridade: string; rota: string;
+  status: string; frente: string; vendedor: string;
 }
 
 interface AppStoreCtx {
-  clientes: Cliente[];
-  setClientes: React.Dispatch<React.SetStateAction<Cliente[]>>;
-  lancamentos: Lancamento[];
-  setLancamentos: React.Dispatch<React.SetStateAction<Lancamento[]>>;
-  metasEmpresa: MetaEmpresa[];
-  setMetasEmpresa: React.Dispatch<React.SetStateAction<MetaEmpresa[]>>;
-  metasPessoais: MetaPessoal[];
-  setMetasPessoais: React.Dispatch<React.SetStateAction<MetaPessoal[]>>;
-  eventos: Evento[];
-  setEventos: React.Dispatch<React.SetStateAction<Evento[]>>;
-  prioridadesP1: PrioridadeP1Item[];
-  setPrioridadesP1: React.Dispatch<React.SetStateAction<PrioridadeP1Item[]>>;
-  filters: Filters;
-  setFilters: React.Dispatch<React.SetStateAction<Filters>>;
-  filtered: { lancamentos: Lancamento[] };
+  clientes: Cliente[]; setClientes: React.Dispatch<React.SetStateAction<Cliente[]>>;
+  lancamentos: Lancamento[]; setLancamentos: React.Dispatch<React.SetStateAction<Lancamento[]>>;
+  metasEmpresa: MetaEmpresa[]; setMetasEmpresa: React.Dispatch<React.SetStateAction<MetaEmpresa[]>>;
+  metasPessoais: MetaPessoal[]; setMetasPessoais: React.Dispatch<React.SetStateAction<MetaPessoal[]>>;
+  metasVendedor: MetaVendedor[]; setMetasVendedor: React.Dispatch<React.SetStateAction<MetaVendedor[]>>;
+  metasCategoria: MetaCategoria[]; setMetasCategoria: React.Dispatch<React.SetStateAction<MetaCategoria[]>>;
+  eventos: Evento[]; setEventos: React.Dispatch<React.SetStateAction<Evento[]>>;
+  prioridadesP1: PrioridadeP1Item[]; setPrioridadesP1: React.Dispatch<React.SetStateAction<PrioridadeP1Item[]>>;
+  negocios: Negocio[]; setNegocios: React.Dispatch<React.SetStateAction<Negocio[]>>;
+  produtos: Produto[]; setProdutos: React.Dispatch<React.SetStateAction<Produto[]>>;
+  regras: RegraComissao[]; setRegras: React.Dispatch<React.SetStateAction<RegraComissao[]>>;
+  vendedores: Vendedor[]; setVendedores: React.Dispatch<React.SetStateAction<Vendedor[]>>;
+  filters: Filters; setFilters: React.Dispatch<React.SetStateAction<Filters>>;
+  filtered: { lancamentos: Lancamento[]; negocios: Negocio[] };
   clienteById: (id: string) => Cliente | undefined;
+  produtoById: (id: string) => Produto | undefined;
 }
 
 const Ctx = createContext<AppStoreCtx | null>(null);
 
 const defaultFilters: Filters = {
-  dataInicial: "",
-  dataFinal: "",
-  mes: "",
-  abc: "",
-  prioridade: "",
-  rota: "",
-  status: "",
-  frente: "",
+  dataInicial: "", dataFinal: "", mes: "",
+  abc: "", prioridade: "", rota: "", status: "", frente: "", vendedor: "",
 };
 
 export function AppStoreProvider({ children }: { children: ReactNode }) {
@@ -57,11 +46,18 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const [lancamentos, setLancamentos] = useState<Lancamento[]>(initialLancamentos);
   const [metasEmpresa, setMetasEmpresa] = useState<MetaEmpresa[]>(initialMetasEmpresa);
   const [metasPessoais, setMetasPessoais] = useState<MetaPessoal[]>(initialMetasPessoais);
+  const [metasVendedor, setMetasVendedor] = useState<MetaVendedor[]>(initialMetasVendedor);
+  const [metasCategoria, setMetasCategoria] = useState<MetaCategoria[]>(initialMetasCategoria);
   const [eventos, setEventos] = useState<Evento[]>(initialEventos);
   const [prioridadesP1, setPrioridadesP1] = useState<PrioridadeP1Item[]>(initialPrioridadesP1);
+  const [negocios, setNegocios] = useState<Negocio[]>(initialNegocios);
+  const [produtos, setProdutos] = useState<Produto[]>(initialProdutos);
+  const [regras, setRegras] = useState<RegraComissao[]>(initialRegrasComissao);
+  const [vendedores, setVendedores] = useState<Vendedor[]>(initialVendedores);
   const [filters, setFilters] = useState<Filters>(defaultFilters);
 
   const cMap = useMemo(() => new Map(clientes.map(c => [c.id, c])), [clientes]);
+  const pMap = useMemo(() => new Map(produtos.map(p => [p.id, p])), [produtos]);
 
   const filteredLancs = useMemo(() => {
     return lancamentos.filter(l => {
@@ -74,21 +70,38 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       if (filters.rota && c?.rota !== filters.rota) return false;
       if (filters.status && l.status !== filters.status) return false;
       if (filters.frente && l.frente !== filters.frente) return false;
+      if (filters.vendedor && l.vendedor !== filters.vendedor) return false;
       return true;
     });
   }, [lancamentos, filters, cMap]);
 
+  const filteredNegs = useMemo(() => {
+    return negocios.filter(n => {
+      const c = cMap.get(n.clienteId);
+      const dt = n.ultimaAtualizacao || n.dataCriacao;
+      if (filters.dataInicial && dt < filters.dataInicial) return false;
+      if (filters.dataFinal && dt > filters.dataFinal) return false;
+      if (filters.mes && dt.slice(0,7) !== filters.mes) return false;
+      if (filters.abc && c?.abc !== filters.abc) return false;
+      if (filters.prioridade && c?.prioridade !== filters.prioridade) return false;
+      if (filters.rota && c?.rota !== filters.rota) return false;
+      if (filters.vendedor && n.vendedor !== filters.vendedor) return false;
+      return true;
+    });
+  }, [negocios, filters, cMap]);
+
   return (
     <Ctx.Provider value={{
-      clientes, setClientes,
-      lancamentos, setLancamentos,
-      metasEmpresa, setMetasEmpresa,
-      metasPessoais, setMetasPessoais,
-      eventos, setEventos,
-      prioridadesP1, setPrioridadesP1,
+      clientes, setClientes, lancamentos, setLancamentos,
+      metasEmpresa, setMetasEmpresa, metasPessoais, setMetasPessoais,
+      metasVendedor, setMetasVendedor, metasCategoria, setMetasCategoria,
+      eventos, setEventos, prioridadesP1, setPrioridadesP1,
+      negocios, setNegocios, produtos, setProdutos,
+      regras, setRegras, vendedores, setVendedores,
       filters, setFilters,
-      filtered: { lancamentos: filteredLancs },
+      filtered: { lancamentos: filteredLancs, negocios: filteredNegs },
       clienteById: (id) => cMap.get(id),
+      produtoById: (id) => pMap.get(id),
     }}>{children}</Ctx.Provider>
   );
 }

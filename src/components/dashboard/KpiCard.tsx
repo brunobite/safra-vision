@@ -6,7 +6,7 @@ interface Props {
   label: string;
   value: string;
   hint?: string;
-  icon: LucideIcon;
+  icon?: LucideIcon;
   tone?: "primary" | "success" | "warning" | "destructive" | "muted";
 }
 
@@ -27,9 +27,11 @@ export function KpiCard({ label, value, hint, icon: Icon, tone = "primary" }: Pr
           <p className="mt-1 truncate text-xl font-semibold text-foreground">{value}</p>
           {hint && <p className="mt-0.5 text-xs text-muted-foreground">{hint}</p>}
         </div>
-        <div className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-lg", toneMap[tone])}>
-          <Icon className="h-4 w-4" />
-        </div>
+        {Icon && (
+          <div className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-lg", toneMap[tone])}>
+            <Icon className="h-4 w-4" />
+          </div>
+        )}
       </div>
     </Card>
   );
