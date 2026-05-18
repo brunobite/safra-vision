@@ -18,13 +18,13 @@ import { toast } from "sonner";
 const ALL = "__all__";
 const empty: Omit<Cliente, "id"> = {
   nome: "", abc: "A", prioridade: "P2", rota: "Rota Norte", cidade: "", localidade: "", culturas: "",
-  areaHa: 0, potencialTotal: 0, statusAtual: "Ativo", frequencia: "Mensal", retorno: "Médio",
+  areaHa: 0, potencialTotal: 0, statusAtual: "Ativo", frequencia: "Mensal", retorno: "Médio", vendedor: "Bruno",
 };
 
 export default function Clientes() {
-  const { clientes, setClientes } = useAppStore();
+  const { clientes, setClientes, vendedores, lancamentos, negocios } = useAppStore();
   const [busca, setBusca] = useState("");
-  const [fAbc, setFAbc] = useState(""); const [fPri, setFPri] = useState(""); const [fRota, setFRota] = useState(""); const [fStatus, setFStatus] = useState("");
+  const [fAbc, setFAbc] = useState(""); const [fPri, setFPri] = useState(""); const [fRota, setFRota] = useState(""); const [fStatus, setFStatus] = useState(""); const [fVend, setFVend] = useState(""); const [fCidade, setFCidade] = useState("");
   const [open, setOpen] = useState(false);
   const [edit, setEdit] = useState<Cliente | null>(null);
   const [form, setForm] = useState<Omit<Cliente, "id">>(empty);
@@ -36,8 +36,9 @@ export default function Clientes() {
   const lista = useMemo(() => clientes.filter(c =>
     (!busca || c.nome.toLowerCase().includes(busca.toLowerCase())) &&
     (!fAbc || c.abc === fAbc) && (!fPri || c.prioridade === fPri) &&
-    (!fRota || c.rota === fRota) && (!fStatus || c.statusAtual === fStatus)
-  ), [clientes, busca, fAbc, fPri, fRota, fStatus]);
+    (!fRota || c.rota === fRota) && (!fStatus || c.statusAtual === fStatus) &&
+    (!fVend || c.vendedor === fVend) && (!fCidade || c.cidade === fCidade)
+  ), [clientes, busca, fAbc, fPri, fRota, fStatus, fVend, fCidade]);
 
   const totais = useMemo(() => ({
     potencial: lista.reduce((s, c) => s + c.potencialTotal, 0),
