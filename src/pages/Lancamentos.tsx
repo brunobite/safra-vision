@@ -9,7 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useAppStore } from "@/store/AppStore";
-import { Lancamento, TipoLancamento, FrenteComercial, StatusLancamento, StatusFunil, CategoriaProduto, CATEGORIAS_PRODUTO, STATUS_FUNIL } from "@/types";
+import { Lancamento, TipoLancamento, FrenteComercial, StatusLancamento, StatusFunil, CategoriaProduto, CATEGORIAS_PRODUTO, STATUS_FUNIL, OrigemNegocio } from "@/types";
 import { GlobalFilters } from "@/components/GlobalFilters";
 import { toast } from "sonner";
 import { Pencil, Trash2, Save, Eraser, Search, Link2, ArrowRight } from "lucide-react";
