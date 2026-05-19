@@ -131,7 +131,7 @@ export default function FunilVendas() {
                           <SelectTrigger className="h-7 px-2 text-[10px] w-auto"><ArrowRight className="h-3 w-3" /></SelectTrigger>
                           <SelectContent>{STATUS_FUNIL.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
                         </Select>
-                        <Button size="sm" variant="ghost" className="h-7 px-2 text-[10px]" onClick={() => { setNegocios(prev => prev.filter(x => x.id !== n.id)); toast.success("Excluído."); }}><Trash2 className="h-3 w-3 text-destructive" /></Button>
+                        <Button size="sm" variant="ghost" className="h-7 px-2 text-[10px]" onClick={() => { if (!window.confirm("Esta ação não pode ser desfeita nesta versão. Deseja continuar?")) return; setNegocios(prev => prev.filter(x => x.id !== n.id)); toast.success("Excluído."); }}><Trash2 className="h-3 w-3 text-destructive" /></Button>
                       </div>
                     </Card>
                   );

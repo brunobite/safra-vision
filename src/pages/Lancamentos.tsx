@@ -116,7 +116,11 @@ export default function Lancamentos() {
     setEditId(l.id);
   };
 
-  const excluir = (id: string) => { setLancamentos(prev => prev.filter(l => l.id !== id)); toast.success("Lançamento excluído."); };
+  const excluir = (id: string) => {
+    if (!window.confirm("Esta ação não pode ser desfeita nesta versão. Deseja continuar?")) return;
+    setLancamentos(prev => prev.filter(l => l.id !== id));
+    toast.success("Lançamento excluído.");
+  };
   const evoluir = (l: Lancamento) => { editar(l); setForm(f => ({ ...f, geraOportunidade: true })); };
 
   const lista = useMemo(() => {

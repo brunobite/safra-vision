@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { GlobalFilters } from "@/components/GlobalFilters";
 import { KpiCard } from "@/components/dashboard/KpiCard";
 import { useAppStore } from "@/store/AppStore";
-import { calcDashboard, fmtBRL, fmtNum, fmtPct, STATUS_FUNIL_ABERTO } from "@/utils/calculations";
+import { calcDashboard, fmtBRL, fmtNum, fmtPct } from "@/utils/calculations";
 import {
   Target, TrendingUp, AlertTriangle, FileText, CalendarDays, Layers, Clock, Percent, Banknote, Award,
 } from "lucide-react";

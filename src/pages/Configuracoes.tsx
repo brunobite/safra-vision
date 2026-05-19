@@ -79,7 +79,7 @@ export default function Configuracoes() {
                     <TableCell>{r.ativo ? <Badge className="bg-success/15 text-success">Sim</Badge> : <Badge variant="outline">Não</Badge>}</TableCell>
                     <TableCell className="text-right">
                       <Button size="icon" variant="ghost" onClick={() => openEdit(r)}><Pencil className="h-3.5 w-3.5" /></Button>
-                      <Button size="icon" variant="ghost" onClick={() => { setRegras(prev => prev.filter(x => x.id !== r.id)); toast.success("Excluída."); }}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button>
+                      <Button size="icon" variant="ghost" onClick={() => { if (!window.confirm("Esta ação não pode ser desfeita nesta versão. Deseja continuar?")) return; setRegras(prev => prev.filter(x => x.id !== r.id)); toast.success("Excluída."); }}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -98,7 +98,7 @@ export default function Configuracoes() {
               {vendedores.map(v => (
                 <Badge key={v.id} variant="outline" className="px-3 py-1">
                   {v.nome}
-                  <button className="ml-2 text-destructive" onClick={() => { setVendedores(prev => prev.filter(x => x.id !== v.id)); }}>×</button>
+                  <button className="ml-2 text-destructive" onClick={() => { if (!window.confirm("Esta ação não pode ser desfeita nesta versão. Deseja continuar?")) return; setVendedores(prev => prev.filter(x => x.id !== v.id)); }}>×</button>
                 </Badge>
               ))}
             </div>

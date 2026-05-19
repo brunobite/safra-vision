@@ -101,7 +101,7 @@ export default function Produtos() {
                   <TableCell>{p.ativo ? <Badge className="bg-success/15 text-success">Ativo</Badge> : <Badge variant="outline">Inativo</Badge>}</TableCell>
                   <TableCell className="text-right">
                     <Button size="icon" variant="ghost" onClick={() => openEdit(p)}><Pencil className="h-3.5 w-3.5" /></Button>
-                    <Button size="icon" variant="ghost" onClick={() => { setProdutos(prev => prev.filter(x => x.id !== p.id)); toast.success("Excluído."); }}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button>
+                    <Button size="icon" variant="ghost" onClick={() => { if (!window.confirm("Esta ação não pode ser desfeita nesta versão. Deseja continuar?")) return; setProdutos(prev => prev.filter(x => x.id !== p.id)); toast.success("Excluído."); }}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button>
                   </TableCell>
                 </TableRow>
               );
