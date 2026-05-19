@@ -17,6 +17,7 @@ import { getLocalDbStats, LocalDbStats, replaceLocalDatabase, resetLocalDatabase
 import { exportAllEntitiesToCsv } from "@/lib/csvService";
 import { exportWorkbook } from "@/lib/excelService";
 import { downloadBackupJson, parseBackupPayload } from "@/lib/backupService";
+import { applyImport, buildImportPreview, ImportEntity, ImportMode, ImportPreview, parseCsv } from "@/lib/importService";
 
 const APLICAR: { v: AplicarSobre; label: string }[] = [
   { v: "realizado_empresa", label: "Realizado empresa" }, { v: "realizado_pessoal", label: "Realizado pessoal" },
@@ -37,6 +38,11 @@ export default function Configuracoes() {
   const [novoVend, setNovoVend] = useState("");
   const [stats, setStats] = useState<LocalDbStats | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const importFileRef = useRef<HTMLInputElement | null>(null);
+  const [importEntity, setImportEntity] = useState<ImportEntity>("clientes");
+  const [importMode, setImportMode] = useState<ImportMode>("add");
+  const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   const loadStats = async () => {
     try { setStats(await getLocalDbStats()); } catch (error) { console.error(error); }
@@ -80,6 +86,49 @@ export default function Configuracoes() {
     }
   };
 
+
+
+  const handleImportFile = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const rows = parseCsv(text);
+      if (rows.length < 2) throw new Error();
+      const preview = buildImportPreview(file.name, importEntity, rows);
+      setImportPreview(preview);
+      setPreviewOpen(true);
+    } catch {
+      toast.error("Arquivo inválido ou sem dados para importação.");
+    } finally {
+      event.target.value = "";
+    }
+  };
+
+  const confirmImport = () => {
+    if (!importPreview) return;
+    if (importMode === "replace" && !window.confirm("Esta ação substituirá todos os dados atuais desta entidade pelos dados importados. Essa ação não pode ser desfeita nesta versão. Deseja continuar?")) return;
+
+    const apply = (entity: ImportEntity, current: never[], setter: (v: never[])=>void) => {
+      const result = applyImport(entity, importMode, current as { id: string }[], importPreview);
+      setter(result.data as never[]);
+      toast.success(`Importação concluída: ${result.imported} importados, ${result.updated} atualizados, ${result.ignored} ignorados.`);
+    };
+
+    if (importEntity === "clientes") apply("clientes", clientes as never[], setClientes);
+    if (importEntity === "vendedores") apply("vendedores", vendedores as never[], setVendedores);
+    if (importEntity === "lancamentos") apply("lancamentos", lancamentos as never[], setLancamentos);
+    if (importEntity === "negocios") apply("negocios", negocios as never[], setNegocios);
+    if (importEntity === "produtos") apply("produtos", produtos as never[], setProdutos);
+    if (importEntity === "metasEmpresa") apply("metasEmpresa", metasEmpresa as never[], setMetasEmpresa);
+    if (importEntity === "metasPessoais") apply("metasPessoais", metasPessoais as never[], setMetasPessoais);
+    if (importEntity === "regrasComissao") apply("regrasComissao", regras as never[], setRegras);
+    if (importEntity === "eventos") apply("eventos", eventos as never[], setEventos);
+    if (importEntity === "prioridadesP1") apply("prioridadesP1", prioridadesP1 as never[], setPrioridadesP1);
+    setPreviewOpen(false);
+    setImportPreview(null);
+    void loadStats();
+  };
   const openNew = () => { setEdit(null); setForm(emptyRegra); setOpen(true); };
   const openEdit = (r: RegraComissao) => { setEdit(r); const { id, ...rest } = r; void id; setForm(rest); setOpen(true); };
   const save = () => {
@@ -125,6 +174,25 @@ export default function Configuracoes() {
           <Card className="space-y-2 border-dashed p-3">
             <div className="font-semibold">Exportação e backup</div>
             <p className="text-xs text-muted-foreground">Use estas opções para salvar seus dados fora do navegador, enviar por e-mail, WhatsApp ou guardar em local seguro.</p>
+
+          <Card className="space-y-3 border-dashed p-3">
+            <div className="font-semibold">Importação de dados</div>
+            <p className="text-xs text-muted-foreground">Recomendamos gerar um backup JSON antes de importar dados.</p>
+            <div className="grid gap-2 md:grid-cols-3">
+              <Select value={importEntity} onValueChange={(v: ImportEntity) => setImportEntity(v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>
+                <SelectItem value="clientes">clientes</SelectItem><SelectItem value="vendedores">vendedores</SelectItem><SelectItem value="lancamentos">lancamentos</SelectItem><SelectItem value="negocios">negocios</SelectItem><SelectItem value="produtos">produtos</SelectItem><SelectItem value="metasEmpresa">metasEmpresa</SelectItem><SelectItem value="metasPessoais">metasPessoais</SelectItem><SelectItem value="regrasComissao">regrasComissao</SelectItem><SelectItem value="eventos">eventos</SelectItem><SelectItem value="prioridadesP1">prioridadesP1</SelectItem>
+              </SelectContent></Select>
+              <Select value={importMode} onValueChange={(v: ImportMode) => setImportMode(v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>
+                <SelectItem value="add">Adicionar novos registros</SelectItem><SelectItem value="update">Atualizar registros existentes</SelectItem><SelectItem value="replace">Substituir base da entidade selecionada</SelectItem>
+              </SelectContent></Select>
+              <Button variant="outline" onClick={() => downloadBackupJson(exportPayload)}>Gerar backup antes de importar</Button>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <Button onClick={() => importFileRef.current?.click()}>Importar CSV</Button>
+              <Button variant="secondary" onClick={() => importFileRef.current?.click()}>Importar Excel/XML</Button>
+            </div>
+            <input ref={importFileRef} type="file" accept=".csv,text/csv,.xml,.xls,.xlsx" className="hidden" onChange={handleImportFile} />
+          </Card>
             <div className="grid gap-2 sm:grid-cols-2">
               <Button onClick={() => exportWorkbook(exportPayload)}>Exportar Excel</Button>
               <Button variant="outline" onClick={() => exportAllEntitiesToCsv(exportPayload)}>Exportar CSV</Button>
@@ -138,5 +206,12 @@ export default function Configuracoes() {
     </Tabs>
 
     <Dialog open={open} onOpenChange={setOpen}><DialogContent className="max-w-2xl"><DialogHeader><DialogTitle>{edit ? "Editar regra" : "Nova regra de comissão"}</DialogTitle></DialogHeader><div className="grid gap-3 md:grid-cols-2"><div className="md:col-span-2"><Label>Nome da regra</Label><Input value={form.nome} onChange={e => setForm({ ...form, nome: e.target.value })} /></div><div><Label>Tipo</Label><Select value={form.tipo} onValueChange={(v: "fixa" | "escalonada") => setForm({ ...form, tipo: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="fixa">Fixa</SelectItem><SelectItem value="escalonada">Escalonada</SelectItem></SelectContent></Select></div><div><Label>Aplicar sobre</Label><Select value={form.aplicarSobre} onValueChange={(v: AplicarSobre) => setForm({ ...form, aplicarSobre: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{APLICAR.map(a => <SelectItem key={a.v} value={a.v}>{a.label}</SelectItem>)}</SelectContent></Select></div>{form.tipo === "fixa" && (<div><Label>Percentual (%)</Label><Input type="number" step="0.1" value={form.percentual || 0} onChange={e => setForm({ ...form, percentual: +e.target.value })} /></div>)}<div className="flex items-end gap-2"><Switch checked={form.ativo} onCheckedChange={v => setForm({ ...form, ativo: v })} /><Label>Ativo</Label></div></div>{form.tipo === "escalonada" && <div className="mt-3 rounded-md border border-border p-3"><div className="mb-2 flex items-center justify-between"><Label className="text-sm font-semibold">Faixas escalonadas</Label><Button size="sm" variant="outline" onClick={addFaixa}><Plus className="mr-1 h-3 w-3" /> Faixa</Button></div><div className="space-y-2">{(form.faixas || []).map((f, i) => <div key={i} className="grid grid-cols-4 gap-2"><Input type="number" placeholder="Mín %" value={f.min} onChange={e => updFaixa(i, "min", +e.target.value)} /><Input type="number" placeholder="Máx %" value={f.max} onChange={e => updFaixa(i, "max", +e.target.value)} /><Input type="number" step="0.1" placeholder="% comissão" value={f.percentual} onChange={e => updFaixa(i, "percentual", +e.target.value)} /><Button size="icon" variant="ghost" onClick={() => rmFaixa(i)}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button></div>)}</div></div>}<DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button><Button onClick={save}>Salvar</Button></DialogFooter></DialogContent></Dialog>
-  </div>;
+  
+    <Dialog open={previewOpen} onOpenChange={setPreviewOpen}><DialogContent className="max-w-4xl"><DialogHeader><DialogTitle>Prévia da importação</DialogTitle></DialogHeader>{importPreview && <div className="space-y-2 text-sm">
+      <div><b>Arquivo:</b> {importPreview.fileName}</div><div><b>Entidade:</b> {importPreview.entity}</div><div><b>Modo:</b> {importMode}</div>
+      <div><b>Linhas lidas:</b> {importPreview.totalRows} | <b>Válidas:</b> {importPreview.validRows} | <b>Com erro:</b> {importPreview.errorRows}</div>
+      <div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Linha</TableHead><TableHead>Dados normalizados</TableHead><TableHead>Erros</TableHead></TableRow></TableHeader><TableBody>{importPreview.sample.map(r => <TableRow key={r.row}><TableCell>{r.row}</TableCell><TableCell className="max-w-md whitespace-pre-wrap text-xs">{JSON.stringify(r.normalized)}</TableCell><TableCell className="text-xs text-destructive">{r.errors.join("; ") || "—"}</TableCell></TableRow>)}</TableBody></Table></div>
+      <div className="text-xs text-muted-foreground">Colunas não reconhecidas: {importPreview.unmappedColumns.join(", ") || "nenhuma"}</div>
+    </div>}<DialogFooter><Button variant="outline" onClick={() => setPreviewOpen(false)}>Cancelar</Button><Button onClick={confirmImport}>Confirmar importação</Button></DialogFooter></DialogContent></Dialog>
+</div>;
 }
