@@ -28,7 +28,7 @@ const emptyRegra: Omit<RegraComissao, "id"> = { nome: "", tipo: "fixa", percentu
 
 export default function Configuracoes() {
   const {
-    regras, setRegras, vendedores, setVendedores, dbError,
+    regras, setRegras, vendedores, setVendedores, dbError, isSaving, lastSavedAt, saveError,
     clientes, lancamentos, negocios, produtos, metasEmpresa, metasPessoais, eventos, metasVendedor, metasCategoria, prioridadesP1,
     setClientes, setLancamentos, setNegocios, setProdutos, setMetasEmpresa, setMetasPessoais, setEventos, setMetasVendedor, setMetasCategoria, setPrioridadesP1,
   } = useAppStore();
@@ -164,6 +164,15 @@ export default function Configuracoes() {
           <div><b>Tipo:</b> {stats?.tipo || "IndexedDB"}</div>
           <div><b>Data da primeira criação:</b> {stats?.createdAt ? new Date(stats.createdAt).toLocaleString("pt-BR") : "-"}</div>
           <div><b>Última atualização:</b> {stats?.updatedAt ? new Date(stats.updatedAt).toLocaleString("pt-BR") : "-"}</div>
+          <div>
+            <b>Persistência:</b>{" "}
+            {saveError
+              ? "Erro ao salvar dados locais"
+              : isSaving
+                ? "Salvando..."
+                : "Dados salvos localmente"}
+          </div>
+          {lastSavedAt && <div><b>Último salvamento em memória:</b> {new Date(lastSavedAt).toLocaleString("pt-BR")}</div>}
           <div className="grid gap-1">{stats && Object.entries(stats.counts).map(([k, v]) => <div key={k}>{k}: {v}</div>)}</div>
           <Button variant="destructive" onClick={async () => {
             if (!window.confirm("Esta ação apagará os dados locais deste navegador. Essa ação não pode ser desfeita nesta versão. Deseja continuar?")) return;
