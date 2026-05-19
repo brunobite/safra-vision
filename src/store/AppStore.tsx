@@ -1,13 +1,8 @@
-import { createContext, useContext, useEffect, useMemo, useState, ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, ReactNode } from "react";
 import {
   Cliente, Lancamento, MetaEmpresa, MetaPessoal, Evento, PrioridadeP1Item,
   Negocio, Produto, RegraComissao, Vendedor, MetaVendedor, MetaCategoria,
 } from "@/types";
-import {
-  initialClientes, initialLancamentos, initialMetasEmpresa, initialMetasPessoais,
-  initialEventos, initialPrioridadesP1, initialNegocios, initialProdutos,
-  initialRegrasComissao, initialVendedores, initialMetasVendedor, initialMetasCategoria,
-} from "@/data/mockData";
 import { bootstrapLocalDatabase, saveStore } from "@/lib/localRepository";
 
 interface Filters {
@@ -30,6 +25,9 @@ interface AppStoreCtx {
   regras: RegraComissao[]; setRegras: React.Dispatch<React.SetStateAction<RegraComissao[]>>;
   vendedores: Vendedor[]; setVendedores: React.Dispatch<React.SetStateAction<Vendedor[]>>;
   isLoading: boolean;
+  isSaving: boolean;
+  lastSavedAt: string | null;
+  saveError: string | null;
   isReady: boolean;
   dbError: string | null;
   filters: Filters; setFilters: React.Dispatch<React.SetStateAction<Filters>>;
@@ -46,22 +44,26 @@ const defaultFilters: Filters = {
 };
 
 export function AppStoreProvider({ children }: { children: ReactNode }) {
-  const [clientes, setClientes] = useState<Cliente[]>(initialClientes);
-  const [lancamentos, setLancamentos] = useState<Lancamento[]>(initialLancamentos);
-  const [metasEmpresa, setMetasEmpresa] = useState<MetaEmpresa[]>(initialMetasEmpresa);
-  const [metasPessoais, setMetasPessoais] = useState<MetaPessoal[]>(initialMetasPessoais);
-  const [metasVendedor, setMetasVendedor] = useState<MetaVendedor[]>(initialMetasVendedor);
-  const [metasCategoria, setMetasCategoria] = useState<MetaCategoria[]>(initialMetasCategoria);
-  const [eventos, setEventos] = useState<Evento[]>(initialEventos);
-  const [prioridadesP1, setPrioridadesP1] = useState<PrioridadeP1Item[]>(initialPrioridadesP1);
-  const [negocios, setNegocios] = useState<Negocio[]>(initialNegocios);
-  const [produtos, setProdutos] = useState<Produto[]>(initialProdutos);
-  const [regras, setRegras] = useState<RegraComissao[]>(initialRegrasComissao);
-  const [vendedores, setVendedores] = useState<Vendedor[]>(initialVendedores);
+  const [clientes, setClientes] = useState<Cliente[]>([]);
+  const [lancamentos, setLancamentos] = useState<Lancamento[]>([]);
+  const [metasEmpresa, setMetasEmpresa] = useState<MetaEmpresa[]>([]);
+  const [metasPessoais, setMetasPessoais] = useState<MetaPessoal[]>([]);
+  const [metasVendedor, setMetasVendedor] = useState<MetaVendedor[]>([]);
+  const [metasCategoria, setMetasCategoria] = useState<MetaCategoria[]>([]);
+  const [eventos, setEventos] = useState<Evento[]>([]);
+  const [prioridadesP1, setPrioridadesP1] = useState<PrioridadeP1Item[]>([]);
+  const [negocios, setNegocios] = useState<Negocio[]>([]);
+  const [produtos, setProdutos] = useState<Produto[]>([]);
+  const [regras, setRegras] = useState<RegraComissao[]>([]);
+  const [vendedores, setVendedores] = useState<Vendedor[]>([]);
   const [filters, setFilters] = useState<Filters>(defaultFilters);
   const [isLoading, setIsLoading] = useState(true);
   const [isReady, setIsReady] = useState(false);
   const [dbError, setDbError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const hasHydratedRef = useRef(false);
 
   useEffect(() => {
     const init = async () => {
@@ -83,6 +85,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         console.error(error);
         setDbError("Não foi possível acessar o banco local deste navegador. Os dados podem não ser salvos até o problema ser resolvido.");
       } finally {
+        hasHydratedRef.current = true;
         setIsLoading(false);
         setIsReady(true);
       }
@@ -91,18 +94,33 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     void init();
   }, []);
 
-  useEffect(() => { if (isReady && !dbError) void saveStore("clientes", clientes); }, [clientes, isReady, dbError]);
-  useEffect(() => { if (isReady && !dbError) void saveStore("lancamentos", lancamentos); }, [lancamentos, isReady, dbError]);
-  useEffect(() => { if (isReady && !dbError) void saveStore("metasEmpresa", metasEmpresa); }, [metasEmpresa, isReady, dbError]);
-  useEffect(() => { if (isReady && !dbError) void saveStore("metasPessoais", metasPessoais); }, [metasPessoais, isReady, dbError]);
-  useEffect(() => { if (isReady && !dbError) void saveStore("metasVendedor", metasVendedor); }, [metasVendedor, isReady, dbError]);
-  useEffect(() => { if (isReady && !dbError) void saveStore("metasCategoria", metasCategoria); }, [metasCategoria, isReady, dbError]);
-  useEffect(() => { if (isReady && !dbError) void saveStore("eventos", eventos); }, [eventos, isReady, dbError]);
-  useEffect(() => { if (isReady && !dbError) void saveStore("prioridadesP1", prioridadesP1); }, [prioridadesP1, isReady, dbError]);
-  useEffect(() => { if (isReady && !dbError) void saveStore("negocios", negocios); }, [negocios, isReady, dbError]);
-  useEffect(() => { if (isReady && !dbError) void saveStore("produtos", produtos); }, [produtos, isReady, dbError]);
-  useEffect(() => { if (isReady && !dbError) void saveStore("regrasComissao", regras); }, [regras, isReady, dbError]);
-  useEffect(() => { if (isReady && !dbError) void saveStore("vendedores", vendedores); }, [vendedores, isReady, dbError]);
+  const persistStore = async <T extends { id: string }>(store: Parameters<typeof saveStore<T>>[0], data: T[]) => {
+    if (!isReady || !hasHydratedRef.current || dbError) return;
+    setIsSaving(true);
+    setSaveError(null);
+    try {
+      await saveStore(store, data);
+      setLastSavedAt(new Date().toISOString());
+    } catch (error) {
+      console.error(error);
+      setSaveError("Erro ao salvar dados locais.");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  useEffect(() => { void persistStore("clientes", clientes); }, [clientes]);
+  useEffect(() => { void persistStore("lancamentos", lancamentos); }, [lancamentos]);
+  useEffect(() => { void persistStore("metasEmpresa", metasEmpresa); }, [metasEmpresa]);
+  useEffect(() => { void persistStore("metasPessoais", metasPessoais); }, [metasPessoais]);
+  useEffect(() => { void persistStore("metasVendedor", metasVendedor); }, [metasVendedor]);
+  useEffect(() => { void persistStore("metasCategoria", metasCategoria); }, [metasCategoria]);
+  useEffect(() => { void persistStore("eventos", eventos); }, [eventos]);
+  useEffect(() => { void persistStore("prioridadesP1", prioridadesP1); }, [prioridadesP1]);
+  useEffect(() => { void persistStore("negocios", negocios); }, [negocios]);
+  useEffect(() => { void persistStore("produtos", produtos); }, [produtos]);
+  useEffect(() => { void persistStore("regrasComissao", regras); }, [regras]);
+  useEffect(() => { void persistStore("vendedores", vendedores); }, [vendedores]);
 
   const cMap = useMemo(() => new Map(clientes.map(c => [c.id, c])), [clientes]);
   const pMap = useMemo(() => new Map(produtos.map(p => [p.id, p])), [produtos]);
@@ -142,12 +160,20 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       eventos, setEventos, prioridadesP1, setPrioridadesP1,
       negocios, setNegocios, produtos, setProdutos,
       regras, setRegras, vendedores, setVendedores,
-      isLoading, isReady, dbError,
+      isLoading, isReady, dbError, isSaving, lastSavedAt, saveError,
       filters, setFilters,
       filtered: { lancamentos: filteredLancs, negocios: filteredNegs },
       clienteById: (id) => cMap.get(id),
       produtoById: (id) => pMap.get(id),
-    }}>{children}</Ctx.Provider>
+    }}>
+      {isLoading ? (
+        <div className="flex min-h-screen items-center justify-center bg-background p-6">
+          <div className="rounded-md border border-border bg-card p-4 text-sm text-muted-foreground">
+            Carregando dados locais...
+          </div>
+        </div>
+      ) : children}
+    </Ctx.Provider>
   );
 }
 

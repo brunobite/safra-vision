@@ -42,6 +42,14 @@ function putAll(db: IDBDatabase, store: StoreName, entries: Array<Record<string,
   entries.forEach((entry) => os.put(entry));
 }
 
+async function waitForTransaction(tx: IDBTransaction) {
+  await new Promise<void>((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error ?? new Error("Falha na transação IndexedDB."));
+    tx.onabort = () => reject(tx.error ?? new Error("Transação IndexedDB abortada."));
+  });
+}
+
 export async function bootstrapLocalDatabase(): Promise<AppPersistedData> {
   return withDb(async (db) => {
     const dbMeta = await readDbMeta(db);
@@ -91,11 +99,17 @@ async function seedInitialData(db: IDBDatabase) {
 
 export async function saveStore<T extends { id: string }>(store: StoreName, list: T[]) {
   return withDb(async (db) => {
-    const tx = db.transaction(store, "readwrite");
-    const os = tx.objectStore(store);
-    await promisifyRequest(os.clear());
-    list.forEach((item) => os.put(item));
-    await writeDbMeta(db, {});
+    try {
+      const tx = db.transaction(store, "readwrite");
+      const os = tx.objectStore(store);
+      await promisifyRequest(os.clear());
+      list.forEach((item) => os.put(item));
+      await waitForTransaction(tx);
+      await writeDbMeta(db, {});
+    } catch (error) {
+      console.error(`[localRepository] Erro ao salvar store "${store}"`, error);
+      throw new Error(`Falha ao persistir "${store}" no banco local.`);
+    }
   });
 }
 
