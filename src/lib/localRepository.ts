@@ -128,3 +128,23 @@ export async function resetLocalDatabase() {
     await seedInitialData(db);
   });
 }
+
+
+export async function replaceLocalDatabase(payload: Partial<AppPersistedData>) {
+  return withDb(async (db) => {
+    for (const store of storesToLoad) {
+      const tx = db.transaction(store, "readwrite");
+      const os = tx.objectStore(store);
+      await promisifyRequest(os.clear());
+      const entries = (payload as Record<string, Array<Record<string, unknown>>>)[store] ?? [];
+      entries.forEach((entry) => os.put(entry));
+    }
+
+    if (payload.dbMeta) {
+      const tx = db.transaction("dbMeta", "readwrite");
+      tx.objectStore("dbMeta").put(payload.dbMeta);
+    }
+
+    await writeDbMeta(db, { seeded: true, versaoSchema: DB_VERSION });
+  });
+}
