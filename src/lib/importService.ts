@@ -3,6 +3,8 @@ import { Cliente, Evento, Lancamento, MetaEmpresa, MetaPessoal, Negocio, Priorid
 export type ImportEntity = "clientes" | "vendedores" | "lancamentos" | "negocios" | "produtos" | "metasEmpresa" | "metasPessoais" | "regrasComissao" | "eventos" | "rotas" | "prioridadesP1";
 export type ImportMode = "add" | "update" | "replace";
 
+type ImportableRecord = { id: string } & Record<string, unknown>;
+
 export interface ImportPreviewRow { row: number; normalized: Record<string, unknown>; errors: string[]; }
 export interface ImportPreview {
   fileName: string; entity: ImportEntity; columns: string[]; mappedColumns: Record<string, string>; unmappedColumns: string[];
@@ -79,12 +81,12 @@ function validateRow(entity:ImportEntity, row:Record<string,unknown>): string[] 
   return errs;
 }
 
-export function applyImport<T extends {id:string}>(entity:ImportEntity, mode:ImportMode, current:T[], preview:ImportPreview): {data:T[]; imported:number; updated:number; ignored:number} {
-  const valid = preview.rows.filter(r=>!r.errors.length).map(r=>normalizeEntityRow(entity,r.normalized));
+export function applyImport<T extends ImportableRecord>(entity:ImportEntity, mode:ImportMode, current:T[], preview:ImportPreview): {data:T[]; imported:number; updated:number; ignored:number} {
+  const valid = preview.rows.filter(r=>!r.errors.length).map(r=>normalizeEntityRow(entity,r.normalized) as ImportableRecord);
   if (mode === "replace") return { data: valid as T[], imported: valid.length, updated:0, ignored:0 };
-  const out = [...current]; let imported=0,updated=0,ignored=0;
-  valid.forEach((item:any)=>{
-    const idx = out.findIndex((x:any)=>isDuplicate(entity,x,item));
+  const out: ImportableRecord[] = [...current]; let imported=0,updated=0,ignored=0;
+  valid.forEach((item)=>{
+    const idx = out.findIndex((x)=>isDuplicate(entity,x,item));
     if (idx >= 0) {
       if (mode === "update") { out[idx] = { ...out[idx], ...item }; updated++; }
       else ignored++;
@@ -93,8 +95,8 @@ export function applyImport<T extends {id:string}>(entity:ImportEntity, mode:Imp
   return { data: out as T[], imported, updated, ignored };
 }
 
-function isDuplicate(entity:ImportEntity, a:any,b:any){
-  const nz=(x:string)=>normalizeText(x||"");
+function isDuplicate(entity:ImportEntity, a:ImportableRecord,b:ImportableRecord){
+  const nz=(x:unknown)=>normalizeText(String(x || ""));
   if(a.id && b.id && a.id===b.id) return true;
   if(entity==="clientes") return (nz(a.nome)===nz(b.nome) && nz(a.cidade)===nz(b.cidade)) || nz(a.nome)===nz(b.nome);
   if(entity==="produtos") return a.codigo && b.codigo ? nz(a.codigo)===nz(b.codigo) : nz(a.nome)===nz(b.nome);
