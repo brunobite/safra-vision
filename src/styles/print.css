@@ -1,0 +1,34 @@
+@media print {
+  aside,
+  header,
+  .no-print {
+    display: none !important;
+  }
+
+  body {
+    background: #fff !important;
+    color: #111 !important;
+  }
+
+  main {
+    padding: 0 !important;
+  }
+
+  .report-page {
+    max-width: 100% !important;
+    border: none !important;
+    box-shadow: none !important;
+    margin: 0 !important;
+    padding: 8mm !important;
+  }
+
+  .report-section {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  table {
+    width: 100% !important;
+    font-size: 11px;
+  }
+}

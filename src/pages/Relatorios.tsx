@@ -1,187 +1,98 @@
-import { useMemo } from "react";
-import { Card } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { GlobalFilters } from "@/components/GlobalFilters";
+import { useMemo, useState } from "react";
 import { useAppStore } from "@/store/AppStore";
-import { fmtBRL, fmtNum, fmtPct } from "@/utils/calculations";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { ReportHeader } from "@/components/reports/ReportHeader";
+import { ReportLayout } from "@/components/reports/ReportLayout";
+import { ReportSection } from "@/components/reports/ReportSection";
+import { ReportSummaryCards } from "@/components/reports/ReportSummaryCards";
+import { alertLevel, commissionEstimate, defaultReportFilters, inRange, byMonth, type ReportType } from "@/lib/reportCalculations";
+import { fmtBRL, fmtPct } from "@/utils/calculations";
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <Card className="p-4">
-      <h3 className="mb-3 text-sm font-semibold text-foreground">{title}</h3>
-      {children}
-    </Card>
-  );
-}
+const reportLabels: Record<ReportType, string> = { geral: "Relatório Geral", semanal: "Relatório Semanal", mensal: "Relatório Mensal", cliente: "Relatório por Cliente", funil: "Relatório do Funil de Vendas", "metas-comissao": "Relatório de Metas e Comissão", "produtos-estoque": "Relatório de Produtos / Estoque" };
 
 export default function Relatorios() {
-  const { filtered, clientes, clienteById, produtos, regras, metasEmpresa } = useAppStore();
-  const lancs = filtered.lancamentos;
-  const negs = filtered.negocios;
+  const store = useAppStore();
+  const [filters, setFilters] = useState(defaultReportFilters);
+  const [showReport, setShowReport] = useState(false);
 
-  const negPorVendedor = useMemo(() => {
-    const m: Record<string, { qtd: number; potencial: number; fechado: number }> = {};
-    negs.forEach(n => {
-      m[n.vendedor] ||= { qtd: 0, potencial: 0, fechado: 0 };
-      m[n.vendedor].qtd++; m[n.vendedor].potencial += n.valorPotencial;
-      if (n.status === "Fechado ganho") m[n.vendedor].fechado += n.valorFechado || 0;
-    });
-    return m;
-  }, [negs]);
+  const negocios = useMemo(() => store.negocios.filter(n => inRange(n.ultimaAtualizacao || n.dataCriacao, filters.dataInicial, filters.dataFinal) && byMonth(n.ultimaAtualizacao || n.dataCriacao, filters.mes) && (!filters.vendedor || n.vendedor === filters.vendedor) && (!filters.status || n.status === filters.status) && (!filters.categoria || n.categoria === filters.categoria) && (!filters.clienteId || n.clienteId === filters.clienteId) && (!filters.rota || store.clienteById(n.clienteId)?.rota === filters.rota)), [store, filters]);
+  const lancs = useMemo(() => store.lancamentos.filter(l => inRange(l.data, filters.dataInicial, filters.dataFinal) && byMonth(l.data, filters.mes) && (!filters.vendedor || l.vendedor === filters.vendedor) && (!filters.status || l.status === filters.status) && (!filters.clienteId || l.clienteId === filters.clienteId) && (!filters.rota || store.clienteById(l.clienteId)?.rota === filters.rota)), [store, filters]);
 
-  const negPorCategoria = useMemo(() => {
-    const m: Record<string, { qtd: number; potencial: number; fechado: number }> = {};
-    negs.forEach(n => {
-      m[n.categoria] ||= { qtd: 0, potencial: 0, fechado: 0 };
-      m[n.categoria].qtd++; m[n.categoria].potencial += n.valorPotencial;
-      if (n.status === "Fechado ganho") m[n.categoria].fechado += n.valorFechado || 0;
-    });
-    return m;
-  }, [negs]);
+  const realized = negocios.filter(n => n.status === "Fechado ganho").reduce((s, n) => s + (n.valorFechado || 0), 0);
+  const metaTotal = store.metasEmpresa.reduce((s, m) => s + m.metaTotal, 0);
+  const pctMeta = metaTotal ? realized / metaTotal : 0;
+  const pipeline = negocios.filter(n => !["Fechado ganho", "Fechado perdido"].includes(n.status)).reduce((s, n) => s + n.valorPotencial, 0);
 
-  const propostas = useMemo(() => {
-    const total = negs.length || 1;
-    const ganhas = negs.filter(n => n.status === "Fechado ganho").length;
-    const perdidas = negs.filter(n => n.status === "Fechado perdido").length;
-    const enviadas = lancs.filter(l => l.tipo === "Proposta").length;
-    return { enviadas, ganhas, perdidas, conversao: ganhas / total };
-  }, [negs, lancs]);
+  const summary = [
+    { label: "Realizado empresa", value: fmtBRL(realized) },
+    { label: "% empresa", value: fmtPct(pctMeta) },
+    { label: "Gap empresa", value: fmtBRL(Math.max(metaTotal - realized, 0)) },
+    { label: "Pipeline aberto", value: fmtBRL(pipeline) },
+  ];
 
-  const aproveitamento = useMemo(() => {
-    const pot = clientes.reduce((s, c) => s + c.potencialTotal, 0) || 1;
-    const real = negs.filter(n => n.status === "Fechado ganho").reduce((s, n) => s + (n.valorFechado || 0), 0);
-    return real / pot;
-  }, [clientes, negs]);
+  const currentClient = store.clienteById(filters.clienteId);
+  const periodText = filters.mes || `${filters.dataInicial || "início"} até ${filters.dataFinal || "hoje"}`;
 
-  const visitasPorVendedor = useMemo(() => {
-    const m: Record<string, { qtd: number; comOpp: number }> = {};
-    lancs.filter(l => l.tipo === "Visita").forEach(l => {
-      const v = l.vendedor || "—";
-      m[v] ||= { qtd: 0, comOpp: 0 };
-      m[v].qtd++; if (l.geraOportunidade) m[v].comOpp++;
-    });
-    return m;
-  }, [lancs]);
-
-  const clientesAVisitados = useMemo(() => new Set(lancs.filter(l => l.tipo === "Visita" && clienteById(l.clienteId)?.abc === "A").map(l => l.clienteId)).size, [lancs, clienteById]);
-  const clientesP1Visitados = useMemo(() => new Set(lancs.filter(l => l.tipo === "Visita" && clienteById(l.clienteId)?.prioridade === "P1").map(l => l.clienteId)).size, [lancs, clienteById]);
-  const clientesSemVisita = useMemo(() => {
-    const vis = new Set(lancs.filter(l => l.tipo === "Visita").map(l => l.clienteId));
-    return clientes.filter(c => !vis.has(c.id));
-  }, [lancs, clientes]);
-
-  const produtosMaisNegociados = useMemo(() => {
-    const m: Record<string, number> = {};
-    negs.forEach(n => n.produtos.forEach(pid => { m[pid] = (m[pid] || 0) + 1; }));
-    return Object.entries(m).sort((a,b) => b[1] - a[1]).slice(0,10);
-  }, [negs]);
-
-  const estoqueBaixo = produtos.filter(p => (p.estoqueAtual - p.estoqueReservado) > 0 && (p.estoqueAtual - p.estoqueReservado) < 20);
-  const semEstoque = produtos.filter(p => (p.estoqueAtual - p.estoqueReservado) <= 0);
-
-  const metaTotal = metasEmpresa.reduce((s,m) => s + m.metaTotal, 0);
-  const realizado = negs.filter(n => n.status === "Fechado ganho").reduce((s,n) => s + (n.valorFechado || 0), 0);
-  const pctMeta = metaTotal ? realizado / metaTotal : 0;
-
-  return (
-    <div className="space-y-4">
-      <GlobalFilters />
-
-      <Tabs defaultValue="comercial">
-        <TabsList>
-          <TabsTrigger value="comercial">Comerciais</TabsTrigger>
-          <TabsTrigger value="visitas">Visitas</TabsTrigger>
-          <TabsTrigger value="produtos">Produtos</TabsTrigger>
-          <TabsTrigger value="comissao">Comissão</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="comercial" className="space-y-4">
-          <div className="grid gap-4 lg:grid-cols-2">
-            <Section title="Negócios por vendedor">
-              <Table><TableHeader><TableRow><TableHead>Vendedor</TableHead><TableHead className="text-right">Qtd</TableHead><TableHead className="text-right">Potencial</TableHead><TableHead className="text-right">Fechado</TableHead></TableRow></TableHeader>
-                <TableBody>{Object.entries(negPorVendedor).map(([v,r]) => <TableRow key={v}><TableCell>{v}</TableCell><TableCell className="text-right">{r.qtd}</TableCell><TableCell className="text-right">{fmtBRL(r.potencial)}</TableCell><TableCell className="text-right">{fmtBRL(r.fechado)}</TableCell></TableRow>)}</TableBody>
-              </Table>
-            </Section>
-            <Section title="Negócios por categoria de produto">
-              <Table><TableHeader><TableRow><TableHead>Categoria</TableHead><TableHead className="text-right">Qtd</TableHead><TableHead className="text-right">Potencial</TableHead><TableHead className="text-right">Fechado</TableHead></TableRow></TableHeader>
-                <TableBody>{Object.entries(negPorCategoria).map(([c,r]) => <TableRow key={c}><TableCell>{c}</TableCell><TableCell className="text-right">{r.qtd}</TableCell><TableCell className="text-right">{fmtBRL(r.potencial)}</TableCell><TableCell className="text-right">{fmtBRL(r.fechado)}</TableCell></TableRow>)}</TableBody>
-              </Table>
-            </Section>
-            <Section title="Propostas">
-              <div className="grid grid-cols-4 gap-2 text-sm">
-                <div><p className="text-muted-foreground">Enviadas</p><p className="text-xl font-semibold">{propostas.enviadas}</p></div>
-                <div><p className="text-muted-foreground">Ganhas</p><p className="text-xl font-semibold text-success">{propostas.ganhas}</p></div>
-                <div><p className="text-muted-foreground">Perdidas</p><p className="text-xl font-semibold text-destructive">{propostas.perdidas}</p></div>
-                <div><p className="text-muted-foreground">Taxa conversão</p><p className="text-xl font-semibold">{fmtPct(propostas.conversao)}</p></div>
-              </div>
-            </Section>
-            <Section title="Aproveitamento do potencial">
-              <p className="text-3xl font-bold">{fmtPct(aproveitamento)}</p>
-              <p className="text-xs text-muted-foreground mt-1">Realizado / Potencial total da carteira</p>
-            </Section>
-          </div>
-        </TabsContent>
-
-        <TabsContent value="visitas" className="space-y-4">
-          <div className="grid gap-4 lg:grid-cols-2">
-            <Section title="Visitas por vendedor">
-              <Table><TableHeader><TableRow><TableHead>Vendedor</TableHead><TableHead className="text-right">Visitas</TableHead><TableHead className="text-right">Geraram oport.</TableHead></TableRow></TableHeader>
-                <TableBody>{Object.entries(visitasPorVendedor).map(([v,r]) => <TableRow key={v}><TableCell>{v}</TableCell><TableCell className="text-right">{r.qtd}</TableCell><TableCell className="text-right">{r.comOpp}</TableCell></TableRow>)}</TableBody>
-              </Table>
-            </Section>
-            <Section title="Cobertura ABC/P1">
-              <div className="grid grid-cols-2 gap-2 text-sm">
-                <div><p className="text-muted-foreground">Clientes A visitados</p><p className="text-xl font-semibold">{clientesAVisitados}</p></div>
-                <div><p className="text-muted-foreground">Clientes P1 visitados</p><p className="text-xl font-semibold">{clientesP1Visitados}</p></div>
-              </div>
-            </Section>
-            <Section title="Clientes sem visita no período">
-              <Table><TableHeader><TableRow><TableHead>Cliente</TableHead><TableHead>ABC</TableHead><TableHead>Prio.</TableHead><TableHead>Vendedor</TableHead></TableRow></TableHeader>
-                <TableBody>{clientesSemVisita.slice(0,15).map(c => <TableRow key={c.id}><TableCell>{c.nome}</TableCell><TableCell>{c.abc}</TableCell><TableCell>{c.prioridade}</TableCell><TableCell>{c.vendedor||"—"}</TableCell></TableRow>)}</TableBody>
-              </Table>
-            </Section>
-          </div>
-        </TabsContent>
-
-        <TabsContent value="produtos" className="space-y-4">
-          <div className="grid gap-4 lg:grid-cols-2">
-            <Section title="Produtos mais negociados">
-              <Table><TableHeader><TableRow><TableHead>Produto</TableHead><TableHead className="text-right">Vezes</TableHead></TableRow></TableHeader>
-                <TableBody>{produtosMaisNegociados.map(([pid,c]) => { const p = produtos.find(x => x.id === pid); return <TableRow key={pid}><TableCell>{p?.nome || pid}</TableCell><TableCell className="text-right">{c}</TableCell></TableRow>; })}</TableBody>
-              </Table>
-            </Section>
-            <Section title="Estoque baixo / sem estoque">
-              <Table><TableHeader><TableRow><TableHead>Produto</TableHead><TableHead className="text-right">Disponível</TableHead><TableHead>Status</TableHead></TableRow></TableHeader>
-                <TableBody>
-                  {[...semEstoque, ...estoqueBaixo].map(p => { const d = p.estoqueAtual - p.estoqueReservado; return (
-                    <TableRow key={p.id}><TableCell>{p.nome}</TableCell><TableCell className="text-right">{fmtNum(d)}</TableCell><TableCell><Badge className={d<=0?"bg-destructive/15 text-destructive":"bg-warning/15 text-warning"}>{d<=0?"Sem estoque":"Baixo"}</Badge></TableCell></TableRow>
-                  ); })}
-                </TableBody>
-              </Table>
-            </Section>
-          </div>
-        </TabsContent>
-
-        <TabsContent value="comissao" className="space-y-4">
-          <Section title="Relatório de comissão">
-            <Table><TableHeader><TableRow><TableHead>Regra</TableHead><TableHead>Tipo</TableHead><TableHead>Aplicar sobre</TableHead><TableHead className="text-right">Base</TableHead><TableHead className="text-right">% Atingido</TableHead><TableHead className="text-right">Comissão estimada</TableHead></TableRow></TableHeader>
-              <TableBody>
-                {regras.filter(r => r.ativo).map(r => {
-                  let base = 0; let comissao = 0;
-                  if (r.aplicarSobre === "negocio_fechado" || r.aplicarSobre === "realizado_empresa") base = realizado;
-                  else if (r.aplicarSobre === "meta_empresa") base = metaTotal;
-                  else if (r.aplicarSobre === "categoria") base = negs.filter(n => n.categoria === r.alvo && n.status === "Fechado ganho").reduce((s,n) => s + (n.valorFechado || 0), 0);
-                  if (r.tipo === "fixa") comissao = base * ((r.percentual || 0)/100);
-                  else if (r.faixas) { const f = r.faixas.find(f => pctMeta*100 >= f.min && pctMeta*100 <= f.max); if (f) comissao = base * (f.percentual/100); }
-                  return <TableRow key={r.id}><TableCell>{r.nome}</TableCell><TableCell>{r.tipo}</TableCell><TableCell>{r.aplicarSobre}</TableCell><TableCell className="text-right">{fmtBRL(base)}</TableCell><TableCell className="text-right">{fmtPct(pctMeta)}</TableCell><TableCell className="text-right font-semibold text-success">{fmtBRL(comissao)}</TableCell></TableRow>;
-                })}
-              </TableBody>
-            </Table>
-          </Section>
-        </TabsContent>
-      </Tabs>
+  return <div className="space-y-4">
+    <div className="no-print grid gap-3 rounded-lg border bg-card p-4 sm:grid-cols-2 lg:grid-cols-4">
+      <Select value={filters.reportType} onValueChange={(v: ReportType) => setFilters((f) => ({ ...f, reportType: v }))}><SelectTrigger><SelectValue placeholder="Tipo de relatório" /></SelectTrigger><SelectContent>{Object.entries(reportLabels).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent></Select>
+      {filters.reportType !== "mensal" && <Input type="date" value={filters.dataInicial} onChange={e => setFilters(f => ({ ...f, dataInicial: e.target.value }))} />}
+      {filters.reportType !== "mensal" && <Input type="date" value={filters.dataFinal} onChange={e => setFilters(f => ({ ...f, dataFinal: e.target.value }))} />}
+      {filters.reportType === "mensal" && <Input type="month" value={filters.mes} onChange={e => setFilters(f => ({ ...f, mes: e.target.value }))} />}
+      {["cliente", "geral", "semanal"].includes(filters.reportType) && <Select value={filters.clienteId || "all"} onValueChange={v => setFilters(f => ({ ...f, clienteId: v === "all" ? "" : v }))}><SelectTrigger><SelectValue placeholder="Cliente" /></SelectTrigger><SelectContent><SelectItem value="all">Todos os clientes</SelectItem>{store.clientes.map(c => <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>)}</SelectContent></Select>}
+      <Input placeholder="Vendedor" value={filters.vendedor} onChange={e => setFilters(f => ({ ...f, vendedor: e.target.value }))} />
+      <Input placeholder="Rota" value={filters.rota} onChange={e => setFilters(f => ({ ...f, rota: e.target.value }))} />
+      <div className="flex flex-wrap gap-2 sm:col-span-2 lg:col-span-4">
+        <Button onClick={() => setShowReport(true)}>Visualizar relatório</Button>
+        <Button variant="secondary" onClick={() => window.print()}>Salvar/Gerar PDF</Button>
+        <Button variant="outline" onClick={() => window.print()}>Imprimir</Button>
+        <Button variant="ghost" onClick={() => { setFilters(defaultReportFilters); setShowReport(false); }}>Limpar filtros</Button>
+      </div>
+      <p className="sm:col-span-2 lg:col-span-4 text-xs text-muted-foreground">Para salvar como PDF no celular, use a opção Salvar como PDF ou Compartilhar da tela de impressão.</p>
     </div>
-  );
+
+    {showReport && <ReportLayout>
+      <ReportHeader title={reportLabels[filters.reportType]} period={periodText} filters={[filters.vendedor && `Vendedor: ${filters.vendedor}`, filters.rota && `Rota: ${filters.rota}`, currentClient && `Cliente: ${currentClient.nome}`].filter(Boolean) as string[]} />
+      <ReportSummaryCards items={summary} />
+
+      <ReportSection title="Indicadores principais">
+        {negocios.length === 0 && <p>Nenhum dado encontrado para o período selecionado.</p>}
+        {negocios.length > 0 && <Table><TableHeader><TableRow><TableHead>Indicador</TableHead><TableHead>Valor</TableHead></TableRow></TableHeader><TableBody>
+          <TableRow><TableCell>Negócios ganhos</TableCell><TableCell>{negocios.filter(n => n.status === "Fechado ganho").length}</TableCell></TableRow>
+          <TableRow><TableCell>Negócios perdidos</TableCell><TableCell>{negocios.filter(n => n.status === "Fechado perdido").length}</TableCell></TableRow>
+          <TableRow><TableCell>Propostas enviadas</TableCell><TableCell>{lancs.filter(l => l.tipo === "Proposta").length}</TableCell></TableRow>
+          <TableRow><TableCell>Pendências</TableCell><TableCell>{lancs.filter(l => l.status === "Aberto" || l.status === "Atrasado").length}</TableCell></TableRow>
+        </TableBody></Table>}
+      </ReportSection>
+
+      <ReportSection title="Tabelas executivas">
+        {filters.reportType === "cliente" && !currentClient && <p>Nenhum cliente selecionado.</p>}
+        {filters.reportType === "cliente" && currentClient && <Table><TableBody>
+          <TableRow><TableCell>Cliente</TableCell><TableCell>{currentClient.nome}</TableCell></TableRow><TableRow><TableCell>ABC/Prioridade</TableCell><TableCell>{currentClient.abc} / {currentClient.prioridade}</TableCell></TableRow>
+          <TableRow><TableCell>Rota/Cidade</TableCell><TableCell>{currentClient.rota} / {currentClient.cidade}</TableCell></TableRow><TableRow><TableCell>Culturas / Área (ha)</TableCell><TableCell>{currentClient.culturas} / {currentClient.areaHa}</TableCell></TableRow>
+        </TableBody></Table>}
+
+        {filters.reportType === "funil" && <Table><TableHeader><TableRow><TableHead>Etapa</TableHead><TableHead>Qtd</TableHead><TableHead>Potencial</TableHead></TableRow></TableHeader><TableBody>{[...new Set(negocios.map(n => n.status))].map((s) => {
+          const rows = negocios.filter(n => n.status === s);
+          return <TableRow key={s}><TableCell>{s}</TableCell><TableCell>{rows.length}</TableCell><TableCell>{fmtBRL(rows.reduce((a, n) => a + n.valorPotencial, 0))}</TableCell></TableRow>;
+        })}</TableBody></Table>}
+
+        {filters.reportType === "metas-comissao" && <Table><TableBody>
+          <TableRow><TableCell>Meta empresa</TableCell><TableCell>{fmtBRL(metaTotal)}</TableCell></TableRow>
+          <TableRow><TableCell>Meta pessoal (total)</TableCell><TableCell>{fmtBRL(store.metasPessoais.reduce((s,m)=>s+m.metaFaturamento,0))}</TableCell></TableRow>
+          <TableRow><TableCell>Comissão estimada</TableCell><TableCell>{fmtBRL(commissionEstimate(store.regras, realized, metaTotal, pctMeta))}</TableCell></TableRow>
+          <TableRow><TableCell>Alerta visual</TableCell><TableCell>{alertLevel(pctMeta)}</TableCell></TableRow>
+        </TableBody></Table>}
+
+        {filters.reportType === "produtos-estoque" && <Table><TableHeader><TableRow><TableHead>Produto</TableHead><TableHead>Disponível</TableHead><TableHead>Preço lista</TableHead></TableRow></TableHeader><TableBody>{store.produtos.map((p) => <TableRow key={p.id}><TableCell>{p.nome}</TableCell><TableCell>{p.estoqueAtual - p.estoqueReservado}</TableCell><TableCell>{fmtBRL(p.precoLista)}</TableCell></TableRow>)}</TableBody></Table>}
+
+        {["geral", "semanal", "mensal"].includes(filters.reportType) && <p className="text-sm">Visitas realizadas: {lancs.filter(l => l.tipo === "Visita").length} • Lançamentos: {lancs.length} • Eventos lançados: {store.eventos.length}</p>}
+      </ReportSection>
+
+      <footer className="pt-4 text-xs text-muted-foreground">Relatório gerado pelo aplicativo Safra 26/27 — Controle Operacional • {new Date().toLocaleString("pt-BR")}</footer>
+    </ReportLayout>}
+  </div>;
 }
