@@ -103,7 +103,7 @@ export default function Metas() {
                     <div className="flex gap-1">
                       <StatusBadge pct={pct} />
                       <Button size="icon" variant="ghost" onClick={() => openEmp(m)}><Pencil className="h-3.5 w-3.5" /></Button>
-                      <Button size="icon" variant="ghost" onClick={() => setMetasEmpresa(prev => prev.filter(x => x.id !== m.id))}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button>
+                      <Button size="icon" variant="ghost" onClick={() => { if (!window.confirm("Esta ação não pode ser desfeita nesta versão. Deseja continuar?")) return; setMetasEmpresa(prev => prev.filter(x => x.id !== m.id)); }}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button>
                     </div>
                   </div>
                   <div className="space-y-1 text-sm">
@@ -138,7 +138,7 @@ export default function Metas() {
                     <div className="flex gap-1">
                       <StatusBadge pct={pct} />
                       <Button size="icon" variant="ghost" onClick={() => openPes(m)}><Pencil className="h-3.5 w-3.5" /></Button>
-                      <Button size="icon" variant="ghost" onClick={() => setMetasPessoais(prev => prev.filter(x => x.id !== m.id))}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button>
+                      <Button size="icon" variant="ghost" onClick={() => { if (!window.confirm("Esta ação não pode ser desfeita nesta versão. Deseja continuar?")) return; setMetasPessoais(prev => prev.filter(x => x.id !== m.id)); }}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button>
                     </div>
                   </div>
                   <div className="space-y-1 text-sm">
