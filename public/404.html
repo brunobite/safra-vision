@@ -1,0 +1,21 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Safra 26/27 — Controle Operacional</title>
+    <script>
+      const pathSegmentsToKeep = 1;
+      const locationPath = window.location.pathname.split("/").slice(1);
+      const route = locationPath
+        .slice(pathSegmentsToKeep)
+        .join("/")
+        .replace(/&/g, "~and~");
+      const query = window.location.search.replace("?", "&").replace(/&/g, "~and~");
+      const hash = window.location.hash;
+      window.location.replace(
+        `${window.location.origin}/${locationPath.slice(0, pathSegmentsToKeep).join("/")}/?/${route}${query}${hash}`,
+      );
+    </script>
+  </head>
+  <body></body>
+</html>
