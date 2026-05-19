@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useAppStore } from "@/store/AppStore";
-import { fmtBRL, fmtNum } from "@/utils/calculations";
+import { fmtNum } from "@/utils/calculations";
 import { Save, Lock, Unlock } from "lucide-react";
 import { toast } from "sonner";
 
@@ -16,11 +16,22 @@ function estoqueStatus(disp: number) {
   return { cls: "bg-success/15 text-success", label: "Adequado" };
 }
 
+type ProdutoEdit = Partial<{
+  precoLista: number;
+  precoMinimo: number;
+  precoPromocional: number;
+  validadePreco: string;
+  estoqueAtual: number;
+  estoqueReservado: number;
+}>;
+
+type ProdutoEditKey = keyof ProdutoEdit;
+
 export default function PrecosEstoque() {
   const { produtos, setProdutos } = useAppStore();
-  const [edits, setEdits] = useState<Record<string, Partial<{ precoLista: number; precoMinimo: number; precoPromocional: number; validadePreco: string; estoqueAtual: number; estoqueReservado: number }>>>({});
+  const [edits, setEdits] = useState<Record<string, ProdutoEdit>>({});
 
-  const upd = (id: string, k: string, v: any) => setEdits(prev => ({ ...prev, [id]: { ...prev[id], [k]: v } }));
+  const upd = <K extends ProdutoEditKey>(id: string, k: K, v: ProdutoEdit[K]) => setEdits(prev => ({ ...prev, [id]: { ...prev[id], [k]: v } }));
 
   const salvarLinha = (id: string) => {
     const e = edits[id]; if (!e) return;
