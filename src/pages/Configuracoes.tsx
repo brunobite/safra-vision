@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { ChangeEvent, useEffect, useRef, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,7 +13,10 @@ import { useAppStore } from "@/store/AppStore";
 import { RegraComissao, AplicarSobre, FaixaComissao } from "@/types";
 import { Plus, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { getLocalDbStats, LocalDbStats, resetLocalDatabase } from "@/lib/localRepository";
+import { getLocalDbStats, LocalDbStats, replaceLocalDatabase, resetLocalDatabase } from "@/lib/localRepository";
+import { exportAllEntitiesToCsv } from "@/lib/csvService";
+import { exportWorkbook } from "@/lib/excelService";
+import { downloadBackupJson, parseBackupPayload } from "@/lib/backupService";
 
 const APLICAR: { v: AplicarSobre; label: string }[] = [
   { v: "realizado_empresa", label: "Realizado empresa" }, { v: "realizado_pessoal", label: "Realizado pessoal" },
@@ -23,17 +26,59 @@ const APLICAR: { v: AplicarSobre; label: string }[] = [
 const emptyRegra: Omit<RegraComissao, "id"> = { nome: "", tipo: "fixa", percentual: 1, aplicarSobre: "negocio_fechado", ativo: true, faixas: [{ min: 80, max: 89, percentual: 0.5 }] };
 
 export default function Configuracoes() {
-  const { regras, setRegras, vendedores, setVendedores, dbError } = useAppStore();
+  const {
+    regras, setRegras, vendedores, setVendedores, dbError,
+    clientes, lancamentos, negocios, produtos, metasEmpresa, metasPessoais, eventos, metasVendedor, metasCategoria, prioridadesP1,
+    setClientes, setLancamentos, setNegocios, setProdutos, setMetasEmpresa, setMetasPessoais, setEventos, setMetasVendedor, setMetasCategoria, setPrioridadesP1,
+  } = useAppStore();
   const [open, setOpen] = useState(false);
   const [edit, setEdit] = useState<RegraComissao | null>(null);
   const [form, setForm] = useState<Omit<RegraComissao, "id">>(emptyRegra);
   const [novoVend, setNovoVend] = useState("");
   const [stats, setStats] = useState<LocalDbStats | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const loadStats = async () => {
     try { setStats(await getLocalDbStats()); } catch (error) { console.error(error); }
   };
   useEffect(() => { void loadStats(); }, []);
+
+  const exportPayload = {
+    clientes, vendedores, lancamentos, negocios, produtos, metasEmpresa, metasPessoais, regrasComissao: regras, eventos,
+    configuracoes: [], metasVendedor, metasCategoria, prioridadesP1,
+  };
+
+  const handleRestoreFile = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      const content = await file.text();
+      const restored = parseBackupPayload(content);
+      const ok = window.confirm("Esta ação substituirá os dados locais atuais pelos dados do backup selecionado. Essa ação não pode ser desfeita nesta versão. Deseja continuar?");
+      if (!ok) return;
+
+      await replaceLocalDatabase({ ...restored, regrasComissao: restored.regrasComissao });
+      setClientes(restored.clientes as never[]);
+      setVendedores(restored.vendedores as never[]);
+      setLancamentos(restored.lancamentos as never[]);
+      setNegocios(restored.negocios as never[]);
+      setProdutos(restored.produtos as never[]);
+      setMetasEmpresa(restored.metasEmpresa as never[]);
+      setMetasPessoais(restored.metasPessoais as never[]);
+      setRegras(restored.regrasComissao as never[]);
+      setEventos(restored.eventos as never[]);
+      setMetasVendedor((restored.metasVendedor ?? []) as never[]);
+      setMetasCategoria((restored.metasCategoria ?? []) as never[]);
+      setPrioridadesP1((restored.prioridadesP1 ?? []) as never[]);
+
+      toast.success("Backup restaurado com sucesso.");
+      void loadStats();
+    } catch {
+      toast.error("Arquivo de backup inválido ou incompatível com o aplicativo.");
+    } finally {
+      event.target.value = "";
+    }
+  };
 
   const openNew = () => { setEdit(null); setForm(emptyRegra); setOpen(true); };
   const openEdit = (r: RegraComissao) => { setEdit(r); const { id, ...rest } = r; void id; setForm(rest); setOpen(true); };
@@ -77,6 +122,17 @@ export default function Configuracoes() {
             toast.success("Base local limpa. Recarregando dados de demonstração...");
             window.location.reload();
           }}>Limpar base local</Button>
+          <Card className="space-y-2 border-dashed p-3">
+            <div className="font-semibold">Exportação e backup</div>
+            <p className="text-xs text-muted-foreground">Use estas opções para salvar seus dados fora do navegador, enviar por e-mail, WhatsApp ou guardar em local seguro.</p>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <Button onClick={() => exportWorkbook(exportPayload)}>Exportar Excel</Button>
+              <Button variant="outline" onClick={() => exportAllEntitiesToCsv(exportPayload)}>Exportar CSV</Button>
+              <Button variant="outline" onClick={() => downloadBackupJson(exportPayload)}>Gerar backup JSON</Button>
+              <Button variant="secondary" onClick={() => fileInputRef.current?.click()}>Restaurar backup JSON</Button>
+            </div>
+            <input ref={fileInputRef} type="file" accept="application/json,.json" className="hidden" onChange={handleRestoreFile} />
+          </Card>
         </Card>
       </TabsContent>
     </Tabs>
