@@ -1,4 +1,4 @@
-import { createContext, useContext, useMemo, useState, ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useState, ReactNode } from "react";
 import {
   Cliente, Lancamento, MetaEmpresa, MetaPessoal, Evento, PrioridadeP1Item,
   Negocio, Produto, RegraComissao, Vendedor, MetaVendedor, MetaCategoria,
@@ -8,6 +8,7 @@ import {
   initialEventos, initialPrioridadesP1, initialNegocios, initialProdutos,
   initialRegrasComissao, initialVendedores, initialMetasVendedor, initialMetasCategoria,
 } from "@/data/mockData";
+import { bootstrapLocalDatabase, saveStore } from "@/lib/localRepository";
 
 interface Filters {
   dataInicial: string; dataFinal: string; mes: string;
@@ -28,6 +29,9 @@ interface AppStoreCtx {
   produtos: Produto[]; setProdutos: React.Dispatch<React.SetStateAction<Produto[]>>;
   regras: RegraComissao[]; setRegras: React.Dispatch<React.SetStateAction<RegraComissao[]>>;
   vendedores: Vendedor[]; setVendedores: React.Dispatch<React.SetStateAction<Vendedor[]>>;
+  isLoading: boolean;
+  isReady: boolean;
+  dbError: string | null;
   filters: Filters; setFilters: React.Dispatch<React.SetStateAction<Filters>>;
   filtered: { lancamentos: Lancamento[]; negocios: Negocio[] };
   clienteById: (id: string) => Cliente | undefined;
@@ -55,40 +59,80 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const [regras, setRegras] = useState<RegraComissao[]>(initialRegrasComissao);
   const [vendedores, setVendedores] = useState<Vendedor[]>(initialVendedores);
   const [filters, setFilters] = useState<Filters>(defaultFilters);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isReady, setIsReady] = useState(false);
+  const [dbError, setDbError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const init = async () => {
+      try {
+        const localData = await bootstrapLocalDatabase();
+        setClientes(localData.clientes);
+        setLancamentos(localData.lancamentos);
+        setMetasEmpresa(localData.metasEmpresa);
+        setMetasPessoais(localData.metasPessoais);
+        setMetasVendedor(localData.metasVendedor);
+        setMetasCategoria(localData.metasCategoria);
+        setEventos(localData.eventos);
+        setPrioridadesP1(localData.prioridadesP1);
+        setNegocios(localData.negocios);
+        setProdutos(localData.produtos);
+        setRegras(localData.regrasComissao);
+        setVendedores(localData.vendedores);
+      } catch (error) {
+        console.error(error);
+        setDbError("Não foi possível acessar o banco local deste navegador. Os dados podem não ser salvos até o problema ser resolvido.");
+      } finally {
+        setIsLoading(false);
+        setIsReady(true);
+      }
+    };
+
+    void init();
+  }, []);
+
+  useEffect(() => { if (isReady && !dbError) void saveStore("clientes", clientes); }, [clientes, isReady, dbError]);
+  useEffect(() => { if (isReady && !dbError) void saveStore("lancamentos", lancamentos); }, [lancamentos, isReady, dbError]);
+  useEffect(() => { if (isReady && !dbError) void saveStore("metasEmpresa", metasEmpresa); }, [metasEmpresa, isReady, dbError]);
+  useEffect(() => { if (isReady && !dbError) void saveStore("metasPessoais", metasPessoais); }, [metasPessoais, isReady, dbError]);
+  useEffect(() => { if (isReady && !dbError) void saveStore("metasVendedor", metasVendedor); }, [metasVendedor, isReady, dbError]);
+  useEffect(() => { if (isReady && !dbError) void saveStore("metasCategoria", metasCategoria); }, [metasCategoria, isReady, dbError]);
+  useEffect(() => { if (isReady && !dbError) void saveStore("eventos", eventos); }, [eventos, isReady, dbError]);
+  useEffect(() => { if (isReady && !dbError) void saveStore("prioridadesP1", prioridadesP1); }, [prioridadesP1, isReady, dbError]);
+  useEffect(() => { if (isReady && !dbError) void saveStore("negocios", negocios); }, [negocios, isReady, dbError]);
+  useEffect(() => { if (isReady && !dbError) void saveStore("produtos", produtos); }, [produtos, isReady, dbError]);
+  useEffect(() => { if (isReady && !dbError) void saveStore("regrasComissao", regras); }, [regras, isReady, dbError]);
+  useEffect(() => { if (isReady && !dbError) void saveStore("vendedores", vendedores); }, [vendedores, isReady, dbError]);
 
   const cMap = useMemo(() => new Map(clientes.map(c => [c.id, c])), [clientes]);
   const pMap = useMemo(() => new Map(produtos.map(p => [p.id, p])), [produtos]);
 
-  const filteredLancs = useMemo(() => {
-    return lancamentos.filter(l => {
-      const c = cMap.get(l.clienteId);
-      if (filters.dataInicial && l.data < filters.dataInicial) return false;
-      if (filters.dataFinal && l.data > filters.dataFinal) return false;
-      if (filters.mes && l.data.slice(0, 7) !== filters.mes) return false;
-      if (filters.abc && c?.abc !== filters.abc) return false;
-      if (filters.prioridade && c?.prioridade !== filters.prioridade) return false;
-      if (filters.rota && c?.rota !== filters.rota) return false;
-      if (filters.status && l.status !== filters.status) return false;
-      if (filters.frente && l.frente !== filters.frente) return false;
-      if (filters.vendedor && l.vendedor !== filters.vendedor) return false;
-      return true;
-    });
-  }, [lancamentos, filters, cMap]);
+  const filteredLancs = useMemo(() => lancamentos.filter(l => {
+    const c = cMap.get(l.clienteId);
+    if (filters.dataInicial && l.data < filters.dataInicial) return false;
+    if (filters.dataFinal && l.data > filters.dataFinal) return false;
+    if (filters.mes && l.data.slice(0, 7) !== filters.mes) return false;
+    if (filters.abc && c?.abc !== filters.abc) return false;
+    if (filters.prioridade && c?.prioridade !== filters.prioridade) return false;
+    if (filters.rota && c?.rota !== filters.rota) return false;
+    if (filters.status && l.status !== filters.status) return false;
+    if (filters.frente && l.frente !== filters.frente) return false;
+    if (filters.vendedor && l.vendedor !== filters.vendedor) return false;
+    return true;
+  }), [lancamentos, filters, cMap]);
 
-  const filteredNegs = useMemo(() => {
-    return negocios.filter(n => {
-      const c = cMap.get(n.clienteId);
-      const dt = n.ultimaAtualizacao || n.dataCriacao;
-      if (filters.dataInicial && dt < filters.dataInicial) return false;
-      if (filters.dataFinal && dt > filters.dataFinal) return false;
-      if (filters.mes && dt.slice(0,7) !== filters.mes) return false;
-      if (filters.abc && c?.abc !== filters.abc) return false;
-      if (filters.prioridade && c?.prioridade !== filters.prioridade) return false;
-      if (filters.rota && c?.rota !== filters.rota) return false;
-      if (filters.vendedor && n.vendedor !== filters.vendedor) return false;
-      return true;
-    });
-  }, [negocios, filters, cMap]);
+  const filteredNegs = useMemo(() => negocios.filter(n => {
+    const c = cMap.get(n.clienteId);
+    const dt = n.ultimaAtualizacao || n.dataCriacao;
+    if (filters.dataInicial && dt < filters.dataInicial) return false;
+    if (filters.dataFinal && dt > filters.dataFinal) return false;
+    if (filters.mes && dt.slice(0, 7) !== filters.mes) return false;
+    if (filters.abc && c?.abc !== filters.abc) return false;
+    if (filters.prioridade && c?.prioridade !== filters.prioridade) return false;
+    if (filters.rota && c?.rota !== filters.rota) return false;
+    if (filters.vendedor && n.vendedor !== filters.vendedor) return false;
+    return true;
+  }), [negocios, filters, cMap]);
 
   return (
     <Ctx.Provider value={{
@@ -98,6 +142,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       eventos, setEventos, prioridadesP1, setPrioridadesP1,
       negocios, setNegocios, produtos, setProdutos,
       regras, setRegras, vendedores, setVendedores,
+      isLoading, isReady, dbError,
       filters, setFilters,
       filtered: { lancamentos: filteredLancs, negocios: filteredNegs },
       clienteById: (id) => cMap.get(id),
