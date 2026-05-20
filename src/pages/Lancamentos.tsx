@@ -16,7 +16,7 @@ import { Pencil, Trash2, Save, Eraser, Search, Link2, ArrowRight } from "lucide-
 import { useNavigate } from "react-router-dom";
 
 const TIPOS: TipoLancamento[] = ["Visita", "Ligação", "WhatsApp", "Proposta", "Venda", "Evento", "Orçamento", "Em negociação"];
-const FRENTES: FrenteComercial[] = ["Venda Direta", "Cooperagro", "Tritec", "Nutrição Especial", "Geo Pampa"];
+const FRENTES: FrenteComercial[] = ["Venda Direta", "Nutrição Especial", "Geo Pampa", "Canal de Vendas"];
 const STATUSES: StatusLancamento[] = ["Aberto", "Concluído", "Atrasado", "Cancelado", "Aguardando cliente", "Aguardando parceiro", "Em negociação"];
 
 interface FormState extends Omit<Lancamento, "id"> {
@@ -26,7 +26,6 @@ interface FormState extends Omit<Lancamento, "id"> {
   oppCategoria?: CategoriaProduto;
   oppValor?: number;
   oppStatus?: StatusFunil;
-  oppProb?: number;
   oppPrevisao?: string;
   oppProxAcao?: string;
   oppDataProxAcao?: string;
@@ -42,7 +41,7 @@ const empty: FormState = {
   vendedor: "Bruno",
   geraOportunidade: false,
   oppNome: "", oppProdutos: "", oppCategoria: "Adjuvantes", oppValor: 0,
-  oppStatus: "Novo", oppProb: 30, oppPrevisao: "", oppProxAcao: "", oppDataProxAcao: "",
+  oppStatus: "Novo", oppPrevisao: "", oppProxAcao: "", oppDataProxAcao: "",
 };
 
 export default function Lancamentos() {
@@ -73,7 +72,6 @@ export default function Lancamentos() {
         categoria: form.oppCategoria || "Adjuvantes",
         valorPotencial: form.oppValor || 0,
         status: form.oppStatus || "Novo",
-        probabilidade: form.oppProb ?? 30,
         previsaoFechamento: form.oppPrevisao,
         dataCriacao: hoje,
         ultimaAtualizacao: hoje,
@@ -110,7 +108,7 @@ export default function Lancamentos() {
       oQueFoiRealizado: l.oQueFoiRealizado || "", vendedor: l.vendedor || "Bruno",
       geraOportunidade: !!l.geraOportunidade, negocioId: l.negocioId,
       oppNome: neg?.nome, oppProdutos: neg?.observacoes, oppCategoria: neg?.categoria, oppValor: neg?.valorPotencial,
-      oppStatus: neg?.status, oppProb: neg?.probabilidade, oppPrevisao: neg?.previsaoFechamento,
+      oppStatus: neg?.status, oppPrevisao: neg?.previsaoFechamento,
       oppProxAcao: neg?.proximaAcao, oppDataProxAcao: neg?.dataProximaAcao,
     });
     setEditId(l.id);
@@ -196,8 +194,7 @@ export default function Lancamentos() {
                 <SelectContent>{STATUS_FUNIL.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
               </Select>
             </div>
-            <div><Label>Probabilidade (%)</Label><Input type="number" value={form.oppProb} onChange={e => setForm({ ...form, oppProb: +e.target.value })} /></div>
-            <div><Label>Previsão fechamento</Label><Input type="date" value={form.oppPrevisao} onChange={e => setForm({ ...form, oppPrevisao: e.target.value })} /></div>
+                        <div><Label>Previsão fechamento</Label><Input type="date" value={form.oppPrevisao} onChange={e => setForm({ ...form, oppPrevisao: e.target.value })} /></div>
             <div className="md:col-span-2"><Label>Próxima ação</Label><Input value={form.oppProxAcao} onChange={e => setForm({ ...form, oppProxAcao: e.target.value })} /></div>
             <div><Label>Data próxima ação</Label><Input type="date" value={form.oppDataProxAcao} onChange={e => setForm({ ...form, oppDataProxAcao: e.target.value })} /></div>
           </div>

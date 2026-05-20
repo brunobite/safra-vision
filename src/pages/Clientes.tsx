@@ -18,11 +18,11 @@ import { toast } from "sonner";
 const ALL = "__all__";
 const empty: Omit<Cliente, "id"> = {
   nome: "", abc: "A", prioridade: "P2", rota: "Rota Norte", cidade: "", localidade: "", culturas: "",
-  areaHa: 0, potencialTotal: 0, statusAtual: "Ativo", frequencia: "Mensal", retorno: "Médio", vendedor: "Bruno",
+  areaHa: 0, potencialTotal: 0, statusAtual: "Prospectar", frequenciaRetorno: "30 dias", retorno: "30 dias", vendedor: "", potencialCalculado: false, inativoManual: false,
 };
 
 export default function Clientes() {
-  const { clientes, setClientes, vendedores, lancamentos, negocios } = useAppStore();
+  const { clientes, setClientes, vendedores, lancamentos, negocios, ticketsMedios } = useAppStore();
   const [busca, setBusca] = useState("");
   const [fAbc, setFAbc] = useState(""); const [fPri, setFPri] = useState(""); const [fRota, setFRota] = useState(""); const [fStatus, setFStatus] = useState(""); const [fVend, setFVend] = useState(""); const [fCidade, setFCidade] = useState("");
   const [open, setOpen] = useState(false);
@@ -47,10 +47,24 @@ export default function Clientes() {
 
   const openNew = () => { setEdit(null); setForm(empty); setOpen(true); };
   const openEdit = (c: Cliente) => { setEdit(c); const { id, ...rest } = c; void id; setForm(rest); setOpen(true); };
+  const calcStatus = (clienteId: string, inativoManual?: boolean) => {
+    if (inativoManual) return "Inativo";
+    const now = new Date();
+    const hasNeg = negocios.some(n => n.clienteId === clienteId && ((now.getTime()-new Date(n.ultimaAtualizacao||n.dataCriacao).getTime())/86400000) <= 365);
+    if (hasNeg) return "Ativo";
+    const lastVisit = lancamentos.filter(l => l.clienteId === clienteId && l.tipo === "Visita").sort((a,b)=>b.data.localeCompare(a.data))[0];
+    if (!lastVisit) return "Prospectar";
+    const days = (now.getTime()-new Date(lastVisit.data).getTime())/86400000;
+    return days <= 90 ? "Visita" : "Prospectar";
+  };
+  const sugestaoFreq = (abc:string, p:string) => (abc==="A"&&p==="P1")?"15 dias":((abc==="A"&&p==="P2")||(abc==="B"&&p==="P1"))?"30 dias":(abc==="B"&&p==="P2")?"45 dias":(abc==="C"||p==="P3")?"60 dias":"30 dias";
   const save = () => {
     if (!form.nome) return toast.error("Nome obrigatório.");
-    if (edit) setClientes(prev => prev.map(c => c.id === edit.id ? { ...form, id: edit.id } : c));
-    else setClientes(prev => [...prev, { ...form, id: `c${Date.now()}` }]);
+    const ticketAtivo = ticketsMedios.filter(t=>t.ativo).reduce((s,t)=>s+t.valorMedioHa,0);
+    const potencialCalculado = ticketAtivo>0 ? form.areaHa * ticketAtivo : form.potencialTotal;
+    const base = { ...form, potencialTotal: potencialCalculado, potencialCalculado: ticketAtivo>0, frequenciaRetorno: form.frequenciaRetorno || sugestaoFreq(form.abc, form.prioridade), statusAtual: edit ? calcStatus(edit.id, form.inativoManual) : (form.inativoManual?"Inativo":"Prospectar") };
+    if (edit) setClientes(prev => prev.map(c => c.id === edit.id ? { ...base, id: edit.id } : c));
+    else setClientes(prev => [...prev, { ...base, id: `c${Date.now()}` }]);
     setOpen(false); toast.success("Cliente salvo.");
   };
 
@@ -106,7 +120,7 @@ export default function Clientes() {
                 <TableCell>{c.rota}</TableCell><TableCell>{c.cidade}</TableCell><TableCell className="max-w-[160px] truncate">{c.culturas}</TableCell>
                 <TableCell className="text-right">{fmtNum(c.areaHa)}</TableCell>
                 <TableCell className="text-right">{fmtBRL(c.potencialTotal)}</TableCell>
-                <TableCell>{c.statusAtual}</TableCell><TableCell>{c.frequencia}</TableCell><TableCell>{c.retorno}</TableCell>
+                <TableCell>{c.statusAtual}</TableCell><TableCell>{c.frequenciaRetorno}</TableCell><TableCell>{c.retorno}</TableCell>
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-1">
                     <Button size="icon" variant="ghost" onClick={() => setView(c)}><Eye className="h-3.5 w-3.5" /></Button>
@@ -139,8 +153,9 @@ export default function Clientes() {
             <div><Label>Culturas</Label><Input value={form.culturas} onChange={e => setForm({ ...form, culturas: e.target.value })} /></div>
             <div><Label>Área (ha)</Label><Input type="number" value={form.areaHa} onChange={e => setForm({ ...form, areaHa: +e.target.value })} /></div>
             <div><Label>Potencial total</Label><Input type="number" value={form.potencialTotal} onChange={e => setForm({ ...form, potencialTotal: +e.target.value })} /></div>
-            <div><Label>Status atual</Label><Input value={form.statusAtual} onChange={e => setForm({ ...form, statusAtual: e.target.value })} /></div>
-            <div><Label>Frequência</Label><Input value={form.frequencia} onChange={e => setForm({ ...form, frequencia: e.target.value })} /></div>
+            <div><Label>Inativo manual</Label><Select value={form.inativoManual ? "1":"0"} onValueChange={v=>setForm({ ...form, inativoManual: v==="1" })}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="0">Não</SelectItem><SelectItem value="1">Sim</SelectItem></SelectContent></Select></div>
+            <div><Label>Status atual</Label><Input value={form.statusAtual} disabled /></div>
+            <div><Label>Frequência de retorno</Label><Input value={form.frequenciaRetorno} onChange={e => setForm({ ...form, frequenciaRetorno: e.target.value })} /></div>
             <div><Label>Retorno</Label><Input value={form.retorno} onChange={e => setForm({ ...form, retorno: e.target.value })} /></div>
           </div>
           <DialogFooter><Button onClick={save}>Salvar</Button></DialogFooter>

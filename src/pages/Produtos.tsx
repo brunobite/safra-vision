@@ -16,7 +16,7 @@ import { toast } from "sonner";
 
 const ALL = "__all__";
 const empty: Omit<Produto, "id"> = {
-  codigo: "", nome: "", categoria: "Adjuvantes", linha: "", unidade: "L",
+  codigo: "", nome: "", categoria: "Adjuvantes", unidade: "LT",
   fornecedor: "", precoLista: 0, precoMinimo: 0, custo: 0, margem: 0,
   estoqueAtual: 0, estoqueReservado: 0, localEstoque: "", ativo: true,
 };
@@ -38,8 +38,9 @@ export default function Produtos() {
   const openEdit = (p: Produto) => { setEdit(p); const { id, ...rest } = p; void id; setForm(rest); setOpen(true); };
   const save = () => {
     if (!form.nome || !form.codigo) return toast.error("Código e nome obrigatórios.");
-    if (edit) setProdutos(prev => prev.map(p => p.id === edit.id ? { ...form, id: edit.id } : p));
-    else setProdutos(prev => [...prev, { ...form, id: `p${Date.now()}` }]);
+    const margem = form.precoLista > 0 ? (((form.precoLista - form.custo) / form.precoLista) * 100) : 0;
+    if (edit) setProdutos(prev => prev.map(p => p.id === edit.id ? { ...form, margem, id: edit.id } : p));
+    else setProdutos(prev => [...prev, { ...form, margem, id: `p${Date.now()}` }]);
     setOpen(false); toast.success("Produto salvo.");
   };
 
@@ -78,7 +79,7 @@ export default function Produtos() {
         <Table>
           <TableHeader><TableRow>
             <TableHead>Código</TableHead><TableHead>Nome</TableHead><TableHead>Categoria</TableHead>
-            <TableHead>Linha</TableHead><TableHead>Un.</TableHead><TableHead>Fornecedor</TableHead>
+            <TableHead>Un.</TableHead><TableHead>Fornecedor</TableHead>
             <TableHead className="text-right">Preço lista</TableHead><TableHead className="text-right">Preço mín.</TableHead>
             <TableHead className="text-right">Custo</TableHead><TableHead className="text-right">Margem%</TableHead>
             <TableHead className="text-right">Estoque</TableHead><TableHead>Status</TableHead>
@@ -92,7 +93,7 @@ export default function Produtos() {
                   <TableCell className="font-mono text-xs">{p.codigo}</TableCell>
                   <TableCell className="font-medium">{p.nome}</TableCell>
                   <TableCell><Badge variant="outline">{p.categoria}</Badge></TableCell>
-                  <TableCell>{p.linha}</TableCell><TableCell>{p.unidade}</TableCell><TableCell>{p.fornecedor}</TableCell>
+                  <TableCell>{p.unidade}</TableCell><TableCell>{p.fornecedor}</TableCell>
                   <TableCell className="text-right">{fmtBRL(p.precoLista)}</TableCell>
                   <TableCell className="text-right">{fmtBRL(p.precoMinimo)}</TableCell>
                   <TableCell className="text-right">{fmtBRL(p.custo)}</TableCell>
@@ -122,13 +123,12 @@ export default function Produtos() {
                 <SelectContent>{CATEGORIAS_PRODUTO.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
               </Select>
             </div>
-            <div><Label>Linha</Label><Input value={form.linha} onChange={e => setForm({ ...form, linha: e.target.value })} /></div>
-            <div><Label>Unidade</Label><Input value={form.unidade} onChange={e => setForm({ ...form, unidade: e.target.value })} /></div>
+            <div><Label>Unidade</Label><Select value={form.unidade} onValueChange={(v: Produto["unidade"]) => setForm({ ...form, unidade: v })}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent>{["LT","GAL","BD","TON","KG"].map(u=><SelectItem key={u} value={u}>{u}</SelectItem>)}</SelectContent></Select></div>
             <div><Label>Fornecedor</Label><Input value={form.fornecedor} onChange={e => setForm({ ...form, fornecedor: e.target.value })} /></div>
             <div><Label>Preço lista</Label><Input type="number" value={form.precoLista} onChange={e => setForm({ ...form, precoLista: +e.target.value })} /></div>
             <div><Label>Preço mínimo</Label><Input type="number" value={form.precoMinimo} onChange={e => setForm({ ...form, precoMinimo: +e.target.value })} /></div>
             <div><Label>Custo</Label><Input type="number" value={form.custo} onChange={e => setForm({ ...form, custo: +e.target.value })} /></div>
-            <div><Label>Margem (%)</Label><Input type="number" value={form.margem || 0} onChange={e => setForm({ ...form, margem: +e.target.value })} /></div>
+            <div><Label>Margem (%)</Label><Input type="number" value={form.precoLista > 0 ? (((form.precoLista - form.custo) / form.precoLista) * 100).toFixed(2) : 0} disabled /></div>
             <div><Label>Estoque atual</Label><Input type="number" value={form.estoqueAtual} onChange={e => setForm({ ...form, estoqueAtual: +e.target.value })} /></div>
             <div><Label>Estoque reservado</Label><Input type="number" value={form.estoqueReservado} onChange={e => setForm({ ...form, estoqueReservado: +e.target.value })} /></div>
             <div><Label>Local estoque</Label><Input value={form.localEstoque} onChange={e => setForm({ ...form, localEstoque: e.target.value })} /></div>

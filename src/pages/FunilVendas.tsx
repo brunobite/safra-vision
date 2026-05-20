@@ -20,7 +20,7 @@ const ORIGENS: OrigemNegocio[] = ["Visita", "Ligação", "WhatsApp", "Evento", "
 const empty: Omit<Negocio, "id"> = {
   nome: "", clienteId: "", vendedor: "Bruno", origem: "Visita",
   produtos: [], categoria: "Adjuvantes",
-  valorPotencial: 0, status: "Novo", probabilidade: 30,
+  valorPotencial: 0, status: "Novo",
   previsaoFechamento: "", dataCriacao: new Date().toISOString().slice(0,10),
   ultimaAtualizacao: new Date().toISOString().slice(0,10),
   proximaAcao: "", dataProximaAcao: "",
@@ -41,7 +41,7 @@ export default function FunilVendas() {
     const ganhos = list.filter(n => n.status === "Fechado ganho");
     const perdidos = list.filter(n => n.status === "Fechado perdido");
     const valorPotAberto = abertos.reduce((s,n) => s + n.valorPotencial, 0);
-    const ponderado = abertos.reduce((s,n) => s + n.valorPotencial * (n.probabilidade/100), 0);
+    const ponderado = abertos.reduce((s,n) => s + n.valorPotencial, 0);
     const taxa = (ganhos.length + perdidos.length) ? ganhos.length / (ganhos.length + perdidos.length) : 0;
     const hoje = new Date().toISOString().slice(0,10);
     const proxIni = new Date(); const proxFim = new Date(); proxFim.setDate(proxFim.getDate()+7);
@@ -113,7 +113,7 @@ export default function FunilVendas() {
                     <Card key={n.id} className="p-3 text-xs">
                       <div className="mb-1 flex items-start justify-between gap-2">
                         <div className="font-semibold">{c?.nome}</div>
-                        <Badge variant="outline" className="text-[10px]">{n.probabilidade}%</Badge>
+                        <Badge variant="outline" className="text-[10px]">Real</Badge>
                       </div>
                       <p className="text-muted-foreground">{n.nome}</p>
                       <p className="mt-1">{n.categoria}</p>
@@ -180,8 +180,7 @@ export default function FunilVendas() {
                 <SelectContent>{STATUS_FUNIL.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
               </Select>
             </div>
-            <div><Label>Probabilidade (%)</Label><Input type="number" value={form.probabilidade} onChange={e => setForm({ ...form, probabilidade: +e.target.value })} /></div>
-            <div><Label>Previsão fechamento</Label><Input type="date" value={form.previsaoFechamento || ""} onChange={e => setForm({ ...form, previsaoFechamento: e.target.value })} /></div>
+                        <div><Label>Previsão fechamento</Label><Input type="date" value={form.previsaoFechamento || ""} onChange={e => setForm({ ...form, previsaoFechamento: e.target.value })} /></div>
             <div><Label>Próxima ação</Label><Input value={form.proximaAcao || ""} onChange={e => setForm({ ...form, proximaAcao: e.target.value })} /></div>
             <div><Label>Data próxima ação</Label><Input type="date" value={form.dataProximaAcao || ""} onChange={e => setForm({ ...form, dataProximaAcao: e.target.value })} /></div>
             <div className="md:col-span-2"><Label>Observações</Label><Textarea rows={2} value={form.observacoes || ""} onChange={e => setForm({ ...form, observacoes: e.target.value })} /></div>

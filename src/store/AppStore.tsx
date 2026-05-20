@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, ReactNode } from "react";
 import {
   Cliente, Lancamento, MetaEmpresa, MetaPessoal, Evento, PrioridadeP1Item,
-  Negocio, Produto, RegraComissao, Vendedor, MetaVendedor, MetaCategoria,
+  Negocio, Produto, RegraComissao, Vendedor, MetaVendedor, MetaCategoria, TicketMedioRegra,
 } from "@/types";
 import { bootstrapLocalDatabase, saveStore } from "@/lib/localRepository";
 
@@ -24,6 +24,7 @@ interface AppStoreCtx {
   produtos: Produto[]; setProdutos: React.Dispatch<React.SetStateAction<Produto[]>>;
   regras: RegraComissao[]; setRegras: React.Dispatch<React.SetStateAction<RegraComissao[]>>;
   vendedores: Vendedor[]; setVendedores: React.Dispatch<React.SetStateAction<Vendedor[]>>;
+  ticketsMedios: TicketMedioRegra[]; setTicketsMedios: React.Dispatch<React.SetStateAction<TicketMedioRegra[]>>;
   isLoading: boolean;
   isSaving: boolean;
   lastSavedAt: string | null;
@@ -56,6 +57,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const [produtos, setProdutos] = useState<Produto[]>([]);
   const [regras, setRegras] = useState<RegraComissao[]>([]);
   const [vendedores, setVendedores] = useState<Vendedor[]>([]);
+  const [ticketsMedios, setTicketsMedios] = useState<TicketMedioRegra[]>([]);
   const [filters, setFilters] = useState<Filters>(defaultFilters);
   const [isLoading, setIsLoading] = useState(true);
   const [isReady, setIsReady] = useState(false);
@@ -81,6 +83,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         setProdutos(localData.produtos);
         setRegras(localData.regrasComissao);
         setVendedores(localData.vendedores);
+        setTicketsMedios(localData.configuracoes || []);
       } catch (error) {
         console.error(error);
         setDbError("Não foi possível acessar o banco local deste navegador. Os dados podem não ser salvos até o problema ser resolvido.");
@@ -121,6 +124,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => { void persistStore("produtos", produtos); }, [produtos]);
   useEffect(() => { void persistStore("regrasComissao", regras); }, [regras]);
   useEffect(() => { void persistStore("vendedores", vendedores); }, [vendedores]);
+  useEffect(() => { void persistStore("configuracoes", ticketsMedios as never); }, [ticketsMedios]);
 
   const cMap = useMemo(() => new Map(clientes.map(c => [c.id, c])), [clientes]);
   const pMap = useMemo(() => new Map(produtos.map(p => [p.id, p])), [produtos]);
@@ -159,7 +163,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       metasVendedor, setMetasVendedor, metasCategoria, setMetasCategoria,
       eventos, setEventos, prioridadesP1, setPrioridadesP1,
       negocios, setNegocios, produtos, setProdutos,
-      regras, setRegras, vendedores, setVendedores,
+      regras, setRegras, vendedores, setVendedores, ticketsMedios, setTicketsMedios,
       isLoading, isReady, dbError, isSaving, lastSavedAt, saveError,
       filters, setFilters,
       filtered: { lancamentos: filteredLancs, negocios: filteredNegs },
