@@ -18,6 +18,8 @@ export interface ExportDataBundle {
   metasCategoria?: unknown[];
   prioridadesP1?: unknown[];
   dbMeta?: DbMeta | null;
+  empresas?: unknown[];
+  formasPagamento?: unknown[];
 }
 
 export const ENTITY_LABELS: Array<{ key: keyof ExportDataBundle; fileName: string; sheetName: string }> = [

@@ -54,6 +54,8 @@ export function parseBackupPayload(content: string): ExportDataBundle {
   normalized.prioridadesP1 = Array.isArray(parsed.data.prioridadesP1) ? parsed.data.prioridadesP1 : [];
   normalized.orcamentos = Array.isArray(parsed.data.orcamentos) ? parsed.data.orcamentos : [];
   normalized.dbMeta = (parsed.data.dbMeta as DbMeta | undefined) ?? null;
+  normalized.empresas = Array.isArray(parsed.data.empresas) ? parsed.data.empresas : [];
+  normalized.formasPagamento = Array.isArray(parsed.data.formasPagamento) ? parsed.data.formasPagamento : [];
 
   return normalized;
 }
