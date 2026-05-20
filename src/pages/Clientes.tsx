@@ -132,7 +132,7 @@ export default function Clientes() {
                                 <TableCell>{c.rota}</TableCell><TableCell>{c.cidade}</TableCell><TableCell className="max-w-[160px] truncate">{c.culturas}</TableCell>
                 <TableCell className="text-right">{fmtNum(c.areaHa)}</TableCell>
                 <TableCell className="text-right">{fmtBRL(c.potencialTotal)}</TableCell>
-                <TableCell>{c.statusAtual} {atrasado(c) && <Badge className="ml-1" variant="destructive">Atrasado</Badge>}</TableCell><TableCell>{formatDateBR(ultimaVisita(c.id)) || "Sem visita registrada"}</TableCell><TableCell>{proximasAcoes.find(a=>a.clienteId===c.id && a.status==="Pendente")?.descricao || "—"}</TableCell><TableCell>{formatDateBR(proximasAcoes.find(a=>a.clienteId===c.id && a.status==="Pendente")?.data || c.retorno)</TableCell>
+                <TableCell>{c.statusAtual} {atrasado(c) && <Badge className="ml-1" variant="destructive">Atrasado</Badge>}</TableCell><TableCell>{formatDateBR(ultimaVisita(c.id)) || "Sem visita registrada"}</TableCell><TableCell>{proximasAcoes.find(a=>a.clienteId===c.id && a.status==="Pendente")?.descricao || "—"}</TableCell><TableCell>{formatDateBR(proximasAcoes.find(a=>a.clienteId===c.id && a.status==="Pendente")?.data || c.retorno)}</TableCell>
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-1">
                     <Button size="icon" variant="ghost" onClick={() => setView(c)}><Eye className="h-3.5 w-3.5" /></Button>
