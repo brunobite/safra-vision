@@ -58,7 +58,13 @@ export default function Configuracoes() {
   };
   useEffect(() => { void loadStats();
     const raw = localStorage.getItem(EMPRESA_STORAGE_KEY);
-    if (raw) { try { setDadosEmpresa({ ...defaultEmpresa, ...JSON.parse(raw) }); } catch { } }
+    if (raw) {
+      try {
+        setDadosEmpresa({ ...defaultEmpresa, ...JSON.parse(raw) });
+      } catch (error) {
+        console.warn("Falha ao carregar dados da empresa do armazenamento local.", error);
+      }
+    }
   }, []);
 
   const exportPayload = {

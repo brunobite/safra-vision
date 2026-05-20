@@ -14,6 +14,7 @@ const EMPRESA_STORAGE_KEY = "safra-dados-empresa";
 const STATUS: OrcamentoStatus[] = ["Rascunho", "Enviado", "Aprovado", "Reprovado", "Cancelado"];
 const UNIDADES: UnidadeDose[] = ["L/ha", "mL/ha", "kg/ha", "g/ha", "ton/ha", "un/ha"];
 const ALL = "__all__";
+type OrcamentoDisplayConfig = { key?: string; value?: boolean };
 const safeDiv = (v: number, d: number) => d > 0 ? v / d : 0;
 const doseNorm = (dose:number, unidade:UnidadeDose) => unidade === "mL/ha" || unidade === "g/ha" ? dose/1000 : dose;
 const qtde = (dose:number, unidade:UnidadeDose, area:number) => doseNorm(dose, unidade) * area;
@@ -25,7 +26,7 @@ const validade7 = (data:string)=>{ const d=new Date(data+"T00:00:00"); d.setDate
 
 export default function Orcamentos(){
   const { orcamentos, setOrcamentos, clientes, produtos, vendedores, ticketsMedios } = useAppStore();
-  const showCusto = ticketsMedios.find((x:any) => x.key === "showCustoPorHectare")?.value ?? true;
+  const showCusto = (ticketsMedios as OrcamentoDisplayConfig[]).find((x) => x.key === "showCustoPorHectare")?.value ?? true;
   const [open,setOpen]=useState(false); const [edit,setEdit]=useState<Orcamento| null>(null);
   const [fCliente,setFCliente]=useState(""); const [fStatus,setFStatus]=useState("");
   const [form,setForm]=useState<Orcamento>({id:"",codigo:code(),clienteId:"",vendedor:"",data:new Date().toISOString().slice(0,10),validade:validade7(new Date().toISOString().slice(0,10)),status:"Rascunho",areaAplicacaoHa:0,itens:[],subtotal:0,descontoTotal:0,valorTotal:0,custoPorHectare:0,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()});
