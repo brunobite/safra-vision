@@ -185,3 +185,50 @@ export interface RegraComissao {
 export interface TicketMedioRegra { id: string; categoria: CategoriaProduto; valorMedioHa: number; ativo: boolean; }
 
 export interface NegocioProdutoItem { produtoId: string; quantidade: number; precoUnitario: number; }
+
+export type OrcamentoStatus = "Rascunho" | "Enviado" | "Aprovado" | "Reprovado" | "Cancelado";
+export type UnidadeDose = "L/ha" | "mL/ha" | "kg/ha" | "g/ha" | "ton/ha" | "un/ha";
+
+export interface OrcamentoItem {
+  id: string;
+  produtoId: string;
+  produtoNome: string;
+  categoria: string;
+  unidadeProduto: "LT" | "KG" | "TON" | "GAL" | "BD";
+  dosePorHa: number;
+  unidadeDose: UnidadeDose;
+  areaHa: number;
+  quantidadeTotal: number;
+  precoUnitario: number;
+  valorTotalItem: number;
+  custoPorHaItem: number;
+  observacoes?: string;
+}
+
+export interface Orcamento {
+  id: string;
+  clienteId: string;
+  negocioId?: string;
+  vendedor: string;
+  data: string;
+  validade?: string;
+  status: OrcamentoStatus;
+  areaAplicacaoHa: number;
+  itens: OrcamentoItem[];
+  subtotal: number;
+  descontoTotal: number;
+  valorTotal: number;
+  custoPorHectare: number;
+  formaPagamento?: string;
+  tipoCobranca?: "Boleto" | "Pix" | "Transferência" | "Dinheiro" | "Outro";
+  prazoPagamento?: string;
+  observacoes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RegraComercialConfig {
+  id: string;
+  key: "showCustoPorHectare";
+  value: boolean;
+}

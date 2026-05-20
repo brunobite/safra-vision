@@ -11,7 +11,7 @@ interface BackupFile {
 
 const REQUIRED_KEYS: Array<keyof ExportDataBundle> = [
   "clientes", "vendedores", "lancamentos", "negocios", "produtos",
-  "metasEmpresa", "metasPessoais", "regrasComissao", "eventos", "configuracoes",
+  "metasEmpresa", "metasPessoais", "regrasComissao", "eventos", "configuracoes", "orcamentos",
 ];
 
 export function generateBackupPayload(source: ExportDataBundle, dbMeta?: DbMeta | null) {
@@ -52,6 +52,7 @@ export function parseBackupPayload(content: string): ExportDataBundle {
   normalized.metasVendedor = Array.isArray(parsed.data.metasVendedor) ? parsed.data.metasVendedor : [];
   normalized.metasCategoria = Array.isArray(parsed.data.metasCategoria) ? parsed.data.metasCategoria : [];
   normalized.prioridadesP1 = Array.isArray(parsed.data.prioridadesP1) ? parsed.data.prioridadesP1 : [];
+  normalized.orcamentos = Array.isArray(parsed.data.orcamentos) ? parsed.data.orcamentos : [];
   normalized.dbMeta = (parsed.data.dbMeta as DbMeta | undefined) ?? null;
 
   return normalized;

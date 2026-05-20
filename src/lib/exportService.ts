@@ -12,6 +12,8 @@ export interface ExportDataBundle {
   regrasComissao: unknown[];
   eventos: unknown[];
   configuracoes: unknown[];
+  orcamentos?: unknown[];
+  orcamentoItens?: unknown[];
   metasVendedor?: unknown[];
   metasCategoria?: unknown[];
   prioridadesP1?: unknown[];
@@ -28,6 +30,7 @@ export const ENTITY_LABELS: Array<{ key: keyof ExportDataBundle; fileName: strin
   { key: "metasPessoais", fileName: "metas_pessoais.csv", sheetName: "METAS_PESSOAIS" },
   { key: "regrasComissao", fileName: "regras_comissao.csv", sheetName: "REGRAS_COMISSAO" },
   { key: "eventos", fileName: "eventos.csv", sheetName: "EVENTOS" },
+  { key: "orcamentos", fileName: "orcamentos.csv", sheetName: "ORCAMENTOS" },
 ];
 
 export function formatDateStamp(date = new Date()) {

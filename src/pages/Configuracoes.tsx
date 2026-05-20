@@ -29,7 +29,7 @@ const emptyRegra: Omit<RegraComissao, "id"> = { nome: "", tipo: "fixa", percentu
 export default function Configuracoes() {
   const {
     regras, setRegras, vendedores, setVendedores, ticketsMedios, setTicketsMedios, dbError, isSaving, lastSavedAt, saveError,
-    clientes, lancamentos, negocios, produtos, metasEmpresa, metasPessoais, eventos, metasVendedor, metasCategoria, prioridadesP1,
+    clientes, lancamentos, negocios, produtos, metasEmpresa, metasPessoais, eventos, metasVendedor, metasCategoria, prioridadesP1, orcamentos, setOrcamentos,
     setClientes, setLancamentos, setNegocios, setProdutos, setMetasEmpresa, setMetasPessoais, setEventos, setMetasVendedor, setMetasCategoria, setPrioridadesP1,
   } = useAppStore();
   const [open, setOpen] = useState(false);
@@ -56,7 +56,7 @@ export default function Configuracoes() {
 
   const exportPayload = {
     clientes, vendedores, lancamentos, negocios, produtos, metasEmpresa, metasPessoais, regrasComissao: regras, eventos,
-    configuracoes: ticketsMedios, metasVendedor, metasCategoria, prioridadesP1,
+    configuracoes: ticketsMedios, metasVendedor, metasCategoria, prioridadesP1, orcamentos,
   };
 
   const handleRestoreFile = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -81,6 +81,7 @@ export default function Configuracoes() {
       setMetasVendedor((restored.metasVendedor ?? []) as never[]);
       setMetasCategoria((restored.metasCategoria ?? []) as never[]);
       setPrioridadesP1((restored.prioridadesP1 ?? []) as never[]);
+      setOrcamentos((restored.orcamentos ?? []) as never[]);
 
       toast.success("Backup restaurado com sucesso.");
       void loadStats();
