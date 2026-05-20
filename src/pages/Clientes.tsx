@@ -35,7 +35,11 @@ export default function Clientes() {
   const cidades = useMemo(() => Array.from(new Set(clientes.map(c => c.cidade))), [clientes]);
   const statuses = useMemo(() => Array.from(new Set(clientes.map(c => c.statusAtual))), [clientes]);
 
-  const ultimaVisita = (id: string) => lancamentos.filter(l=>l.clienteId===id && l.tipo==="Visita").sort((a,b)=>b.data.localeCompare(a.data))[0]?.data;
+  const visitasCliente = (id: string) => lancamentos.filter(l => l.clienteId === id && l.tipo === "Visita");
+  const totalVisitas = (id: string) => visitasCliente(id).length;
+  const ultimaVisita = (id: string) => visitasCliente(id).sort((a, b) => b.data.localeCompare(a.data))[0]?.data;
+  const proximaAcaoPendente = (id: string) => proximasAcoes.find(a => a.clienteId === id && a.status === "Pendente");
+  const totalProximasAcoesAbertas = (id: string) => proximasAcoes.filter(a => a.clienteId === id && a.status === "Pendente").length;
   const atrasado = (c: Cliente) => isClienteAtrasado(c, proximasAcoes);
   const lista = useMemo(() => clientes.filter(c =>
     (!busca || c.nome.toLowerCase().includes(busca.toLowerCase())) &&
@@ -123,7 +127,7 @@ export default function Clientes() {
             <TableHead>Cliente</TableHead><TableHead>ABC</TableHead>
             <TableHead>Rota</TableHead><TableHead>Cidade</TableHead><TableHead>Culturas</TableHead>
             <TableHead className="text-right">Área (ha)</TableHead><TableHead className="text-right">Potencial</TableHead>
-            <TableHead>Status</TableHead><TableHead>Última visita</TableHead><TableHead>Próxima ação</TableHead><TableHead>Retorno</TableHead><TableHead className="text-right">Ações</TableHead>
+            <TableHead>Status</TableHead><TableHead>Última visita</TableHead><TableHead>Próxima ação</TableHead><TableHead>Próximo retorno</TableHead><TableHead className="text-right">Ações</TableHead>
           </TableRow></TableHeader>
           <TableBody>
             {lista.map(c => (
@@ -133,7 +137,7 @@ export default function Clientes() {
                                 <TableCell>{c.rota}</TableCell><TableCell>{c.cidade}</TableCell><TableCell className="max-w-[160px] truncate">{c.culturas}</TableCell>
                 <TableCell className="text-right">{fmtNum(c.areaHa)}</TableCell>
                 <TableCell className="text-right">{fmtBRL(c.potencialTotal)}</TableCell>
-                <TableCell>{c.statusAtual} {atrasado(c) && <Badge className="ml-1" variant="destructive">Atrasado</Badge>}</TableCell><TableCell>{formatDateBR(ultimaVisita(c.id)) || "Sem visita registrada"}</TableCell><TableCell>{proximasAcoes.find(a=>a.clienteId===c.id && a.status==="Pendente")?.descricao || "—"}</TableCell><TableCell>{formatDateBR(proximasAcoes.find(a=>a.clienteId===c.id && a.status==="Pendente")?.data || c.retorno)}</TableCell>
+                <TableCell>{c.statusAtual} {atrasado(c) && <Badge className="ml-1" variant="destructive">Atrasado</Badge>}</TableCell><TableCell>{formatDateBR(ultimaVisita(c.id)) || "Sem visita registrada"}</TableCell><TableCell>{proximaAcaoPendente(c.id)?.descricao || "—"}</TableCell><TableCell>{formatDateBR(proximaAcaoPendente(c.id)?.data || c.retorno)}</TableCell>
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-1">
                     <Button size="icon" variant="ghost" onClick={() => setView(c)}><Eye className="h-3.5 w-3.5" /></Button>
@@ -196,12 +200,13 @@ export default function Clientes() {
               <div><span className="text-muted-foreground">Potencial:</span> {fmtBRL(view.potencialTotal)}</div>
               <div><span className="text-muted-foreground">Status:</span> {view.statusAtual}</div>
               <div><span className="text-muted-foreground">Frequência:</span> {view.frequenciaRetorno}</div>
-              <div><span className="text-muted-foreground">Retorno:</span> {view.retorno}</div>
-              <div><span className="text-muted-foreground">Última visita:</span> {ultimaVisita(view.id) || "Sem visita registrada"}</div>
-              <div><span className="text-muted-foreground">Próxima ação:</span> {view.proximaAcao || "—"}</div>
+              <div><span className="text-muted-foreground">Próximo retorno:</span> {formatDateBR(proximaAcaoPendente(view.id)?.data || view.retorno)}</div>
+              <div><span className="text-muted-foreground">Visitas realizadas:</span> {totalVisitas(view.id)}</div>
+              <div><span className="text-muted-foreground">Última visita:</span> {formatDateBR(ultimaVisita(view.id)) || "Sem visita registrada"}</div>
+              <div><span className="text-muted-foreground">Próxima ação:</span> {proximaAcaoPendente(view.id)?.descricao || "—"}</div>
               <div><span className="text-muted-foreground">Negócios:</span> {negocios.filter(n=>n.clienteId===view.id).length}</div>
               <div><span className="text-muted-foreground">Orçamentos:</span> {orcamentos.filter(o=>o.clienteId===view.id).length}</div>
-              <div><span className="text-muted-foreground">Ações abertas:</span> {proximasAcoes.filter(a=>a.clienteId===view.id && a.status==="Pendente").length}</div>
+              <div><span className="text-muted-foreground">Próximas ações abertas:</span> {totalProximasAcoesAbertas(view.id)}</div>
             </div>
           )}
         </DialogContent>
