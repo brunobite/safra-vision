@@ -13,7 +13,7 @@ import {
 } from "recharts";
 
 export default function Dashboard() {
-  const { clientes, metasEmpresa, metasPessoais, filtered, lancamentos, negocios, regras } = useAppStore();
+  const { clientes, metasEmpresa, metasPessoais, filtered, lancamentos, negocios, regras, orcamentos, proximasAcoes } = useAppStore();
 
   const metaPessoalTotal = metasPessoais.reduce((s, m) => s + m.metaFaturamento, 0);
   const kpis = useMemo(
@@ -52,6 +52,17 @@ export default function Dashboard() {
     return Object.entries(real).sort(([a],[b]) => a.localeCompare(b)).map(([mes, v]) => ({ mes, "%": +((v/potTotal)*100).toFixed(2) }));
   }, [negocios, clientes]);
 
+
+  const hoje = new Date().toISOString().slice(0,10);
+  const operacionais = useMemo(() => ({
+    atrasados: clientes.filter(c => c.statusAtual !== "Inativo" && ((c.dataProximaAcao && c.dataProximaAcao < hoje) || (c.retorno && c.retorno < hoje))).length,
+    proximasSemana: proximasAcoes.filter(a=>a.status==="Pendente" && a.data >= hoje).length,
+    semVisita: clientes.filter(c=>!lancamentos.some(l=>l.clienteId===c.id && l.tipo==="Visita")).length,
+    orcamentosAbertos: orcamentos.filter(o=>["Rascunho","Enviado"].includes(o.status)).length,
+    negociosAbertos: negocios.filter(n=>!["Fechado ganho","Fechado perdido"].includes(n.status)).length,
+    visitasMes: lancamentos.filter(l=>l.tipo==="Visita" && l.data.slice(0,7)===hoje.slice(0,7)).length,
+  }), [clientes, proximasAcoes, lancamentos, orcamentos, negocios, hoje]);
+
   const potXFech = useMemo(() => {
     const m: Record<string, { Potencial: number; Fechado: number }> = {};
     negocios.forEach(n => {
@@ -81,6 +92,12 @@ export default function Dashboard() {
         <KpiCard label="Pipeline aberto" value={fmtBRL(kpis.pipelineAberto)} icon={Layers} tone="muted" />
         <KpiCard label="Pendências" value={fmtNum(kpis.pendencias)} icon={Clock} tone={kpis.pendencias > 0 ? "warning" : "success"} />
         <KpiCard label="Aproveitamento" value={fmtPct(kpis.aproveitamento)} icon={Award} tone={kpis.aproveitamento >= 0.5 ? "success" : "warning"} />
+        <KpiCard label="Clientes atrasados" value={fmtNum(operacionais.atrasados)} icon={AlertTriangle} tone="destructive" />
+        <KpiCard label="Próximas ações" value={fmtNum(operacionais.proximasSemana)} icon={Clock} />
+        <KpiCard label="Clientes sem visita" value={fmtNum(operacionais.semVisita)} icon={CalendarDays} tone="warning" />
+        <KpiCard label="Orçamentos abertos" value={fmtNum(operacionais.orcamentosAbertos)} icon={FileText} />
+        <KpiCard label="Negócios abertos" value={fmtNum(operacionais.negociosAbertos)} icon={Layers} />
+        <KpiCard label="Visitas do mês" value={fmtNum(operacionais.visitasMes)} icon={TrendingUp} />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">

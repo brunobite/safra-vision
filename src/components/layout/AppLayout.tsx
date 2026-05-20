@@ -1,5 +1,5 @@
 import { Outlet, NavLink } from "react-router-dom";
-import { LayoutDashboard, FilePlus2, Target, FileBarChart, Users, Route, Star, CalendarDays, Settings, Sprout, GitBranch, Package, Warehouse, FileText } from "lucide-react";
+import { LayoutDashboard, FilePlus2, Target, FileBarChart, Users, Route, Star, CalendarDays, Settings, Sprout, GitBranch, Package, Warehouse, FileText, ListTodo } from "lucide-react";
 import {
   Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel,
   SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger,
@@ -19,6 +19,7 @@ const items = [
   { title: "Rotas", url: "/rotas", icon: Route },
   { title: "Prioridades P1", url: "/prioridades", icon: Star },
   { title: "Eventos", url: "/eventos", icon: CalendarDays },
+  { title: "Próximas ações", url: "/proximas-acoes", icon: ListTodo },
   { title: "Configurações", url: "/configuracoes", icon: Settings },
 ];
 
