@@ -214,6 +214,7 @@ export interface OrcamentoItem {
 }
 
 export interface Orcamento {
+  empresaId?: string;
   id: string;
   codigo: string;
   clienteId: string;
@@ -234,6 +235,22 @@ export interface Orcamento {
   observacoes?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface Empresa {
+  id: string;
+  nomeFantasia: string;
+  razaoSocial: string;
+  cnpj: string;
+  inscricaoEstadual: string;
+  endereco: string;
+  cidadeUf: string;
+  telefone: string;
+  email: string;
+  consultorPadrao: string;
+  observacoesComerciaisPadrao: string;
+  ativa: boolean;
+  padrao: boolean;
 }
 
 export interface DadosEmpresa {

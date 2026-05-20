@@ -21,6 +21,7 @@ export const seedData = {
   configuracoes: [{ id: "cfg-show-custo-ha", key: "showCustoPorHectare", value: true }],
   orcamentos: [],
   orcamentoItens: [],
+  empresas: [],
 };
 
 export type SeedData = typeof seedData;
