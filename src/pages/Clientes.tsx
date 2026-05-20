@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,6 +32,7 @@ export default function Clientes() {
   const [edit, setEdit] = useState<Cliente | null>(null);
   const [form, setForm] = useState<Omit<Cliente, "id">>(empty);
   const [view, setView] = useState<Cliente | null>(null);
+  const nav = useNavigate();
 
   const cidades = useMemo(() => Array.from(new Set(clientes.map(c => c.cidade))), [clientes]);
   const statuses = useMemo(() => Array.from(new Set(clientes.map(c => c.statusAtual))), [clientes]);
@@ -207,6 +209,7 @@ export default function Clientes() {
               <div><span className="text-muted-foreground">Negócios:</span> {negocios.filter(n=>n.clienteId===view.id).length}</div>
               <div><span className="text-muted-foreground">Orçamentos:</span> {orcamentos.filter(o=>o.clienteId===view.id).length}</div>
               <div><span className="text-muted-foreground">Próximas ações abertas:</span> {totalProximasAcoesAbertas(view.id)}</div>
+              <div className="col-span-2 mt-2 flex flex-wrap gap-2"><Button size="sm" variant="outline" onClick={() => nav(`/lancamentos?clienteId=${view.id}`)}>Nova visita</Button><Button size="sm" variant="outline" onClick={() => nav(`/funil?clienteId=${view.id}`)}>Nova oportunidade</Button><Button size="sm" variant="outline" onClick={() => nav(`/orcamentos?clienteId=${view.id}`)}>Novo orçamento</Button></div>
             </div>
           )}
         </DialogContent>
