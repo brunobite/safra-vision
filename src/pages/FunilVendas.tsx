@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -27,7 +28,9 @@ const empty: Omit<Negocio, "id"> = {
 };
 
 export default function FunilVendas() {
-  const { negocios, setNegocios, clientes, clienteById, vendedores, filtered, setOrcamentos } = useAppStore();
+  const { negocios, setNegocios, clientes, clienteById, vendedores, filtered } = useAppStore();
+  const nav = useNavigate();
+  const [params, setParams] = useSearchParams();
   const [open, setOpen] = useState(false);
   const [edit, setEdit] = useState<Negocio | null>(null);
   const [form, setForm] = useState<Omit<Negocio, "id">>(empty);
@@ -51,6 +54,16 @@ export default function FunilVendas() {
   }, [list]);
 
   const openNew = () => { setEdit(null); setForm({ ...empty, dataCriacao: new Date().toISOString().slice(0,10), ultimaAtualizacao: new Date().toISOString().slice(0,10) }); setOpen(true); };
+
+  const prefillCliente = params.get("clienteId");
+  useEffect(() => {
+    if (prefillCliente) {
+      setEdit(null);
+      setForm({ ...empty, clienteId: prefillCliente, dataCriacao: new Date().toISOString().slice(0,10), ultimaAtualizacao: new Date().toISOString().slice(0,10) });
+      setOpen(true);
+      setParams({});
+    }
+  }, [prefillCliente, setParams]);
   const openEdit = (n: Negocio) => { setEdit(n); const { id, ...rest } = n; void id; setForm(rest); setOpen(true); };
 
   const save = () => {
@@ -131,7 +144,7 @@ export default function FunilVendas() {
                           <SelectTrigger className="h-7 px-2 text-[10px] w-auto"><ArrowRight className="h-3 w-3" /></SelectTrigger>
                           <SelectContent>{STATUS_FUNIL.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
                         </Select>
-                        <Button size="sm" variant="outline" className="h-7 px-2 text-[10px]" onClick={() => { const now=new Date(); setOrcamentos(prev=>[{id:`orc${Date.now()}`,clienteId:n.clienteId,negocioId:n.id,vendedor:n.vendedor,data:now.toISOString().slice(0,10),status:"Rascunho",areaAplicacaoHa:clienteById(n.clienteId)?.areaHa||0,itens:[],subtotal:0,descontoTotal:0,valorTotal:0,custoPorHectare:0,createdAt:now.toISOString(),updatedAt:now.toISOString()},...prev]); toast.success("Orçamento gerado a partir do negócio."); }}>Gerar orçamento</Button><Button size="sm" variant="ghost" className="h-7 px-2 text-[10px]" onClick={() => { if (!window.confirm("Esta ação não pode ser desfeita nesta versão. Deseja continuar?")) return; setNegocios(prev => prev.filter(x => x.id !== n.id)); toast.success("Excluído."); }}><Trash2 className="h-3 w-3 text-destructive" /></Button>
+                        <Button size="sm" variant="outline" className="h-7 px-2 text-[10px]" onClick={() => nav(`/orcamentos?negocioId=${n.id}`)}>Gerar orçamento</Button><Button size="sm" variant="ghost" className="h-7 px-2 text-[10px]" onClick={() => { if (!window.confirm("Esta ação não pode ser desfeita nesta versão. Deseja continuar?")) return; setNegocios(prev => prev.filter(x => x.id !== n.id)); toast.success("Excluído."); }}><Trash2 className="h-3 w-3 text-destructive" /></Button>
                       </div>
                     </Card>
                   );
