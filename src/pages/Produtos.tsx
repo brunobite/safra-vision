@@ -123,7 +123,7 @@ export default function Produtos() {
                 <SelectContent>{CATEGORIAS_PRODUTO.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
               </Select>
             </div>
-            <div><Label>Unidade</Label><Select value={form.unidade} onValueChange={v => setForm({ ...form, unidade: v as any })}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent>{["LT","GAL","BD","TON","KG"].map(u=><SelectItem key={u} value={u}>{u}</SelectItem>)}</SelectContent></Select></div>
+            <div><Label>Unidade</Label><Select value={form.unidade} onValueChange={(v: Produto["unidade"]) => setForm({ ...form, unidade: v })}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent>{["LT","GAL","BD","TON","KG"].map(u=><SelectItem key={u} value={u}>{u}</SelectItem>)}</SelectContent></Select></div>
             <div><Label>Fornecedor</Label><Input value={form.fornecedor} onChange={e => setForm({ ...form, fornecedor: e.target.value })} /></div>
             <div><Label>Preço lista</Label><Input type="number" value={form.precoLista} onChange={e => setForm({ ...form, precoLista: +e.target.value })} /></div>
             <div><Label>Preço mínimo</Label><Input type="number" value={form.precoMinimo} onChange={e => setForm({ ...form, precoMinimo: +e.target.value })} /></div>
