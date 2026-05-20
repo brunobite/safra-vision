@@ -18,6 +18,7 @@ import NotFound from "./pages/NotFound.tsx";
 import FunilVendas from "./pages/FunilVendas";
 import Produtos from "./pages/Produtos";
 import PrecosEstoque from "./pages/PrecosEstoque";
+import Orcamentos from "./pages/Orcamentos";
 
 const queryClient = new QueryClient();
 
@@ -33,6 +34,7 @@ const App = () => (
               <Route path="/" element={<Dashboard />} />
               <Route path="/lancamentos" element={<Lancamentos />} />
               <Route path="/funil" element={<FunilVendas />} />
+              <Route path="/orcamentos" element={<Orcamentos />} />
               <Route path="/produtos" element={<Produtos />} />
               <Route path="/precos-estoque" element={<PrecosEstoque />} />
               <Route path="/metas" element={<Metas />} />

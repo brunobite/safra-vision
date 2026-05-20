@@ -27,7 +27,7 @@ const empty: Omit<Negocio, "id"> = {
 };
 
 export default function FunilVendas() {
-  const { negocios, setNegocios, clientes, clienteById, vendedores, filtered } = useAppStore();
+  const { negocios, setNegocios, clientes, clienteById, vendedores, filtered, setOrcamentos } = useAppStore();
   const [open, setOpen] = useState(false);
   const [edit, setEdit] = useState<Negocio | null>(null);
   const [form, setForm] = useState<Omit<Negocio, "id">>(empty);
@@ -131,7 +131,7 @@ export default function FunilVendas() {
                           <SelectTrigger className="h-7 px-2 text-[10px] w-auto"><ArrowRight className="h-3 w-3" /></SelectTrigger>
                           <SelectContent>{STATUS_FUNIL.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
                         </Select>
-                        <Button size="sm" variant="ghost" className="h-7 px-2 text-[10px]" onClick={() => { if (!window.confirm("Esta ação não pode ser desfeita nesta versão. Deseja continuar?")) return; setNegocios(prev => prev.filter(x => x.id !== n.id)); toast.success("Excluído."); }}><Trash2 className="h-3 w-3 text-destructive" /></Button>
+                        <Button size="sm" variant="outline" className="h-7 px-2 text-[10px]" onClick={() => { const now=new Date(); setOrcamentos(prev=>[{id:`orc${Date.now()}`,clienteId:n.clienteId,negocioId:n.id,vendedor:n.vendedor,data:now.toISOString().slice(0,10),status:"Rascunho",areaAplicacaoHa:clienteById(n.clienteId)?.areaHa||0,itens:[],subtotal:0,descontoTotal:0,valorTotal:0,custoPorHectare:0,createdAt:now.toISOString(),updatedAt:now.toISOString()},...prev]); toast.success("Orçamento gerado a partir do negócio."); }}>Gerar orçamento</Button><Button size="sm" variant="ghost" className="h-7 px-2 text-[10px]" onClick={() => { if (!window.confirm("Esta ação não pode ser desfeita nesta versão. Deseja continuar?")) return; setNegocios(prev => prev.filter(x => x.id !== n.id)); toast.success("Excluído."); }}><Trash2 className="h-3 w-3 text-destructive" /></Button>
                       </div>
                     </Card>
                   );

@@ -18,7 +18,9 @@ export const seedData = {
   regrasComissao: initialRegrasComissao,
   eventos: initialEventos,
   prioridadesP1: initialPrioridadesP1,
-  configuracoes: [] as Array<{ id: string; key: string; value: string }>,
+  configuracoes: [{ id: "cfg-show-custo-ha", key: "showCustoPorHectare", value: true }],
+  orcamentos: [],
+  orcamentoItens: [],
 };
 
 export type SeedData = typeof seedData;
