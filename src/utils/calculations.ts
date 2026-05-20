@@ -1,7 +1,7 @@
 import { Lancamento, Cliente, MetaEmpresa, Negocio, RegraComissao } from "@/types";
 
 export const fmtBRL = (n: number) =>
-  (n || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
+  (n || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL", minimumFractionDigits: 2, maximumFractionDigits: 2 });
 export const fmtNum = (n: number) => (n || 0).toLocaleString("pt-BR");
 export const fmtPct = (n: number) => `${((n || 0) * 100).toFixed(1)}%`;
 

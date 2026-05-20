@@ -17,8 +17,9 @@ export const STATUS_FUNIL: StatusFunil[] = [
 
 export type OrigemNegocio = "Visita" | "Ligação" | "WhatsApp" | "Evento" | "Indicação" | "Outro";
 
-export type CategoriaProduto = "Adjuvantes" | "Nutrição" | "Fertilizantes" | "Sementes" | "Defensivos" | "Biológicos" | "Outros";
-export const CATEGORIAS_PRODUTO: CategoriaProduto[] = ["Adjuvantes", "Nutrição", "Fertilizantes", "Sementes", "Defensivos", "Biológicos", "Outros"];
+export type CategoriaProduto = string;
+export const CATEGORIAS_PRODUTO_PADRAO = ["Adjuvantes", "Nutrição", "Fertilizantes", "Sementes", "Defensivos", "Biológicos", "Outros"] as const;
+export const CATEGORIAS_PRODUTO: CategoriaProduto[] = [...CATEGORIAS_PRODUTO_PADRAO];
 
 export interface Vendedor { id: string; nome: string; telefone?: string; email?: string; ativo: boolean; }
 

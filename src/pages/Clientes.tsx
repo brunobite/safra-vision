@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -44,6 +44,15 @@ export default function Clientes() {
     potencial: lista.reduce((s, c) => s + c.potencialTotal, 0),
     area: lista.reduce((s, c) => s + c.areaHa, 0),
   }), [lista]);
+  const ticketAtivo = useMemo(() => ticketsMedios.filter(t=>t.ativo && t.valorMedioHa > 0).reduce((s,t)=>s+t.valorMedioHa,0), [ticketsMedios]);
+
+  useEffect(() => {
+    setClientes(prev => prev.map((c) => {
+      const potencialTotal = ticketAtivo > 0 ? c.areaHa * ticketAtivo : 0;
+      if (c.potencialTotal === potencialTotal && c.potencialCalculado === (ticketAtivo > 0)) return c;
+      return { ...c, potencialTotal, potencialCalculado: ticketAtivo > 0 };
+    }));
+  }, [ticketAtivo, setClientes]);
 
   const openNew = () => { setEdit(null); setForm(empty); setOpen(true); };
   const openEdit = (c: Cliente) => { setEdit(c); const { id, ...rest } = c; void id; setForm(rest); setOpen(true); };
@@ -60,8 +69,7 @@ export default function Clientes() {
   const sugestaoFreq = (abc:string, p:string) => (abc==="A"&&p==="P1")?"15 dias":((abc==="A"&&p==="P2")||(abc==="B"&&p==="P1"))?"30 dias":(abc==="B"&&p==="P2")?"45 dias":(abc==="C"||p==="P3")?"60 dias":"30 dias";
   const save = () => {
     if (!form.nome) return toast.error("Nome obrigatório.");
-    const ticketAtivo = ticketsMedios.filter(t=>t.ativo).reduce((s,t)=>s+t.valorMedioHa,0);
-    const potencialCalculado = ticketAtivo>0 ? form.areaHa * ticketAtivo : form.potencialTotal;
+    const potencialCalculado = ticketAtivo>0 ? form.areaHa * ticketAtivo : 0;
     const base = { ...form, potencialTotal: potencialCalculado, potencialCalculado: ticketAtivo>0, frequenciaRetorno: form.frequenciaRetorno || sugestaoFreq(form.abc, form.prioridade), statusAtual: edit ? calcStatus(edit.id, form.inativoManual) : (form.inativoManual?"Inativo":"Prospectar") };
     if (edit) setClientes(prev => prev.map(c => c.id === edit.id ? { ...base, id: edit.id } : c));
     else setClientes(prev => [...prev, { ...base, id: `c${Date.now()}` }]);
@@ -151,8 +159,9 @@ export default function Clientes() {
             <div><Label>Cidade</Label><Input value={form.cidade} onChange={e => setForm({ ...form, cidade: e.target.value })} /></div>
             <div><Label>Localidade</Label><Input value={form.localidade} onChange={e => setForm({ ...form, localidade: e.target.value })} /></div>
             <div><Label>Culturas</Label><Input value={form.culturas} onChange={e => setForm({ ...form, culturas: e.target.value })} /></div>
-            <div><Label>Área (ha)</Label><Input type="number" value={form.areaHa} onChange={e => setForm({ ...form, areaHa: +e.target.value })} /></div>
-            <div><Label>Potencial total</Label><Input type="number" value={form.potencialTotal} onChange={e => setForm({ ...form, potencialTotal: +e.target.value })} /></div>
+            <div><Label>Área (ha)</Label><Input type="number" step="0.01" value={form.areaHa} onChange={e => setForm({ ...form, areaHa: +e.target.value })} /></div>
+            <div><Label>Potencial total</Label><Input type="number" step="0.01" value={ticketAtivo > 0 ? form.areaHa * ticketAtivo : 0} disabled /></div>
+            <div className="md:col-span-2 text-xs text-muted-foreground">Potencial calculado automaticamente com base na área do cliente e nos tickets médios ativos por linha de produto.</div>
             <div><Label>Inativo manual</Label><Select value={form.inativoManual ? "1":"0"} onValueChange={v=>setForm({ ...form, inativoManual: v==="1" })}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="0">Não</SelectItem><SelectItem value="1">Sim</SelectItem></SelectContent></Select></div>
             <div><Label>Status atual</Label><Input value={form.statusAtual} disabled /></div>
             <div><Label>Frequência de retorno</Label><Input value={form.frequenciaRetorno} onChange={e => setForm({ ...form, frequenciaRetorno: e.target.value })} /></div>

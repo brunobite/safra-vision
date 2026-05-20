@@ -9,7 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { useAppStore } from "@/store/AppStore";
-import { Produto, CATEGORIAS_PRODUTO, CategoriaProduto } from "@/types";
+import { Produto, CATEGORIAS_PRODUTO } from "@/types";
 import { fmtBRL, fmtNum } from "@/utils/calculations";
 import { Plus, Pencil, Trash2, Search } from "lucide-react";
 import { toast } from "sonner";
@@ -22,11 +22,12 @@ const empty: Omit<Produto, "id"> = {
 };
 
 export default function Produtos() {
-  const { produtos, setProdutos } = useAppStore();
+  const { produtos, setProdutos, ticketsMedios } = useAppStore();
   const [busca, setBusca] = useState(""); const [fCat, setFCat] = useState(""); const [fForn, setFForn] = useState(""); const [fStatus, setFStatus] = useState("");
   const [open, setOpen] = useState(false); const [edit, setEdit] = useState<Produto | null>(null); const [form, setForm] = useState(empty);
 
   const fornecedores = useMemo(() => Array.from(new Set(produtos.map(p => p.fornecedor).filter(Boolean) as string[])), [produtos]);
+  const categorias = useMemo(() => [...new Set([...CATEGORIAS_PRODUTO, ...ticketsMedios.map((t) => t.categoria)])], [ticketsMedios]);
 
   const list = useMemo(() => produtos.filter(p =>
     (!busca || p.nome.toLowerCase().includes(busca.toLowerCase()) || p.codigo.toLowerCase().includes(busca.toLowerCase())) &&
@@ -56,7 +57,7 @@ export default function Produtos() {
           <div><Label className="text-xs">Categoria</Label>
             <Select value={fCat || ALL} onValueChange={v => setFCat(v === ALL ? "" : v)}>
               <SelectTrigger className="w-40"><SelectValue placeholder="Todas" /></SelectTrigger>
-              <SelectContent><SelectItem value={ALL}>Todas</SelectItem>{CATEGORIAS_PRODUTO.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
+              <SelectContent><SelectItem value={ALL}>Todas</SelectItem>{categorias.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
             </Select>
           </div>
           <div><Label className="text-xs">Fornecedor</Label>
@@ -97,7 +98,7 @@ export default function Produtos() {
                   <TableCell className="text-right">{fmtBRL(p.precoLista)}</TableCell>
                   <TableCell className="text-right">{fmtBRL(p.precoMinimo)}</TableCell>
                   <TableCell className="text-right">{fmtBRL(p.custo)}</TableCell>
-                  <TableCell className="text-right">{p.margem ?? "-"}</TableCell>
+                  <TableCell className="text-right">{`${Number(p.margem || 0).toFixed(2).replace(".", ",")}%`}</TableCell>
                   <TableCell className="text-right">{fmtNum(disp)}</TableCell>
                   <TableCell>{p.ativo ? <Badge className="bg-success/15 text-success">Ativo</Badge> : <Badge variant="outline">Inativo</Badge>}</TableCell>
                   <TableCell className="text-right">
@@ -118,16 +119,16 @@ export default function Produtos() {
             <div><Label>Código</Label><Input value={form.codigo} onChange={e => setForm({ ...form, codigo: e.target.value })} /></div>
             <div className="md:col-span-2"><Label>Nome</Label><Input value={form.nome} onChange={e => setForm({ ...form, nome: e.target.value })} /></div>
             <div><Label>Categoria</Label>
-              <Select value={form.categoria} onValueChange={(v: CategoriaProduto) => setForm({ ...form, categoria: v })}>
+              <Select value={form.categoria} onValueChange={(v) => setForm({ ...form, categoria: v })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>{CATEGORIAS_PRODUTO.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
+                <SelectContent>{categorias.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
               </Select>
             </div>
             <div><Label>Unidade</Label><Select value={form.unidade} onValueChange={(v: Produto["unidade"]) => setForm({ ...form, unidade: v })}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent>{["LT","GAL","BD","TON","KG"].map(u=><SelectItem key={u} value={u}>{u}</SelectItem>)}</SelectContent></Select></div>
             <div><Label>Fornecedor</Label><Input value={form.fornecedor} onChange={e => setForm({ ...form, fornecedor: e.target.value })} /></div>
-            <div><Label>Preço lista</Label><Input type="number" value={form.precoLista} onChange={e => setForm({ ...form, precoLista: +e.target.value })} /></div>
-            <div><Label>Preço mínimo</Label><Input type="number" value={form.precoMinimo} onChange={e => setForm({ ...form, precoMinimo: +e.target.value })} /></div>
-            <div><Label>Custo</Label><Input type="number" value={form.custo} onChange={e => setForm({ ...form, custo: +e.target.value })} /></div>
+            <div><Label>Preço lista</Label><Input type="number" step="0.01" value={form.precoLista} onChange={e => setForm({ ...form, precoLista: +e.target.value })} /></div>
+            <div><Label>Preço mínimo</Label><Input type="number" step="0.01" value={form.precoMinimo} onChange={e => setForm({ ...form, precoMinimo: +e.target.value })} /></div>
+            <div><Label>Custo</Label><Input type="number" step="0.01" value={form.custo} onChange={e => setForm({ ...form, custo: +e.target.value })} /></div>
             <div><Label>Margem (%)</Label><Input type="number" value={form.precoLista > 0 ? (((form.precoLista - form.custo) / form.precoLista) * 100).toFixed(2) : 0} disabled /></div>
             <div><Label>Estoque atual</Label><Input type="number" value={form.estoqueAtual} onChange={e => setForm({ ...form, estoqueAtual: +e.target.value })} /></div>
             <div><Label>Estoque reservado</Label><Input type="number" value={form.estoqueReservado} onChange={e => setForm({ ...form, estoqueReservado: +e.target.value })} /></div>
