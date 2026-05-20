@@ -19,6 +19,7 @@ const storesToLoad: StoreName[] = [
   "clientes", "vendedores", "lancamentos", "negocios", "produtos", "metasEmpresa",
   "metasPessoais", "metasVendedor", "metasCategoria", "regrasComissao", "eventos",
   "prioridadesP1", "configuracoes", "orcamentos", "orcamentoItens",
+  "empresas",
 ];
 
 async function withDb<T>(fn: (db: IDBDatabase) => Promise<T>): Promise<T> {

@@ -18,6 +18,7 @@ export const STORE_NAMES = [
   "dbMeta",
   "orcamentos",
   "orcamentoItens",
+  "empresas",
 ] as const;
 
 export type StoreName = (typeof STORE_NAMES)[number];

@@ -19,6 +19,7 @@ const ALL = "__all__";
 const empty: Omit<Cliente, "id"> = {
   nome: "", abc: "A", prioridade: "P2", rota: "Rota Norte", cidade: "", localidade: "", culturas: "",
   areaHa: 0, potencialTotal: 0, statusAtual: "Prospectar", frequenciaRetorno: "30 dias", retorno: "30 dias", vendedor: "", potencialCalculado: false, inativoManual: false,
+  documento: "", inscricaoEstadual: "", endereco: "", telefone: "", email: "", nomeContato: "", culturaPrincipal: "", areaAplicacaoPotencial: "",
 };
 
 export default function Clientes() {
@@ -166,6 +167,14 @@ export default function Clientes() {
             <div><Label>Status atual</Label><Input value={form.statusAtual} disabled /></div>
             <div><Label>Frequência de retorno</Label><Input value={form.frequenciaRetorno} onChange={e => setForm({ ...form, frequenciaRetorno: e.target.value })} /></div>
             <div><Label>Retorno</Label><Input value={form.retorno} onChange={e => setForm({ ...form, retorno: e.target.value })} /></div>
+            <div><Label>CPF/CNPJ</Label><Input value={form.documento || ""} onChange={e => setForm({ ...form, documento: e.target.value })} /></div>
+            <div><Label>Inscrição estadual</Label><Input value={form.inscricaoEstadual || ""} onChange={e => setForm({ ...form, inscricaoEstadual: e.target.value })} /></div>
+            <div><Label>Endereço</Label><Input value={form.endereco || ""} onChange={e => setForm({ ...form, endereco: e.target.value })} /></div>
+            <div><Label>Telefone</Label><Input value={form.telefone || ""} onChange={e => setForm({ ...form, telefone: e.target.value })} /></div>
+            <div><Label>E-mail</Label><Input value={form.email || ""} onChange={e => setForm({ ...form, email: e.target.value })} /></div>
+            <div><Label>Nome do contato</Label><Input value={form.nomeContato || ""} onChange={e => setForm({ ...form, nomeContato: e.target.value })} /></div>
+            <div><Label>Cultura principal</Label><Input value={form.culturaPrincipal || ""} onChange={e => setForm({ ...form, culturaPrincipal: e.target.value })} /></div>
+            <div><Label>Área aplicação/potencial</Label><Input value={form.areaAplicacaoPotencial || ""} onChange={e => setForm({ ...form, areaAplicacaoPotencial: e.target.value })} /></div>
           </div>
           <DialogFooter><Button onClick={save}>Salvar</Button></DialogFooter>
         </DialogContent>
