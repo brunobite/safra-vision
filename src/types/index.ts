@@ -225,6 +225,14 @@ export interface RegraComissao {
 
 export interface TicketMedioRegra { id: string; categoria: CategoriaProduto; valorMedioHa: number; ativo: boolean; }
 
+export interface FormaPagamento {
+  id: string;
+  nome: string;
+  ativo: boolean;
+  padrao: boolean;
+  logoDataUrl?: string;
+}
+
 export interface NegocioProdutoItem { produtoId: string; quantidade: number; precoUnitario: number; }
 
 export type OrcamentoStatus = "Rascunho" | "Enviado" | "Aprovado" | "Reprovado" | "Cancelado";
@@ -263,7 +271,6 @@ export interface Orcamento {
   valorTotal: number;
   custoPorHectare: number;
   formaPagamento?: string;
-  tipoCobranca?: "Boleto" | "Pix" | "Transferência" | "Dinheiro" | "Outro";
   prazoPagamento?: string;
   observacoes?: string;
   createdAt: string;
@@ -284,6 +291,7 @@ export interface Empresa {
   observacoesComerciaisPadrao: string;
   ativa: boolean;
   padrao: boolean;
+  logoDataUrl?: string;
 }
 
 export interface DadosEmpresa {

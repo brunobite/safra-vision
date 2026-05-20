@@ -10,7 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAppStore } from "@/store/AppStore";
-import { RegraComissao, AplicarSobre, FaixaComissao, CATEGORIAS_PRODUTO_PADRAO, Empresa } from "@/types";
+import { RegraComissao, AplicarSobre, FaixaComissao, CATEGORIAS_PRODUTO_PADRAO, Empresa, FormaPagamento } from "@/types";
 import { Plus, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { getLocalDbStats, LocalDbStats, replaceLocalDatabase, resetLocalDatabase } from "@/lib/localRepository";
@@ -26,12 +26,12 @@ const APLICAR: { v: AplicarSobre; label: string }[] = [
 ];
 const emptyRegra: Omit<RegraComissao, "id"> = { nome: "", tipo: "fixa", percentual: 1, aplicarSobre: "negocio_fechado", ativo: true, faixas: [{ min: 80, max: 89, percentual: 0.5 }] };
 
-const defaultEmpresa: Empresa = { id: "", nomeFantasia: "", razaoSocial: "", cnpj: "", inscricaoEstadual: "", endereco: "", cidadeUf: "", telefone: "", email: "", consultorPadrao: "", observacoesComerciaisPadrao: "", ativa: true, padrao: false };
+const defaultEmpresa: Empresa = { id: "", nomeFantasia: "", razaoSocial: "", cnpj: "", inscricaoEstadual: "", endereco: "", cidadeUf: "", telefone: "", email: "", consultorPadrao: "", observacoesComerciaisPadrao: "", ativa: true, padrao: false, logoDataUrl: "" };
 
 export default function Configuracoes() {
   const {
     regras, setRegras, vendedores, setVendedores, ticketsMedios, setTicketsMedios, dbError, isSaving, lastSavedAt, saveError,
-    clientes, lancamentos, negocios, produtos, metasEmpresa, metasPessoais, eventos, metasVendedor, metasCategoria, prioridadesP1, orcamentos, setOrcamentos, empresas, setEmpresas,
+    clientes, lancamentos, negocios, produtos, metasEmpresa, metasPessoais, eventos, metasVendedor, metasCategoria, prioridadesP1, orcamentos, setOrcamentos, empresas, setEmpresas, formasPagamento, setFormasPagamento,
     setClientes, setLancamentos, setNegocios, setProdutos, setMetasEmpresa, setMetasPessoais, setEventos, setMetasVendedor, setMetasCategoria, setPrioridadesP1,
   } = useAppStore();
   const [open, setOpen] = useState(false);
@@ -61,7 +61,7 @@ export default function Configuracoes() {
 
   const exportPayload = {
     clientes, vendedores, lancamentos, negocios, produtos, metasEmpresa, metasPessoais, regrasComissao: regras, eventos,
-    configuracoes: ticketsMedios, metasVendedor, metasCategoria, prioridadesP1, orcamentos,
+    configuracoes: ticketsMedios, metasVendedor, metasCategoria, prioridadesP1, orcamentos, empresas, formasPagamento,
   };
 
   const handleRestoreFile = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -87,6 +87,8 @@ export default function Configuracoes() {
       setMetasCategoria((restored.metasCategoria ?? []) as never[]);
       setPrioridadesP1((restored.prioridadesP1 ?? []) as never[]);
       setOrcamentos((restored.orcamentos ?? []) as never[]);
+      setEmpresas((restored.empresas ?? []) as never[]);
+      setFormasPagamento((restored.formasPagamento ?? []) as never[]);
 
       toast.success("Backup restaurado com sucesso.");
       void loadStats();
@@ -153,6 +155,20 @@ export default function Configuracoes() {
   const updFaixa = (i: number, k: keyof FaixaComissao, v: number) => setForm(f => ({ ...f, faixas: (f.faixas || []).map((x, idx) => idx === i ? { ...x, [k]: v } : x) }));
   const rmFaixa = (i: number) => setForm(f => ({ ...f, faixas: (f.faixas || []).filter((_, idx) => idx !== i) }));
 
+  const handleLogoUpload = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!["image/png", "image/jpeg"].includes(file.type)) { toast.error("Use PNG ou JPG/JPEG."); return; }
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(new Error());
+      reader.readAsDataURL(file);
+    });
+    setDadosEmpresa((prev) => ({ ...prev, logoDataUrl: dataUrl }));
+    event.target.value = "";
+  };
+
   return <div className="space-y-4">
     {dbError && <Card className="border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{dbError}</Card>}
     <Tabs defaultValue="comissao">
@@ -185,11 +201,20 @@ export default function Configuracoes() {
           <div><Label>Cidade/UF</Label><Input value={dadosEmpresa.cidadeUf || ""} onChange={e=>setDadosEmpresa({...dadosEmpresa,cidadeUf:e.target.value})} /></div>
           <div><Label>Telefone</Label><Input value={dadosEmpresa.telefone || ""} onChange={e=>setDadosEmpresa({...dadosEmpresa,telefone:e.target.value})} /></div>
           <div><Label>E-mail</Label><Input value={dadosEmpresa.email || ""} onChange={e=>setDadosEmpresa({...dadosEmpresa,email:e.target.value})} /></div>
+          <div><Label>Logo da empresa</Label><Input type="file" accept="image/png,image/jpeg" onChange={handleLogoUpload} /></div>
           <div><Label>Consultor padrão/responsável</Label><Input value={dadosEmpresa.consultorPadrao || ""} onChange={e=>setDadosEmpresa({...dadosEmpresa,consultorPadrao:e.target.value})} /></div>
           <div><Label>Observações comerciais padrão</Label><Input value={dadosEmpresa.observacoesComerciaisPadrao || ""} onChange={e=>setDadosEmpresa({...dadosEmpresa,observacoesComerciaisPadrao:e.target.value})} /></div>
         </div>
         <Button onClick={()=>{ if(!dadosEmpresa.nomeFantasia) return toast.error("Nome fantasia obrigatório"); if(dadosEmpresa.id){ setEmpresas(prev=>prev.map(e=>e.id===dadosEmpresa.id?dadosEmpresa:e)); } else { setEmpresas(prev=>[...prev,{...dadosEmpresa,id:`emp${Date.now()}`}]); } setDadosEmpresa(defaultEmpresa); toast.success("Empresa salva."); }}>Salvar empresa</Button>
         <div className="space-y-2">{empresas.map((e)=><div key={e.id} className="flex justify-between border rounded p-2 text-sm"><div>{e.nomeFantasia} {e.padrao?"(Padrão)":""} {e.ativa?"":"(Inativa)"}</div><div className="flex gap-2"><Button size="sm" variant="outline" onClick={()=>setEmpresas(prev=>prev.map(x=>({...x,padrao:x.id===e.id})))}>Marcar padrão</Button><Button size="sm" variant="outline" onClick={()=>setEmpresas(prev=>prev.map(x=>x.id===e.id?{...x,ativa:!x.ativa}:x))}>{e.ativa?"Inativar":"Ativar"}</Button><Button size="sm" variant="outline" onClick={()=>setDadosEmpresa(e)}>Editar</Button><Button size="sm" variant="destructive" onClick={()=>{if(!window.confirm("Excluir empresa?"))return; setEmpresas(prev=>prev.filter(x=>x.id!==e.id));}}>Excluir</Button></div></div>)}</div>
+        <div className="rounded border p-3 space-y-2">
+          <div className="text-sm font-semibold">Formas de pagamento</div>
+          <div className="grid gap-2 md:grid-cols-3">
+            <Input id="nova-forma" placeholder="Nova forma" />
+            <Button onClick={() => { const nomeEl = document.getElementById("nova-forma") as HTMLInputElement | null; const nome = nomeEl?.value.trim() || ""; if (!nome) return; setFormasPagamento(prev => [...prev, { id: `fp${Date.now()}`, nome, ativo: true, padrao: prev.length===0 } as FormaPagamento]); if (nomeEl) nomeEl.value = ""; }}>Adicionar</Button>
+          </div>
+          {formasPagamento.map((fp) => <div key={fp.id} className="flex items-center justify-between gap-2 text-sm border rounded p-2"><Input value={fp.nome} onChange={e=>setFormasPagamento(prev=>prev.map(x=>x.id===fp.id?{...x,nome:e.target.value}:x))} /><div className="flex gap-1"><Button size="sm" variant="outline" onClick={()=>setFormasPagamento(prev=>prev.map(x=>({...x,padrao:x.id===fp.id})))}>Padrão</Button><Button size="sm" variant="outline" onClick={()=>setFormasPagamento(prev=>prev.map(x=>x.id===fp.id?{...x,ativo:!x.ativo}:x))}>{fp.ativo?"Inativar":"Ativar"}</Button><Button size="sm" variant="destructive" onClick={()=>{if(window.confirm("Excluir forma de pagamento?"))setFormasPagamento(prev=>prev.filter(x=>x.id!==fp.id));}}>Excluir</Button></div></div>)}
+        </div>
       </Card></TabsContent>
 
       <TabsContent value="banco-local">

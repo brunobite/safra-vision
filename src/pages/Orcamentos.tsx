@@ -17,17 +17,22 @@ const STATUS: OrcamentoStatus[] = ["Rascunho", "Enviado", "Aprovado", "Reprovado
 const validade7 = (base: string) => new Date(new Date(base).getTime() + 7 * 86400000).toISOString().slice(0, 10);
 
 export default function Orcamentos() {
-const { orcamentos, setOrcamentos, clientes, produtos, empresas, negocios } = useAppStore();
+const { orcamentos, setOrcamentos, clientes, produtos, empresas, negocios, formasPagamento } = useAppStore();
 const [params] = useSearchParams();
 const empresaPadrao = empresas.find(e => e.padrao && e.ativa)?.id || empresas.find(e => e.ativa)?.id || "";
+const formaPagamentoPadrao = formasPagamento.find((f) => f.padrao && f.ativo)?.nome || formasPagamento.find((f) => f.ativo)?.nome || "";
 const [open, setOpen] = useState(false);
 const [edit, setEdit] = useState<Orcamento | null>(null);
-const [form, setForm] = useState<Orcamento>({ id: "", codigo: `ORC-${Date.now()}`, clienteId: "", empresaId: empresaPadrao, vendedor: "", data: new Date().toISOString().slice(0, 10), validade: validade7(new Date().toISOString().slice(0, 10)), status: "Rascunho", areaAplicacaoHa: 0, itens: [], subtotal: 0, descontoTotal: 0, valorTotal: 0, custoPorHectare: 0, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), prazoPagamento: "" });
+const [form, setForm] = useState<Orcamento>({ id: "", codigo: `ORC-${Date.now()}`, clienteId: "", empresaId: empresaPadrao, vendedor: "", data: new Date().toISOString().slice(0, 10), validade: validade7(new Date().toISOString().slice(0, 10)), status: "Rascunho", areaAplicacaoHa: 0, itens: [], subtotal: 0, descontoTotal: 0, valorTotal: 0, custoPorHectare: 0, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), prazoPagamento: "", formaPagamento: formaPagamentoPadrao });
 
 useEffect(() => { const negocioId = params.get("negocioId"); if (!negocioId) return; const n = negocios.find(x => x.id === negocioId); if (!n) return; const ja = orcamentos.find(o => o.negocioId===negocioId); if (ja) { setEdit(ja); setForm(ja); setOpen(true); return; } setForm(f=>({ ...f, clienteId: n.clienteId, negocioId: n.id, vendedor: n.vendedor })); setOpen(true); }, [params, negocios, orcamentos]);
 
 const recalc = (next: Orcamento) => { const itens = next.itens.map((it)=>{ const p = produtos.find(pp=>pp.id===it.produtoId); return p ? recalcularItem(it,p) : it; }); const total = itens.reduce((s,i)=>s+i.valorTotalItem,0); return { ...next, itens, subtotal: total, valorTotal: total, custoPorHectare: next.areaAplicacaoHa>0 ? total/next.areaAplicacaoHa : 0 }; };
 const save = () => { const payload = recalc({ ...form, updatedAt: new Date().toISOString() }); if (!payload.clienteId) return toast.error("Cliente obrigatório"); setOrcamentos(p => edit ? p.map(o => o.id === edit.id ? payload : o) : [{ ...payload, id: `orc${Date.now()}`, createdAt: new Date().toISOString() }, ...p]); setOpen(false); toast.success("Orçamento salvo"); };
+useEffect(() => {
+  setForm((prev) => prev.formaPagamento ? prev : { ...prev, formaPagamento: formaPagamentoPadrao });
+}, [formaPagamentoPadrao]);
+
 const addItem = () => setForm(f => ({ ...f, itens: [...f.itens, { id: `i${Date.now()}`, produtoId: "", produtoNome: "", categoria: "", unidadeProduto: "LT", dosePorHa: 0, unidadeDose: "L/ha", areaHa: f.areaAplicacaoHa, quantidadeTotal: 0, precoUnitario: 0, valorTotalItem: 0, custoPorHaItem: 0 }] }));
 
 return <div className="space-y-3"><Button onClick={() => { setEdit(null); setOpen(true); }}>Novo orçamento</Button>
@@ -37,7 +42,8 @@ return <div className="space-y-3"><Button onClick={() => { setEdit(null); setOpe
 <div><Label>Empresa</Label><Select value={form.empresaId} onValueChange={v=>setForm({...form, empresaId:v})}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent>{empresas.filter(e=>e.ativa).map(e=><SelectItem key={e.id} value={e.id}>{e.nomeFantasia}</SelectItem>)}</SelectContent></Select></div>
 <div><Label>Área aplicada (ha)</Label><Input type="number" value={form.areaAplicacaoHa} onChange={e=>setForm(recalc({ ...form, areaAplicacaoHa:+e.target.value }))}/></div>
 <div><Label>Status</Label><Select value={form.status} onValueChange={(v: OrcamentoStatus)=>setForm({...form,status:v})}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent>{STATUS.map(s=><SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent></Select></div>
-<div><Label>Prazo de pagamento</Label><Input value={form.prazoPagamento || ""} onChange={e=>setForm({...form,prazoPagamento:e.target.value})} /></div></div>
+<div><Label>Prazo de pagamento</Label><Input value={form.prazoPagamento || ""} onChange={e=>setForm({...form,prazoPagamento:e.target.value})} /></div>
+<div><Label>Forma de pagamento</Label><Select value={form.formaPagamento || ""} onValueChange={v=>setForm({...form,formaPagamento:v})}><SelectTrigger><SelectValue placeholder="Selecione"/></SelectTrigger><SelectContent>{formasPagamento.filter(f=>f.ativo).map(f=><SelectItem key={f.id} value={f.nome}>{f.nome}</SelectItem>)}</SelectContent></Select></div></div>
 
 {form.itens.map((it, idx) => { const p = produtos.find(x=>x.id===it.produtoId); const area = it.areaHa || form.areaAplicacaoHa; const calc = calcularQuantidadeComercial((p?.unidade || it.unidadeProduto), it.dosePorHa, it.unidadeDose, area); const total = calc.quantidadeComercial * it.precoUnitario; return <Card key={it.id} className="p-3 space-y-2"><div className="grid gap-2 md:grid-cols-6"><div className="md:col-span-2"><Label>Produto</Label><Select value={it.produtoId} onValueChange={v=>{ const pp=produtos.find(x=>x.id===v); const itens=[...form.itens]; itens[idx]=recalcularItem({ ...it, produtoId:v, precoUnitario: it.precoUnitario||pp?.precoLista||0 }, pp!); setForm(recalc({ ...form, itens })); }}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent>{produtos.map(pr=><SelectItem key={pr.id} value={pr.id}>{pr.nome}</SelectItem>)}</SelectContent></Select></div>
 <div><Label>Dose por hectare</Label><Input type="number" value={it.dosePorHa} onChange={e=>{const itens=[...form.itens]; itens[idx]={...it,dosePorHa:+e.target.value}; setForm(recalc({...form,itens}));}}/></div>
