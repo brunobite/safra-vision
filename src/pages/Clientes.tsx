@@ -26,7 +26,7 @@ const empty: Omit<Cliente, "id"> = {
 export default function Clientes() {
   const { clientes, setClientes, lancamentos, negocios, ticketsMedios, orcamentos, proximasAcoes } = useAppStore();
   const [busca, setBusca] = useState("");
-  const [fAbc, setFAbc] = useState(""); const [fRota, setFRota] = useState(""); const [fStatus, setFStatus] = useState(""); const [fCidade, setFCidade] = useState(""); const [fAtrasado, setFAtrasado] = useState("");
+  const [fAbc, setFAbc] = useState(""); const [fPri, setFPri] = useState(""); const [fRota, setFRota] = useState(""); const [fStatus, setFStatus] = useState(""); const [fCidade, setFCidade] = useState(""); const [fAtrasado, setFAtrasado] = useState("");
   const [open, setOpen] = useState(false);
   const [edit, setEdit] = useState<Cliente | null>(null);
   const [form, setForm] = useState<Omit<Cliente, "id">>(empty);
@@ -40,10 +40,11 @@ export default function Clientes() {
   const lista = useMemo(() => clientes.filter(c =>
     (!busca || c.nome.toLowerCase().includes(busca.toLowerCase())) &&
     (!fAbc || c.abc === fAbc) &&
+    (!fPri || c.prioridade === fPri) &&
     (!fRota || c.rota === fRota) && (!fStatus || c.statusAtual === fStatus) &&
     (!fCidade || c.cidade === fCidade) &&
     (!fAtrasado || (fAtrasado === "sim" ? atrasado(c) : !atrasado(c)))
-  ), [clientes, busca, fAbc, fRota, fStatus, fCidade, fAtrasado, proximasAcoes]);
+  ), [clientes, busca, fAbc, fPri, fRota, fStatus, fCidade, fAtrasado, proximasAcoes]);
 
   const totais = useMemo(() => ({
     potencial: lista.reduce((s, c) => s + c.potencialTotal, 0),
@@ -158,7 +159,8 @@ export default function Clientes() {
           <div className="grid gap-3 md:grid-cols-2">
             <div className="md:col-span-2"><Label>Nome</Label><Input value={form.nome} onChange={e => setForm({ ...form, nome: e.target.value })} /></div>
             <div><Label>ABC</Label><Select value={form.abc} onValueChange={(v: ABC) => setForm({ ...form, abc: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{["A","B","C"].map(v => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent></Select></div>
-                        <div><Label>Rota</Label><Select value={form.rota} onValueChange={v => setForm({ ...form, rota: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{ROTAS_NOMES.map(v => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent></Select></div>
+            <div><Label>Prioridade</Label><Select value={form.prioridade} onValueChange={v => setForm({ ...form, prioridade: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{["P1","P2","P3"].map(v => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent></Select></div>
+            <div><Label>Rota</Label><Select value={form.rota} onValueChange={v => setForm({ ...form, rota: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{ROTAS_NOMES.map(v => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent></Select></div>
             <div><Label>Cidade</Label><Input value={form.cidade} onChange={e => setForm({ ...form, cidade: e.target.value })} /></div>
             <div><Label>Localidade</Label><Input value={form.localidade} onChange={e => setForm({ ...form, localidade: e.target.value })} /></div>
             <div className="md:col-span-2"><Label>Culturas do cliente</Label><div className="space-y-2">{normalizarCulturas(form.culturasDetalhes, form.culturas).map((item, idx) => <div key={item.id} className="grid grid-cols-12 gap-2"><Select value={item.cultura} onValueChange={v=>{ const next=[...normalizarCulturas(form.culturasDetalhes, form.culturas)]; next[idx]={...item,cultura:v}; setForm({...form,culturasDetalhes:next,culturas:next.map(x=>x.cultura).join(", "),areaHa:next.reduce((s,x)=>s+(x.areaHa||0),0)});}}><SelectTrigger className="col-span-7"><SelectValue/></SelectTrigger><SelectContent>{CULTURAS_SUGERIDAS.map(c=> <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent></Select><Input className="col-span-4" type="number" step="0.01" value={item.areaHa} onChange={e=>{ const next=[...normalizarCulturas(form.culturasDetalhes, form.culturas)]; next[idx]={...item,areaHa:+e.target.value}; setForm({...form,culturasDetalhes:next,culturas:next.map(x=>x.cultura).join(", "),areaHa:next.reduce((s,x)=>s+(x.areaHa||0),0)});}} /><Button className="col-span-1" variant="ghost" onClick={()=>{ const next=normalizarCulturas(form.culturasDetalhes, form.culturas).filter((_,i)=>i!==idx); setForm({...form,culturasDetalhes:next,culturas:next.map(x=>x.cultura).join(", "),areaHa:next.reduce((s,x)=>s+(x.areaHa||0),0)});}}><Trash2 className="h-3 w-3"/></Button></div>)}<Button type="button" variant="outline" onClick={()=>{ const next=[...normalizarCulturas(form.culturasDetalhes, form.culturas),{id:`ca-${Date.now()}`,cultura:"Soja",areaHa:0} as ClienteCulturaArea]; setForm({...form,culturasDetalhes:next}); }}>Adicionar cultura</Button></div></div>
@@ -169,16 +171,11 @@ export default function Clientes() {
             <div><Label>Status atual</Label><Input value={form.statusAtual} disabled /></div>
             <div><Label>Frequência de retorno</Label><Input value={form.frequenciaRetorno} onChange={e => setForm({ ...form, frequenciaRetorno: e.target.value })} /></div>
             
-            <div><Label>Próxima ação</Label><Input value={form.proximaAcao || ""} onChange={e => setForm({ ...form, proximaAcao: e.target.value })} /></div>
-            <div><Label>Data próxima ação</Label><Input type="date" value={form.dataProximaAcao || ""} onChange={e => setForm({ ...form, dataProximaAcao: e.target.value })} /></div>
             <div><Label>CPF/CNPJ</Label><Input value={form.documento || ""} onChange={e => setForm({ ...form, documento: e.target.value })} /></div>
             <div><Label>Inscrição estadual</Label><Input value={form.inscricaoEstadual || ""} onChange={e => setForm({ ...form, inscricaoEstadual: e.target.value })} /></div>
-            <div><Label>Endereço</Label><Input value={form.endereco || ""} onChange={e => setForm({ ...form, endereco: e.target.value })} /></div>
             <div><Label>Telefone</Label><Input value={form.telefone || ""} onChange={e => setForm({ ...form, telefone: e.target.value })} /></div>
             <div><Label>E-mail</Label><Input value={form.email || ""} onChange={e => setForm({ ...form, email: e.target.value })} /></div>
             <div><Label>Nome do contato</Label><Input value={form.nomeContato || ""} onChange={e => setForm({ ...form, nomeContato: e.target.value })} /></div>
-            <div><Label>Cultura principal</Label><Input value={form.culturaPrincipal || ""} onChange={e => setForm({ ...form, culturaPrincipal: e.target.value })} /></div>
-            <div><Label>Área aplicação/potencial</Label><Input value={form.areaAplicacaoPotencial || ""} onChange={e => setForm({ ...form, areaAplicacaoPotencial: e.target.value })} /></div>
           </div>
           <DialogFooter><Button onClick={save}>Salvar</Button></DialogFooter>
         </DialogContent>
