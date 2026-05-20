@@ -1,6 +1,7 @@
 export type ABC = "A" | "B" | "C";
 export type Prioridade = "P1" | "P2" | "P3";
-export type FrenteComercial = "Venda Direta" | "Cooperagro" | "Tritec" | "Nutrição Especial" | "Geo Pampa";
+export type FrenteComercial = "Venda Direta" | "Nutrição Especial" | "Geo Pampa" | "Canal de Vendas";
+export const FRENTES_COMERCIAIS: FrenteComercial[] = ["Venda Direta", "Nutrição Especial", "Geo Pampa", "Canal de Vendas"];
 export type StatusLancamento = "Aberto" | "Concluído" | "Atrasado" | "Cancelado" | "Aguardando cliente" | "Aguardando parceiro" | "Em negociação";
 export type TipoLancamento = "Visita" | "Ligação" | "WhatsApp" | "Proposta" | "Venda" | "Evento" | "Orçamento" | "Em negociação";
 export type StatusEvento = "Aprovar" | "Planejar" | "Em andamento" | "Concluído" | "Cancelado";
@@ -19,7 +20,7 @@ export type OrigemNegocio = "Visita" | "Ligação" | "WhatsApp" | "Evento" | "In
 export type CategoriaProduto = "Adjuvantes" | "Nutrição" | "Fertilizantes" | "Sementes" | "Defensivos" | "Biológicos" | "Outros";
 export const CATEGORIAS_PRODUTO: CategoriaProduto[] = ["Adjuvantes", "Nutrição", "Fertilizantes", "Sementes", "Defensivos", "Biológicos", "Outros"];
 
-export interface Vendedor { id: string; nome: string; }
+export interface Vendedor { id: string; nome: string; telefone?: string; email?: string; ativo: boolean; }
 
 export interface Cliente {
   id: string;
@@ -39,8 +40,10 @@ export interface Cliente {
   statusAtual: string;
   observacao?: string;
   motivoAbc?: string;
-  frequencia: string;
+  frequenciaRetorno: string;
   retorno: string;
+  potencialCalculado?: boolean;
+  inativoManual?: boolean;
   vendedor?: string;
   produtosInteresse?: string[];
 }
@@ -75,7 +78,6 @@ export interface Negocio {
   valorPotencial: number;
   valorFechado?: number;
   status: StatusFunil;
-  probabilidade: number; // 0-100
   previsaoFechamento?: string;
   dataCriacao: string;
   ultimaAtualizacao: string;
@@ -145,8 +147,7 @@ export interface Produto {
   codigo: string;
   nome: string;
   categoria: CategoriaProduto;
-  linha?: string;
-  unidade: string;
+  unidade: "LT" | "GAL" | "BD" | "TON" | "KG";
   fornecedor?: string;
   precoLista: number;
   precoMinimo: number;
@@ -178,3 +179,8 @@ export interface RegraComissao {
   alvo?: string; // categoria/frente quando aplicável
   ativo: boolean;
 }
+
+
+export interface TicketMedioRegra { id: string; categoria: CategoriaProduto; valorMedioHa: number; ativo: boolean; }
+
+export interface NegocioProdutoItem { produtoId: string; quantidade: number; precoUnitario: number; }

@@ -28,7 +28,7 @@ const emptyRegra: Omit<RegraComissao, "id"> = { nome: "", tipo: "fixa", percentu
 
 export default function Configuracoes() {
   const {
-    regras, setRegras, vendedores, setVendedores, dbError, isSaving, lastSavedAt, saveError,
+    regras, setRegras, vendedores, setVendedores, ticketsMedios, setTicketsMedios, dbError, isSaving, lastSavedAt, saveError,
     clientes, lancamentos, negocios, produtos, metasEmpresa, metasPessoais, eventos, metasVendedor, metasCategoria, prioridadesP1,
     setClientes, setLancamentos, setNegocios, setProdutos, setMetasEmpresa, setMetasPessoais, setEventos, setMetasVendedor, setMetasCategoria, setPrioridadesP1,
   } = useAppStore();
@@ -36,6 +36,8 @@ export default function Configuracoes() {
   const [edit, setEdit] = useState<RegraComissao | null>(null);
   const [form, setForm] = useState<Omit<RegraComissao, "id">>(emptyRegra);
   const [novoVend, setNovoVend] = useState("");
+  const [novoTel, setNovoTel] = useState("");
+  const [novoEmail, setNovoEmail] = useState("");
   const [stats, setStats] = useState<LocalDbStats | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const importFileRef = useRef<HTMLInputElement | null>(null);
@@ -148,6 +150,7 @@ export default function Configuracoes() {
       <TabsList>
         <TabsTrigger value="comissao">Regras de comissão</TabsTrigger>
         <TabsTrigger value="vendedores">Vendedores</TabsTrigger>
+        <TabsTrigger value="tickets">Regras comerciais</TabsTrigger>
         <TabsTrigger value="banco-local">Banco local</TabsTrigger>
       </TabsList>
 
@@ -156,7 +159,9 @@ export default function Configuracoes() {
         <Card className="overflow-x-auto p-0"><Table><TableHeader><TableRow><TableHead>Nome</TableHead><TableHead>Tipo</TableHead><TableHead>Aplicar sobre</TableHead><TableHead>Alvo</TableHead><TableHead>Percentual / Faixas</TableHead><TableHead>Ativo</TableHead><TableHead className="text-right">Ações</TableHead></TableRow></TableHeader><TableBody>{regras.map(r => <TableRow key={r.id}><TableCell className="font-medium">{r.nome}</TableCell><TableCell><Badge variant="outline">{r.tipo}</Badge></TableCell><TableCell>{APLICAR.find(a => a.v === r.aplicarSobre)?.label}</TableCell><TableCell>{r.alvo || "—"}</TableCell><TableCell className="text-xs">{r.tipo === "fixa" ? `${r.percentual}%` : r.faixas?.map(f => `${f.min}-${f.max}%: ${f.percentual}%`).join(" | ")}</TableCell><TableCell>{r.ativo ? <Badge className="bg-success/15 text-success">Sim</Badge> : <Badge variant="outline">Não</Badge>}</TableCell><TableCell className="text-right"><Button size="icon" variant="ghost" onClick={() => openEdit(r)}><Pencil className="h-3.5 w-3.5" /></Button><Button size="icon" variant="ghost" onClick={() => { if (!window.confirm("Esta ação não pode ser desfeita nesta versão. Deseja continuar?")) return; setRegras(prev => prev.filter(x => x.id !== r.id)); toast.success("Excluída."); void loadStats(); }}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button></TableCell></TableRow>)}</TableBody></Table></Card>
       </TabsContent>
 
-      <TabsContent value="vendedores" className="space-y-3"><Card className="p-4"><div className="flex gap-2"><Input placeholder="Nome do vendedor" value={novoVend} onChange={e => setNovoVend(e.target.value)} className="max-w-xs" /><Button onClick={() => { if (!novoVend) return; setVendedores(prev => [...prev, { id: `v${Date.now()}`, nome: novoVend }]); setNovoVend(""); toast.success("Vendedor adicionado."); void loadStats(); }}><Plus className="mr-1 h-4 w-4" />Adicionar</Button></div><div className="mt-4 flex flex-wrap gap-2">{vendedores.map(v => <Badge key={v.id} variant="outline" className="px-3 py-1">{v.nome}<button className="ml-2 text-destructive" onClick={() => { if (!window.confirm("Esta ação não pode ser desfeita nesta versão. Deseja continuar?")) return; setVendedores(prev => prev.filter(x => x.id !== v.id)); void loadStats(); }}>×</button></Badge>)}</div></Card></TabsContent>
+      <TabsContent value="vendedores" className="space-y-3"><Card className="p-4"><div className="grid gap-2 md:grid-cols-4"><Input placeholder="Nome" value={novoVend} onChange={e => setNovoVend(e.target.value)} /><Input placeholder="Telefone" value={novoTel} onChange={e => setNovoTel(e.target.value)} /><Input placeholder="E-mail" value={novoEmail} onChange={e => setNovoEmail(e.target.value)} /><Button onClick={() => { if (!novoVend) return; setVendedores(prev => [...prev, { id: `v${Date.now()}`, nome: novoVend, telefone: novoTel, email: novoEmail, ativo: true }]); setNovoVend("");setNovoTel("");setNovoEmail(""); toast.success("Vendedor adicionado."); void loadStats(); }}><Plus className="mr-1 h-4 w-4" />Adicionar</Button></div><div className="mt-4 space-y-2">{vendedores.map(v => <div key={v.id} className="flex items-center justify-between rounded border p-2 text-sm"><div>{v.nome} • {v.telefone||"-"} • {v.email||"-"} • {v.ativo?"Ativo":"Inativo"}</div><button className="ml-2 text-destructive" onClick={() => { if (!window.confirm("Esta ação não pode ser desfeita nesta versão. Deseja continuar?")) return; setVendedores(prev => prev.filter(x => x.id !== v.id)); void loadStats(); }}>Excluir</button></div>)}</div></Card></TabsContent>
+
+      <TabsContent value="tickets" className="space-y-3"><Card className="p-4 space-y-2"><div className="text-sm font-semibold">Ticket médio por linha/categoria</div>{ticketsMedios.map(t=> <div key={t.id} className="flex items-center gap-2"><Badge variant="outline">{t.categoria}</Badge><span>R$ {t.valorMedioHa}/ha</span><span>{t.ativo?"Ativo":"Inativo"}</span><Button size="sm" variant="ghost" onClick={()=>setTicketsMedios(prev=>prev.filter(x=>x.id!==t.id))}>Remover</Button></div>)}<div className="flex gap-2"><Select onValueChange={v=>setTicketsMedios(prev=>[...prev,{id:`tm${Date.now()}`,categoria:v as any,valorMedioHa:0,ativo:true}])}><SelectTrigger className="w-40"><SelectValue placeholder="Categoria"/></SelectTrigger><SelectContent><SelectItem value="Adjuvantes">Adjuvantes</SelectItem><SelectItem value="Nutrição">Nutrição</SelectItem><SelectItem value="Fertilizantes">Fertilizantes</SelectItem><SelectItem value="Sementes">Sementes</SelectItem><SelectItem value="Defensivos">Defensivos</SelectItem><SelectItem value="Biológicos">Biológicos</SelectItem><SelectItem value="Outros">Outros</SelectItem></SelectContent></Select></div></Card></TabsContent>
 
       <TabsContent value="banco-local">
         <Card className="space-y-3 p-4 text-sm">
