@@ -10,8 +10,9 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { useAppStore } from "@/store/AppStore";
 import { ROTAS_NOMES } from "@/data/mockData";
-import { Cliente, ABC, Prioridade } from "@/types";
+import { Cliente, ABC, ClienteCulturaArea } from "@/types";
 import { fmtBRL, fmtNum } from "@/utils/calculations";
+import { computeClienteStatus, CULTURAS_SUGERIDAS, formatDateBR, isClienteAtrasado, normalizarCulturas, parseFrequenciaDias, sugestaoRetornoDias } from "@/lib/clientesUtils";
 import { Plus, Pencil, Trash2, Eye, Search } from "lucide-react";
 import { toast } from "sonner";
 
@@ -23,9 +24,9 @@ const empty: Omit<Cliente, "id"> = {
 };
 
 export default function Clientes() {
-  const { clientes, setClientes, vendedores, lancamentos, negocios, ticketsMedios, orcamentos, proximasAcoes } = useAppStore();
+  const { clientes, setClientes, lancamentos, negocios, ticketsMedios, orcamentos, proximasAcoes } = useAppStore();
   const [busca, setBusca] = useState("");
-  const [fAbc, setFAbc] = useState(""); const [fPri, setFPri] = useState(""); const [fRota, setFRota] = useState(""); const [fStatus, setFStatus] = useState(""); const [fVend, setFVend] = useState(""); const [fCidade, setFCidade] = useState("");
+  const [fAbc, setFAbc] = useState(""); const [fRota, setFRota] = useState(""); const [fStatus, setFStatus] = useState(""); const [fCidade, setFCidade] = useState(""); const [fAtrasado, setFAtrasado] = useState("");
   const [open, setOpen] = useState(false);
   const [edit, setEdit] = useState<Cliente | null>(null);
   const [form, setForm] = useState<Omit<Cliente, "id">>(empty);
@@ -35,13 +36,14 @@ export default function Clientes() {
   const statuses = useMemo(() => Array.from(new Set(clientes.map(c => c.statusAtual))), [clientes]);
 
   const ultimaVisita = (id: string) => lancamentos.filter(l=>l.clienteId===id && l.tipo==="Visita").sort((a,b)=>b.data.localeCompare(a.data))[0]?.data;
-  const atrasado = (c: Cliente) => { const base = c.dataProximaAcao || c.retorno; if (!base || c.statusAtual==="Inativo") return false; return base < new Date().toISOString().slice(0,10); };
+  const atrasado = (c: Cliente) => isClienteAtrasado(c, proximasAcoes);
   const lista = useMemo(() => clientes.filter(c =>
     (!busca || c.nome.toLowerCase().includes(busca.toLowerCase())) &&
-    (!fAbc || c.abc === fAbc) && (!fPri || c.prioridade === fPri) &&
+    (!fAbc || c.abc === fAbc) &&
     (!fRota || c.rota === fRota) && (!fStatus || c.statusAtual === fStatus) &&
-    (!fVend || c.vendedor === fVend) && (!fCidade || c.cidade === fCidade)
-  ), [clientes, busca, fAbc, fPri, fRota, fStatus, fVend, fCidade]);
+    (!fCidade || c.cidade === fCidade) &&
+    (!fAtrasado || (fAtrasado === "sim" ? atrasado(c) : !atrasado(c)))
+  ), [clientes, busca, fAbc, fRota, fStatus, fCidade, fAtrasado, proximasAcoes]);
 
   const totais = useMemo(() => ({
     potencial: lista.reduce((s, c) => s + c.potencialTotal, 0),
@@ -69,11 +71,11 @@ export default function Clientes() {
     const days = (now.getTime()-new Date(lastVisit.data).getTime())/86400000;
     return days <= 90 ? "Visita" : "Prospectar";
   };
-  const sugestaoFreq = (abc:string, p:string) => (abc==="A"&&p==="P1")?"15 dias":((abc==="A"&&p==="P2")||(abc==="B"&&p==="P1"))?"30 dias":(abc==="B"&&p==="P2")?"45 dias":(abc==="C"||p==="P3")?"60 dias":"30 dias";
+  
   const save = () => {
     if (!form.nome) return toast.error("Nome obrigatório.");
     const potencialCalculado = ticketAtivo>0 ? form.areaHa * ticketAtivo : 0;
-    const base = { ...form, potencialTotal: potencialCalculado, potencialCalculado: ticketAtivo>0, frequenciaRetorno: form.frequenciaRetorno || sugestaoFreq(form.abc, form.prioridade), statusAtual: edit ? calcStatus(edit.id, form.inativoManual) : (form.inativoManual?"Inativo":"Prospectar") };
+    const base = { ...form, potencialTotal: potencialCalculado, potencialCalculado: ticketAtivo>0, frequenciaRetorno: form.frequenciaRetorno || `${sugestaoRetornoDias(form as Cliente, computeClienteStatus(form as Cliente, lancamentos, negocios, orcamentos), negocios)} dias`, statusAtual: computeClienteStatus({ ...form, id: edit?.id || "novo" } as Cliente, lancamentos, negocios, orcamentos) };
     if (edit) setClientes(prev => prev.map(c => c.id === edit.id ? { ...base, id: edit.id } : c));
     else setClientes(prev => [...prev, { ...base, id: `c${Date.now()}` }]);
     setOpen(false); toast.success("Cliente salvo.");
@@ -117,7 +119,7 @@ export default function Clientes() {
       <Card className="overflow-x-auto p-0">
         <Table>
           <TableHeader><TableRow>
-            <TableHead>Cliente</TableHead><TableHead>ABC</TableHead><TableHead>Prio</TableHead>
+            <TableHead>Cliente</TableHead><TableHead>ABC</TableHead>
             <TableHead>Rota</TableHead><TableHead>Cidade</TableHead><TableHead>Culturas</TableHead>
             <TableHead className="text-right">Área (ha)</TableHead><TableHead className="text-right">Potencial</TableHead>
             <TableHead>Status</TableHead><TableHead>Última visita</TableHead><TableHead>Próxima ação</TableHead><TableHead>Retorno</TableHead><TableHead className="text-right">Ações</TableHead>
@@ -127,11 +129,10 @@ export default function Clientes() {
               <TableRow key={c.id}>
                 <TableCell className="font-medium">{c.nome}</TableCell>
                 <TableCell><Badge variant="outline">{c.abc}</Badge></TableCell>
-                <TableCell><Badge variant="outline">{c.prioridade}</Badge></TableCell>
-                <TableCell>{c.rota}</TableCell><TableCell>{c.cidade}</TableCell><TableCell className="max-w-[160px] truncate">{c.culturas}</TableCell>
+                                <TableCell>{c.rota}</TableCell><TableCell>{c.cidade}</TableCell><TableCell className="max-w-[160px] truncate">{c.culturas}</TableCell>
                 <TableCell className="text-right">{fmtNum(c.areaHa)}</TableCell>
                 <TableCell className="text-right">{fmtBRL(c.potencialTotal)}</TableCell>
-                <TableCell>{c.statusAtual} {atrasado(c) && <Badge className="ml-1" variant="destructive">Atrasado</Badge>}</TableCell><TableCell>{ultimaVisita(c.id) || "Sem visita registrada"}</TableCell><TableCell>{c.proximaAcao || "—"}</TableCell><TableCell>{c.dataProximaAcao || c.retorno}</TableCell>
+                <TableCell>{c.statusAtual} {atrasado(c) && <Badge className="ml-1" variant="destructive">Atrasado</Badge>}</TableCell><TableCell>{formatDateBR(ultimaVisita(c.id)) || "Sem visita registrada"}</TableCell><TableCell>{proximasAcoes.find(a=>a.clienteId===c.id && a.status==="Pendente")?.descricao || "—"}</TableCell><TableCell>{formatDateBR(proximasAcoes.find(a=>a.clienteId===c.id && a.status==="Pendente")?.data || c.retorno)}</TableCell>
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-1">
                     <Button size="icon" variant="ghost" onClick={() => setView(c)}><Eye className="h-3.5 w-3.5" /></Button>
@@ -157,18 +158,17 @@ export default function Clientes() {
           <div className="grid gap-3 md:grid-cols-2">
             <div className="md:col-span-2"><Label>Nome</Label><Input value={form.nome} onChange={e => setForm({ ...form, nome: e.target.value })} /></div>
             <div><Label>ABC</Label><Select value={form.abc} onValueChange={(v: ABC) => setForm({ ...form, abc: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{["A","B","C"].map(v => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent></Select></div>
-            <div><Label>Prioridade</Label><Select value={form.prioridade} onValueChange={(v: Prioridade) => setForm({ ...form, prioridade: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{["P1","P2","P3"].map(v => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent></Select></div>
-            <div><Label>Rota</Label><Select value={form.rota} onValueChange={v => setForm({ ...form, rota: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{ROTAS_NOMES.map(v => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent></Select></div>
+                        <div><Label>Rota</Label><Select value={form.rota} onValueChange={v => setForm({ ...form, rota: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{ROTAS_NOMES.map(v => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent></Select></div>
             <div><Label>Cidade</Label><Input value={form.cidade} onChange={e => setForm({ ...form, cidade: e.target.value })} /></div>
             <div><Label>Localidade</Label><Input value={form.localidade} onChange={e => setForm({ ...form, localidade: e.target.value })} /></div>
-            <div><Label>Culturas</Label><Input value={form.culturas} onChange={e => setForm({ ...form, culturas: e.target.value })} /></div>
-            <div><Label>Área (ha)</Label><Input type="number" step="0.01" value={form.areaHa} onChange={e => setForm({ ...form, areaHa: +e.target.value })} /></div>
+            <div className="md:col-span-2"><Label>Culturas do cliente</Label><div className="space-y-2">{normalizarCulturas(form.culturasDetalhes, form.culturas).map((item, idx) => <div key={item.id} className="grid grid-cols-12 gap-2"><Select value={item.cultura} onValueChange={v=>{ const next=[...normalizarCulturas(form.culturasDetalhes, form.culturas)]; next[idx]={...item,cultura:v}; setForm({...form,culturasDetalhes:next,culturas:next.map(x=>x.cultura).join(", "),areaHa:next.reduce((s,x)=>s+(x.areaHa||0),0)});}}><SelectTrigger className="col-span-7"><SelectValue/></SelectTrigger><SelectContent>{CULTURAS_SUGERIDAS.map(c=> <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent></Select><Input className="col-span-4" type="number" step="0.01" value={item.areaHa} onChange={e=>{ const next=[...normalizarCulturas(form.culturasDetalhes, form.culturas)]; next[idx]={...item,areaHa:+e.target.value}; setForm({...form,culturasDetalhes:next,culturas:next.map(x=>x.cultura).join(", "),areaHa:next.reduce((s,x)=>s+(x.areaHa||0),0)});}} /><Button className="col-span-1" variant="ghost" onClick={()=>{ const next=normalizarCulturas(form.culturasDetalhes, form.culturas).filter((_,i)=>i!==idx); setForm({...form,culturasDetalhes:next,culturas:next.map(x=>x.cultura).join(", "),areaHa:next.reduce((s,x)=>s+(x.areaHa||0),0)});}}><Trash2 className="h-3 w-3"/></Button></div>)}<Button type="button" variant="outline" onClick={()=>{ const next=[...normalizarCulturas(form.culturasDetalhes, form.culturas),{id:`ca-${Date.now()}`,cultura:"Soja",areaHa:0} as ClienteCulturaArea]; setForm({...form,culturasDetalhes:next}); }}>Adicionar cultura</Button></div></div>
+            <div><Label>Área (ha)</Label><Input type="number" step="0.01" value={form.areaHa} disabled /></div>
             <div><Label>Potencial total</Label><Input type="number" step="0.01" value={ticketAtivo > 0 ? form.areaHa * ticketAtivo : 0} disabled /></div>
             <div className="md:col-span-2 text-xs text-muted-foreground">Potencial calculado automaticamente com base na área do cliente e nos tickets médios ativos por linha de produto.</div>
             <div><Label>Inativo manual</Label><Select value={form.inativoManual ? "1":"0"} onValueChange={v=>setForm({ ...form, inativoManual: v==="1" })}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="0">Não</SelectItem><SelectItem value="1">Sim</SelectItem></SelectContent></Select></div>
             <div><Label>Status atual</Label><Input value={form.statusAtual} disabled /></div>
             <div><Label>Frequência de retorno</Label><Input value={form.frequenciaRetorno} onChange={e => setForm({ ...form, frequenciaRetorno: e.target.value })} /></div>
-            <div><Label>Retorno</Label><Input type="date" value={form.retorno} onChange={e => setForm({ ...form, retorno: e.target.value })} /></div>
+            
             <div><Label>Próxima ação</Label><Input value={form.proximaAcao || ""} onChange={e => setForm({ ...form, proximaAcao: e.target.value })} /></div>
             <div><Label>Data próxima ação</Label><Input type="date" value={form.dataProximaAcao || ""} onChange={e => setForm({ ...form, dataProximaAcao: e.target.value })} /></div>
             <div><Label>CPF/CNPJ</Label><Input value={form.documento || ""} onChange={e => setForm({ ...form, documento: e.target.value })} /></div>
