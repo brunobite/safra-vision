@@ -100,7 +100,8 @@ export function gerarPdfOrcamento(orcamento: Orcamento, cliente?: Cliente, empre
     margin: { left: margem, right: margem },
   });
 
-  y = (doc as any).lastAutoTable.finalY + 8;
+  const docWithTable = doc as jsPDF & { lastAutoTable?: { finalY: number } };
+  y = (docWithTable.lastAutoTable?.finalY ?? y) + 8;
 
   doc.setFont("helvetica", "bold");
   doc.text("Resumo", margem, y);
