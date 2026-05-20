@@ -47,6 +47,14 @@ export interface Cliente {
   inativoManual?: boolean;
   vendedor?: string;
   produtosInteresse?: string[];
+  documento?: string;
+  inscricaoEstadual?: string;
+  endereco?: string;
+  telefone?: string;
+  email?: string;
+  nomeContato?: string;
+  culturaPrincipal?: string;
+  areaAplicacaoPotencial?: string;
 }
 
 export interface Lancamento {
@@ -207,6 +215,7 @@ export interface OrcamentoItem {
 
 export interface Orcamento {
   id: string;
+  codigo: string;
   clienteId: string;
   negocioId?: string;
   vendedor: string;
@@ -225,6 +234,20 @@ export interface Orcamento {
   observacoes?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface DadosEmpresa {
+  id: string;
+  nomeFantasia?: string;
+  razaoSocial?: string;
+  cnpj?: string;
+  inscricaoEstadual?: string;
+  endereco?: string;
+  cidadeUf?: string;
+  telefone?: string;
+  email?: string;
+  consultorPadrao?: string;
+  observacoesComerciaisPadrao?: string;
 }
 
 export interface RegraComercialConfig {
