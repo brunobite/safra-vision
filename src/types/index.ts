@@ -42,6 +42,12 @@ export interface ProximaAcao {
 
 export interface Vendedor { id: string; nome: string; telefone?: string; email?: string; ativo: boolean; }
 
+export interface ClienteCulturaArea {
+  id: string;
+  cultura: string;
+  areaHa: number;
+}
+
 export interface Cliente {
   id: string;
   nome: string;
@@ -53,6 +59,7 @@ export interface Cliente {
   latitude?: number;
   longitude?: number;
   culturas: string;
+  culturasDetalhes?: ClienteCulturaArea[];
   areaHa: number;
   potencialTotal: number;
   potencialAdj?: number;
