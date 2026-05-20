@@ -29,6 +29,8 @@ interface FormState extends Omit<Lancamento, "id"> {
   oppPrevisao?: string;
   oppProxAcao?: string;
   oppDataProxAcao?: string;
+  proximaAcao?: string;
+  dataProximaAcao?: string;
 }
 
 const empty: FormState = {
@@ -42,10 +44,11 @@ const empty: FormState = {
   geraOportunidade: false,
   oppNome: "", oppProdutos: "", oppCategoria: "Adjuvantes", oppValor: 0,
   oppStatus: "Novo", oppPrevisao: "", oppProxAcao: "", oppDataProxAcao: "",
+  proximaAcao: "", dataProximaAcao: "",
 };
 
 export default function Lancamentos() {
-  const { lancamentos, setLancamentos, clientes, clienteById, filtered, vendedores, negocios, setNegocios } = useAppStore();
+  const { lancamentos, setLancamentos, clientes, clienteById, filtered, vendedores, negocios, setNegocios, setClientes, setProximasAcoes } = useAppStore();
   const [form, setForm] = useState<FormState>(empty);
   const [editId, setEditId] = useState<string | null>(null);
   const [busca, setBusca] = useState("");
@@ -97,6 +100,8 @@ export default function Lancamentos() {
     };
     if (editId) setLancamentos(prev => prev.map(l => l.id === editId ? lanc : l));
     else setLancamentos(prev => [lanc, ...prev]);
+    setClientes(prev=>prev.map(c=>c.id!==form.clienteId?c:{...c, ultimaVisita: form.tipo==="Visita"?form.data:c.ultimaVisita, proximaAcao: form.proximaAcao || c.proximaAcao, dataProximaAcao: form.dataProximaAcao || c.dataProximaAcao}));
+    if (form.proximaAcao && form.dataProximaAcao) { const now = new Date().toISOString(); setProximasAcoes(prev=>[{id:`pa${Date.now()}`, clienteId: form.clienteId, responsavel: form.vendedor, descricao: form.proximaAcao!, tipo: "Visita", data: form.dataProximaAcao!, status:"Pendente", origem:"Lançamento", createdAt: now, updatedAt: now}, ...prev]); }
     toast.success(editId ? "Lançamento atualizado." : "Lançamento criado.");
     reset();
   };
@@ -170,6 +175,8 @@ export default function Lancamentos() {
             <Label>O que foi realizado? *</Label>
             <Textarea rows={2} value={form.oQueFoiRealizado} onChange={e => setForm({ ...form, oQueFoiRealizado: e.target.value })} />
           </div>
+          <div><Label>Próxima ação</Label><Input value={form.proximaAcao || ""} onChange={e => setForm({ ...form, proximaAcao: e.target.value })} /></div>
+          <div><Label>Data próxima ação</Label><Input type="date" value={form.dataProximaAcao || ""} onChange={e => setForm({ ...form, dataProximaAcao: e.target.value })} /></div>
         </div>
 
         <div className="mt-5 flex items-center gap-3 rounded-md border border-border bg-muted/30 p-3">

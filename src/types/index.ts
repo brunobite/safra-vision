@@ -21,6 +21,25 @@ export type CategoriaProduto = string;
 export const CATEGORIAS_PRODUTO_PADRAO = ["Adjuvantes", "Nutrição", "Fertilizantes", "Sementes", "Defensivos", "Biológicos", "Outros"] as const;
 export const CATEGORIAS_PRODUTO: CategoriaProduto[] = [...CATEGORIAS_PRODUTO_PADRAO];
 
+
+export type TipoProximaAcao = "Visita" | "Ligação" | "Enviar orçamento" | "Cobrar retorno" | "Pós-venda" | "Renovação" | "Outro";
+export type StatusProximaAcao = "Pendente" | "Concluída" | "Cancelada";
+
+export interface ProximaAcao {
+  id: string;
+  clienteId?: string;
+  negocioId?: string;
+  orcamentoId?: string;
+  responsavel?: string;
+  descricao: string;
+  tipo: TipoProximaAcao;
+  data: string;
+  status: StatusProximaAcao;
+  origem?: "Cliente" | "Lançamento" | "Negócio" | "Orçamento" | "Avulsa";
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface Vendedor { id: string; nome: string; telefone?: string; email?: string; ativo: boolean; }
 
 export interface Cliente {
@@ -55,6 +74,10 @@ export interface Cliente {
   nomeContato?: string;
   culturaPrincipal?: string;
   areaAplicacaoPotencial?: string;
+  proximaAcao?: string;
+  dataProximaAcao?: string;
+  tipoProximaAcao?: TipoProximaAcao;
+  ultimaVisita?: string;
 }
 
 export interface Lancamento {
@@ -74,6 +97,9 @@ export interface Lancamento {
   vendedor?: string;
   geraOportunidade?: boolean;
   negocioId?: string;
+  proximaAcao?: string;
+  dataProximaAcao?: string;
+  tipoProximaAcao?: TipoProximaAcao;
 }
 
 export interface Negocio {

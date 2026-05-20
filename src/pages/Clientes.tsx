@@ -23,7 +23,7 @@ const empty: Omit<Cliente, "id"> = {
 };
 
 export default function Clientes() {
-  const { clientes, setClientes, vendedores, lancamentos, negocios, ticketsMedios } = useAppStore();
+  const { clientes, setClientes, vendedores, lancamentos, negocios, ticketsMedios, orcamentos, proximasAcoes } = useAppStore();
   const [busca, setBusca] = useState("");
   const [fAbc, setFAbc] = useState(""); const [fPri, setFPri] = useState(""); const [fRota, setFRota] = useState(""); const [fStatus, setFStatus] = useState(""); const [fVend, setFVend] = useState(""); const [fCidade, setFCidade] = useState("");
   const [open, setOpen] = useState(false);
@@ -34,6 +34,8 @@ export default function Clientes() {
   const cidades = useMemo(() => Array.from(new Set(clientes.map(c => c.cidade))), [clientes]);
   const statuses = useMemo(() => Array.from(new Set(clientes.map(c => c.statusAtual))), [clientes]);
 
+  const ultimaVisita = (id: string) => lancamentos.filter(l=>l.clienteId===id && l.tipo==="Visita").sort((a,b)=>b.data.localeCompare(a.data))[0]?.data;
+  const atrasado = (c: Cliente) => { const base = c.dataProximaAcao || c.retorno; if (!base || c.statusAtual==="Inativo") return false; return base < new Date().toISOString().slice(0,10); };
   const lista = useMemo(() => clientes.filter(c =>
     (!busca || c.nome.toLowerCase().includes(busca.toLowerCase())) &&
     (!fAbc || c.abc === fAbc) && (!fPri || c.prioridade === fPri) &&
@@ -118,7 +120,7 @@ export default function Clientes() {
             <TableHead>Cliente</TableHead><TableHead>ABC</TableHead><TableHead>Prio</TableHead>
             <TableHead>Rota</TableHead><TableHead>Cidade</TableHead><TableHead>Culturas</TableHead>
             <TableHead className="text-right">Área (ha)</TableHead><TableHead className="text-right">Potencial</TableHead>
-            <TableHead>Status</TableHead><TableHead>Freq.</TableHead><TableHead>Retorno</TableHead><TableHead className="text-right">Ações</TableHead>
+            <TableHead>Status</TableHead><TableHead>Última visita</TableHead><TableHead>Próxima ação</TableHead><TableHead>Retorno</TableHead><TableHead className="text-right">Ações</TableHead>
           </TableRow></TableHeader>
           <TableBody>
             {lista.map(c => (
@@ -129,7 +131,7 @@ export default function Clientes() {
                 <TableCell>{c.rota}</TableCell><TableCell>{c.cidade}</TableCell><TableCell className="max-w-[160px] truncate">{c.culturas}</TableCell>
                 <TableCell className="text-right">{fmtNum(c.areaHa)}</TableCell>
                 <TableCell className="text-right">{fmtBRL(c.potencialTotal)}</TableCell>
-                <TableCell>{c.statusAtual}</TableCell><TableCell>{c.frequenciaRetorno}</TableCell><TableCell>{c.retorno}</TableCell>
+                <TableCell>{c.statusAtual} {atrasado(c) && <Badge className="ml-1" variant="destructive">Atrasado</Badge>}</TableCell><TableCell>{ultimaVisita(c.id) || "Sem visita registrada"}</TableCell><TableCell>{c.proximaAcao || "—"}</TableCell><TableCell>{c.dataProximaAcao || c.retorno}</TableCell>
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-1">
                     <Button size="icon" variant="ghost" onClick={() => setView(c)}><Eye className="h-3.5 w-3.5" /></Button>
@@ -166,7 +168,9 @@ export default function Clientes() {
             <div><Label>Inativo manual</Label><Select value={form.inativoManual ? "1":"0"} onValueChange={v=>setForm({ ...form, inativoManual: v==="1" })}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="0">Não</SelectItem><SelectItem value="1">Sim</SelectItem></SelectContent></Select></div>
             <div><Label>Status atual</Label><Input value={form.statusAtual} disabled /></div>
             <div><Label>Frequência de retorno</Label><Input value={form.frequenciaRetorno} onChange={e => setForm({ ...form, frequenciaRetorno: e.target.value })} /></div>
-            <div><Label>Retorno</Label><Input value={form.retorno} onChange={e => setForm({ ...form, retorno: e.target.value })} /></div>
+            <div><Label>Retorno</Label><Input type="date" value={form.retorno} onChange={e => setForm({ ...form, retorno: e.target.value })} /></div>
+            <div><Label>Próxima ação</Label><Input value={form.proximaAcao || ""} onChange={e => setForm({ ...form, proximaAcao: e.target.value })} /></div>
+            <div><Label>Data próxima ação</Label><Input type="date" value={form.dataProximaAcao || ""} onChange={e => setForm({ ...form, dataProximaAcao: e.target.value })} /></div>
             <div><Label>CPF/CNPJ</Label><Input value={form.documento || ""} onChange={e => setForm({ ...form, documento: e.target.value })} /></div>
             <div><Label>Inscrição estadual</Label><Input value={form.inscricaoEstadual || ""} onChange={e => setForm({ ...form, inscricaoEstadual: e.target.value })} /></div>
             <div><Label>Endereço</Label><Input value={form.endereco || ""} onChange={e => setForm({ ...form, endereco: e.target.value })} /></div>
@@ -194,8 +198,13 @@ export default function Clientes() {
               <div><span className="text-muted-foreground">Área:</span> {fmtNum(view.areaHa)} ha</div>
               <div><span className="text-muted-foreground">Potencial:</span> {fmtBRL(view.potencialTotal)}</div>
               <div><span className="text-muted-foreground">Status:</span> {view.statusAtual}</div>
-              <div><span className="text-muted-foreground">Frequência:</span> {view.frequencia}</div>
+              <div><span className="text-muted-foreground">Frequência:</span> {view.frequenciaRetorno}</div>
               <div><span className="text-muted-foreground">Retorno:</span> {view.retorno}</div>
+              <div><span className="text-muted-foreground">Última visita:</span> {ultimaVisita(view.id) || "Sem visita registrada"}</div>
+              <div><span className="text-muted-foreground">Próxima ação:</span> {view.proximaAcao || "—"}</div>
+              <div><span className="text-muted-foreground">Negócios:</span> {negocios.filter(n=>n.clienteId===view.id).length}</div>
+              <div><span className="text-muted-foreground">Orçamentos:</span> {orcamentos.filter(o=>o.clienteId===view.id).length}</div>
+              <div><span className="text-muted-foreground">Ações abertas:</span> {proximasAcoes.filter(a=>a.clienteId===view.id && a.status==="Pendente").length}</div>
             </div>
           )}
         </DialogContent>

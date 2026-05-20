@@ -19,6 +19,7 @@ import FunilVendas from "./pages/FunilVendas";
 import Produtos from "./pages/Produtos";
 import PrecosEstoque from "./pages/PrecosEstoque";
 import Orcamentos from "./pages/Orcamentos";
+import ProximasAcoes from "./pages/ProximasAcoes";
 
 const queryClient = new QueryClient();
 
@@ -43,6 +44,7 @@ const App = () => (
               <Route path="/rotas" element={<Rotas />} />
               <Route path="/prioridades" element={<PrioridadesP1 />} />
               <Route path="/eventos" element={<Eventos />} />
+              <Route path="/proximas-acoes" element={<ProximasAcoes />} />
               <Route path="/configuracoes" element={<Configuracoes />} />
             </Route>
             <Route path="*" element={<NotFound />} />
