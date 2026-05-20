@@ -88,7 +88,8 @@ export default function Configuracoes() {
 
       toast.success("Backup restaurado com sucesso.");
       void loadStats();
-    } catch {
+    } catch (error) {
+      console.warn("Arquivo de backup inválido ou incompatível.", error);
       toast.error("Arquivo de backup inválido ou incompatível com o aplicativo.");
     } finally {
       event.target.value = "";
@@ -107,7 +108,8 @@ export default function Configuracoes() {
       const preview = buildImportPreview(file.name, importEntity, rows);
       setImportPreview(preview);
       setPreviewOpen(true);
-    } catch {
+    } catch (error) {
+      console.warn("Arquivo de importação inválido ou sem dados.", error);
       toast.error("Arquivo inválido ou sem dados para importação.");
     } finally {
       event.target.value = "";
