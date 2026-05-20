@@ -10,7 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAppStore } from "@/store/AppStore";
-import { RegraComissao, AplicarSobre, FaixaComissao, CATEGORIAS_PRODUTO_PADRAO } from "@/types";
+import { RegraComissao, AplicarSobre, FaixaComissao, CATEGORIAS_PRODUTO_PADRAO, DadosEmpresa } from "@/types";
 import { Plus, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { getLocalDbStats, LocalDbStats, replaceLocalDatabase, resetLocalDatabase } from "@/lib/localRepository";
@@ -25,6 +25,9 @@ const APLICAR: { v: AplicarSobre; label: string }[] = [
   { v: "frente_comercial", label: "Frente comercial" }, { v: "meta_empresa", label: "Meta empresa" }, { v: "meta_pessoal", label: "Meta pessoal" },
 ];
 const emptyRegra: Omit<RegraComissao, "id"> = { nome: "", tipo: "fixa", percentual: 1, aplicarSobre: "negocio_fechado", ativo: true, faixas: [{ min: 80, max: 89, percentual: 0.5 }] };
+
+const EMPRESA_STORAGE_KEY = "safra-dados-empresa";
+const defaultEmpresa: DadosEmpresa = { id: "empresa-default" };
 
 export default function Configuracoes() {
   const {
@@ -45,6 +48,7 @@ export default function Configuracoes() {
   const [importMode, setImportMode] = useState<ImportMode>("add");
   const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [dadosEmpresa, setDadosEmpresa] = useState<DadosEmpresa>(defaultEmpresa);
   const categoriasTicket = [...new Set([...CATEGORIAS_PRODUTO_PADRAO, ...ticketsMedios.map((t) => t.categoria)])];
   const isCategoriaPadrao = (categoria: string) => CATEGORIAS_PRODUTO_PADRAO.includes(categoria as (typeof CATEGORIAS_PRODUTO_PADRAO)[number]);
 
@@ -52,7 +56,16 @@ export default function Configuracoes() {
   const loadStats = async () => {
     try { setStats(await getLocalDbStats()); } catch (error) { console.error(error); }
   };
-  useEffect(() => { void loadStats(); }, []);
+  useEffect(() => { void loadStats();
+    const raw = localStorage.getItem(EMPRESA_STORAGE_KEY);
+    if (raw) {
+      try {
+        setDadosEmpresa({ ...defaultEmpresa, ...JSON.parse(raw) });
+      } catch (error) {
+        console.warn("Falha ao carregar dados da empresa do armazenamento local.", error);
+      }
+    }
+  }, []);
 
   const exportPayload = {
     clientes, vendedores, lancamentos, negocios, produtos, metasEmpresa, metasPessoais, regrasComissao: regras, eventos,
@@ -155,6 +168,7 @@ export default function Configuracoes() {
         <TabsTrigger value="comissao">Regras de comissão</TabsTrigger>
         <TabsTrigger value="vendedores">Vendedores</TabsTrigger>
         <TabsTrigger value="tickets">Regras comerciais</TabsTrigger>
+        <TabsTrigger value="dados-empresa">Dados da empresa</TabsTrigger>
         <TabsTrigger value="banco-local">Banco local</TabsTrigger>
       </TabsList>
 
@@ -166,6 +180,24 @@ export default function Configuracoes() {
       <TabsContent value="vendedores" className="space-y-3"><Card className="p-4"><div className="grid gap-2 md:grid-cols-4"><Input placeholder="Nome" value={novoVend} onChange={e => setNovoVend(e.target.value)} /><Input placeholder="Telefone" value={novoTel} onChange={e => setNovoTel(e.target.value)} /><Input placeholder="E-mail" value={novoEmail} onChange={e => setNovoEmail(e.target.value)} /><Button onClick={() => { if (!novoVend) return; setVendedores(prev => [...prev, { id: `v${Date.now()}`, nome: novoVend, telefone: novoTel, email: novoEmail, ativo: true }]); setNovoVend("");setNovoTel("");setNovoEmail(""); toast.success("Vendedor adicionado."); void loadStats(); }}><Plus className="mr-1 h-4 w-4" />Adicionar</Button></div><div className="mt-4 space-y-2">{vendedores.map(v => <div key={v.id} className="flex items-center justify-between rounded border p-2 text-sm"><div>{v.nome} • {v.telefone||"-"} • {v.email||"-"} • {v.ativo?"Ativo":"Inativo"}</div><button className="ml-2 text-destructive" onClick={() => { if (!window.confirm("Esta ação não pode ser desfeita nesta versão. Deseja continuar?")) return; setVendedores(prev => prev.filter(x => x.id !== v.id)); void loadStats(); }}>Excluir</button></div>)}</div></Card></TabsContent>
 
       <TabsContent value="tickets" className="space-y-3"><Card className="p-4 space-y-3"><div className="text-sm font-semibold">Ticket médio por linha/categoria</div><div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Linha/categoria</TableHead><TableHead>Valor médio por hectare</TableHead><TableHead>Ativo</TableHead><TableHead className="text-right">Ações</TableHead></TableRow></TableHeader><TableBody>{categoriasTicket.map((categoria) => { const regra = ticketsMedios.find((t) => t.categoria === categoria); return <TableRow key={categoria}><TableCell className="font-medium">{categoria}</TableCell><TableCell><Input type="number" step="0.01" value={regra?.valorMedioHa ?? 0} onChange={(e) => { const valor = Number(e.target.value || 0); setTicketsMedios((prev) => regra ? prev.map((t) => t.id === regra.id ? { ...t, valorMedioHa: valor } : t) : [...prev, { id: `tm${Date.now()}`, categoria, valorMedioHa: valor, ativo: true }]); }} /></TableCell><TableCell><Switch checked={regra?.ativo ?? true} onCheckedChange={(ativo) => setTicketsMedios((prev) => regra ? prev.map((t) => t.id === regra.id ? { ...t, ativo } : t) : [...prev, { id: `tm${Date.now()}`, categoria, valorMedioHa: 0, ativo }])} /></TableCell><TableCell className="text-right">{!isCategoriaPadrao(categoria) && regra ? <Button size="sm" variant="ghost" onClick={() => setTicketsMedios((prev) => prev.filter((x) => x.id !== regra.id))}>Remover</Button> : <span className="text-xs text-muted-foreground">Padrão</span>}</TableCell></TableRow>;})}</TableBody></Table></div><div className="rounded border p-3 space-y-2"><div className="text-sm font-medium">Criar nova linha de produto</div><div className="grid gap-2 md:grid-cols-4"><Input id="nova-cat" placeholder="Nome da linha/categoria" /><Input id="novo-ticket" type="number" step="0.01" placeholder="Valor médio por ha" /><Select defaultValue="1"><SelectTrigger id="novo-ativo"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="1">Ativo</SelectItem><SelectItem value="0">Inativo</SelectItem></SelectContent></Select><Button onClick={() => { const nomeEl = document.getElementById('nova-cat') as HTMLInputElement | null; const valorEl = document.getElementById('novo-ticket') as HTMLInputElement | null; const ativoEl = document.querySelector('#novo-ativo [data-state]') ? '1' : '1'; const categoria = nomeEl?.value.trim() || ''; if (!categoria) return toast.error('Informe o nome da linha/categoria.'); if (categoriasTicket.some((c) => c.toLowerCase() === categoria.toLowerCase())) return toast.error('Esta categoria já existe.'); setTicketsMedios((prev) => [...prev, { id: `tm${Date.now()}`, categoria, valorMedioHa: Number(valorEl?.value || 0), ativo: ativoEl === '1' }]); if (nomeEl) nomeEl.value = ''; if (valorEl) valorEl.value = '0'; toast.success('Linha/categoria criada.'); }}>Adicionar linha</Button></div></div></Card></TabsContent>
+
+
+      <TabsContent value="dados-empresa" className="space-y-3"><Card className="p-4 space-y-3">
+        <div className="text-sm font-semibold">Dados da empresa</div>
+        <div className="grid gap-3 md:grid-cols-2">
+          <div><Label>Nome fantasia</Label><Input value={dadosEmpresa.nomeFantasia || ""} onChange={e=>setDadosEmpresa({...dadosEmpresa,nomeFantasia:e.target.value})} /></div>
+          <div><Label>Razão social</Label><Input value={dadosEmpresa.razaoSocial || ""} onChange={e=>setDadosEmpresa({...dadosEmpresa,razaoSocial:e.target.value})} /></div>
+          <div><Label>CNPJ</Label><Input value={dadosEmpresa.cnpj || ""} onChange={e=>setDadosEmpresa({...dadosEmpresa,cnpj:e.target.value})} /></div>
+          <div><Label>Inscrição estadual</Label><Input value={dadosEmpresa.inscricaoEstadual || ""} onChange={e=>setDadosEmpresa({...dadosEmpresa,inscricaoEstadual:e.target.value})} /></div>
+          <div><Label>Endereço</Label><Input value={dadosEmpresa.endereco || ""} onChange={e=>setDadosEmpresa({...dadosEmpresa,endereco:e.target.value})} /></div>
+          <div><Label>Cidade/UF</Label><Input value={dadosEmpresa.cidadeUf || ""} onChange={e=>setDadosEmpresa({...dadosEmpresa,cidadeUf:e.target.value})} /></div>
+          <div><Label>Telefone</Label><Input value={dadosEmpresa.telefone || ""} onChange={e=>setDadosEmpresa({...dadosEmpresa,telefone:e.target.value})} /></div>
+          <div><Label>E-mail</Label><Input value={dadosEmpresa.email || ""} onChange={e=>setDadosEmpresa({...dadosEmpresa,email:e.target.value})} /></div>
+          <div><Label>Consultor padrão/responsável</Label><Input value={dadosEmpresa.consultorPadrao || ""} onChange={e=>setDadosEmpresa({...dadosEmpresa,consultorPadrao:e.target.value})} /></div>
+          <div><Label>Observações comerciais padrão</Label><Input value={dadosEmpresa.observacoesComerciaisPadrao || ""} onChange={e=>setDadosEmpresa({...dadosEmpresa,observacoesComerciaisPadrao:e.target.value})} /></div>
+        </div>
+        <Button onClick={()=>{ localStorage.setItem(EMPRESA_STORAGE_KEY, JSON.stringify(dadosEmpresa)); toast.success("Dados da empresa salvos."); }}>Salvar dados da empresa</Button>
+      </Card></TabsContent>
 
       <TabsContent value="banco-local">
         <Card className="space-y-3 p-4 text-sm">
