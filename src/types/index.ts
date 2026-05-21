@@ -233,6 +233,21 @@ export interface FormaPagamento {
   logoDataUrl?: string;
 }
 
+export type BaseMode = "teste" | "operacional";
+
+export interface ImportLog {
+  id: string;
+  arquivo: string;
+  dataHora: string;
+  entidade: string;
+  registrosLidos: number;
+  registrosCriados: number;
+  registrosAtualizados: number;
+  registrosIgnorados: number;
+  erros: number;
+  avisos: number;
+}
+
 export interface NegocioProdutoItem { produtoId: string; quantidade: number; precoUnitario: number; }
 
 export type OrcamentoStatus = "Rascunho" | "Enviado" | "Aprovado" | "Reprovado" | "Cancelado";

@@ -10,14 +10,15 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAppStore } from "@/store/AppStore";
-import { RegraComissao, AplicarSobre, FaixaComissao, CATEGORIAS_PRODUTO_PADRAO, Empresa, FormaPagamento } from "@/types";
+import { BaseMode, ImportLog, RegraComissao, AplicarSobre, FaixaComissao, CATEGORIAS_PRODUTO_PADRAO, Empresa, FormaPagamento } from "@/types";
 import { Plus, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { getLocalDbStats, LocalDbStats, replaceLocalDatabase, resetLocalDatabase } from "@/lib/localRepository";
+import { getLocalDbStats, LocalDbStats, replaceLocalDatabase, resetLocalDatabase, saveStore } from "@/lib/localRepository";
 import { exportAllEntitiesToCsv } from "@/lib/csvService";
 import { exportWorkbook } from "@/lib/excelService";
 import { downloadBackupJson, parseBackupPayload } from "@/lib/backupService";
 import { applyImport, buildImportPreview, ImportEntity, ImportMode, ImportPreview, parseCsv } from "@/lib/importService";
+import { openAppDb, promisifyRequest } from "@/lib/db";
 
 const APLICAR: { v: AplicarSobre; label: string }[] = [
   { v: "realizado_empresa", label: "Realizado empresa" }, { v: "realizado_pessoal", label: "Realizado pessoal" },
@@ -47,6 +48,8 @@ export default function Configuracoes() {
   const [importMode, setImportMode] = useState<ImportMode>("add");
   const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [baseMode, setBaseMode] = useState<BaseMode>((localStorage.getItem("baseMode") as BaseMode) || "teste");
+  const [importLogs, setImportLogs] = useState<ImportLog[]>([]);
   const [dadosEmpresa, setDadosEmpresa] = useState<Empresa>(defaultEmpresa);
   const categoriasTicket = [...new Set([...CATEGORIAS_PRODUTO_PADRAO, ...ticketsMedios.map((t) => t.categoria)])];
   const isCategoriaPadrao = (categoria: string) => CATEGORIAS_PRODUTO_PADRAO.includes(categoria as (typeof CATEGORIAS_PRODUTO_PADRAO)[number]);
@@ -56,7 +59,13 @@ export default function Configuracoes() {
     try { setStats(await getLocalDbStats()); } catch (error) { console.error(error); }
   };
   useEffect(() => { void loadStats();
-
+    void (async () => {
+      const db = await openAppDb();
+      const tx = db.transaction("importLogs", "readonly");
+      const logs = await promisifyRequest(tx.objectStore("importLogs").getAll()) as ImportLog[];
+      setImportLogs(logs.sort((a,b)=>b.dataHora.localeCompare(a.dataHora)));
+      db.close();
+    })();
   }, []);
 
   const exportPayload = {
@@ -105,6 +114,8 @@ export default function Configuracoes() {
     const file = event.target.files?.[0];
     if (!file) return;
     try {
+      const hasBackup = window.confirm("Você gerou backup da base atual?\nOK = Continuar mesmo assim\nCancelar = escolher gerar backup agora.");
+      if (!hasBackup) { downloadBackupJson(exportPayload); toast.message("Backup gerado. Selecione o arquivo novamente para importar."); return; }
       const text = await file.text();
       const rows = parseCsv(text);
       if (rows.length < 2) throw new Error();
@@ -138,6 +149,12 @@ export default function Configuracoes() {
     if (importEntity === "regrasComissao") apply("regrasComissao", regras as never[], setRegras);
     if (importEntity === "eventos") apply("eventos", eventos as never[], setEventos);
     if (importEntity === "prioridadesP1") apply("prioridadesP1", prioridadesP1 as never[], setPrioridadesP1);
+    if (importEntity === "empresas") apply("empresas", empresas as never[], setEmpresas as never);
+    if (importEntity === "formasPagamento") apply("formasPagamento", formasPagamento as never[], setFormasPagamento as never);
+    if (importEntity === "ticketsMedios") apply("ticketsMedios", ticketsMedios as never[], setTicketsMedios as never);
+    const log: ImportLog = { id: `ilog-${Date.now()}`, arquivo: importPreview.fileName, dataHora: new Date().toISOString(), entidade: importEntity, registrosLidos: importPreview.totalRows, registrosCriados: importPreview.validRows, registrosAtualizados: 0, registrosIgnorados: importPreview.errorRows, erros: importPreview.errorRows, avisos: importPreview.rows.reduce((a,r)=>a+r.warnings.length,0) };
+    setImportLogs((prev)=>[log, ...prev]);
+    void saveStore("importLogs", [log, ...importLogs]);
     setPreviewOpen(false);
     setImportPreview(null);
     void loadStats();
@@ -219,7 +236,7 @@ export default function Configuracoes() {
 
       <TabsContent value="banco-local">
         <Card className="space-y-3 p-4 text-sm">
-          <div><b>Status do banco:</b> {stats?.status || "ativo"}</div>
+          <div className="text-xs font-semibold">Base: {baseMode === "teste" ? "Teste" : "Operacional"}</div><div><b>Status do banco:</b> {stats?.status || "ativo"}</div>
           <div><b>Tipo:</b> {stats?.tipo || "IndexedDB"}</div>
           <div><b>Data da primeira criação:</b> {stats?.createdAt ? new Date(stats.createdAt).toLocaleString("pt-BR") : "-"}</div>
           <div><b>Última atualização:</b> {stats?.updatedAt ? new Date(stats.updatedAt).toLocaleString("pt-BR") : "-"}</div>
@@ -232,7 +249,8 @@ export default function Configuracoes() {
                 : "Dados salvos localmente"}
           </div>
           {lastSavedAt && <div><b>Último salvamento em memória:</b> {new Date(lastSavedAt).toLocaleString("pt-BR")}</div>}
-          <div className="grid gap-1">{stats && Object.entries(stats.counts).map(([k, v]) => <div key={k}>{k}: {v}</div>)}</div>
+          <div className="rounded border p-3"><div className="font-semibold mb-1">Diagnóstico da base local</div><div className="text-xs text-amber-600 mb-2">Antes de importar dados reais, gere um backup da base atual.</div><div className="grid gap-1">{stats && Object.entries(stats.counts).map(([k, v]) => <div key={k}>{k}: {v}</div>)}</div><div className="mt-2 text-xs">Versão schema IndexedDB: 6</div></div>
+          <div className="rounded border p-3"><Label>Modo da base</Label><Select value={baseMode} onValueChange={(v: BaseMode)=>{ setBaseMode(v); localStorage.setItem("baseMode", v);}}><SelectTrigger className="mt-2 max-w-xs"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="teste">Teste</SelectItem><SelectItem value="operacional">Operacional</SelectItem></SelectContent></Select></div>
           <Button variant="destructive" onClick={async () => {
             if (!window.confirm("Esta ação apagará os dados locais deste navegador. Essa ação não pode ser desfeita nesta versão. Deseja continuar?")) return;
             await resetLocalDatabase();

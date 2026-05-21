@@ -1,11 +1,11 @@
-import { Cliente, Evento, Lancamento, MetaEmpresa, MetaPessoal, Negocio, PrioridadeP1Item, Produto, RegraComissao, Vendedor } from "@/types";
+import { Cliente, Empresa, Evento, FormaPagamento, Lancamento, MetaEmpresa, MetaPessoal, Negocio, PrioridadeP1Item, Produto, RegraComissao, TicketMedioRegra, Vendedor } from "@/types";
 
-export type ImportEntity = "clientes" | "vendedores" | "lancamentos" | "negocios" | "produtos" | "metasEmpresa" | "metasPessoais" | "regrasComissao" | "eventos" | "rotas" | "prioridadesP1";
+export type ImportEntity = "clientes" | "vendedores" | "lancamentos" | "negocios" | "produtos" | "metasEmpresa" | "metasPessoais" | "regrasComissao" | "eventos" | "rotas" | "prioridadesP1" | "empresas" | "formasPagamento" | "ticketsMedios";
 export type ImportMode = "add" | "update" | "replace";
 
 type ImportableRecord = { id: string } & Record<string, unknown>;
 
-export interface ImportPreviewRow { row: number; normalized: Record<string, unknown>; errors: string[]; }
+export interface ImportPreviewRow { row: number; normalized: Record<string, unknown>; errors: string[]; warnings: string[]; }
 export interface ImportPreview {
   fileName: string; entity: ImportEntity; columns: string[]; mappedColumns: Record<string, string>; unmappedColumns: string[];
   totalRows: number; validRows: number; errorRows: number; sample: ImportPreviewRow[]; rows: ImportPreviewRow[];
@@ -35,12 +35,12 @@ const aliases: Record<ImportEntity, Record<string, string>> = {
   vendedores: { nome:"nome", vendedor:"nome", responsavel:"nome", email:"email", "e-mail":"email", telefone:"telefone", ativo:"ativo" },
   lancamentos: { data:"data", cliente:"cliente", tipo:"tipo", status:"status", "o que foi realizado":"oQueFoiRealizado", realizado:"oQueFoiRealizado", descricao:"oQueFoiRealizado", oportunidade:"geraOportunidade", "existe oportunidade":"geraOportunidade", "proxima acao":"proximaAcao", "data proxima acao":"dataProximaAcao" },
   negocios: { cliente:"cliente", "nome oportunidade":"nome", oportunidade:"nome", negocio:"nome", "produtos em negociacao":"produtos", produtos:"produtos", categoria:"categoria", "valor potencial":"valorPotencial", "valor fechado":"valorFechado", status:"status", probabilidade:"probabilidade", "previsao fechamento":"previsaoFechamento", vendedor:"vendedor" },
-  produtos: { codigo:"codigo", cod:"codigo", sku:"codigo", produto:"nome", nome:"nome", "nome produto":"nome", categoria:"categoria", linha:"linha", unidade:"unidade", fornecedor:"fornecedor", fabricante:"fornecedor", "preco lista":"precoLista", "preco minimo":"precoMinimo", custo:"custo", "estoque atual":"estoqueAtual", "estoque reservado":"estoqueReservado", status:"ativo" },
+  produtos: { codigo:"codigo", cod:"codigo", sku:"codigo", produto:"nome", nome:"nome", "nome produto":"nome", categoria:"categoria", linha:"linha", unidade:"unidade", fornecedor:"fornecedor", fabricante:"fornecedor", "preco lista":"precoLista", "preco minimo":"precoMinimo", custo:"custo", "estoque atual":"estoqueAtual", "estoque reservado":"estoqueReservado", status:"ativo", empresa:"empresa" },
   metasEmpresa: { mes:"mes", "meta total":"metaTotal", meta:"metaTotal", realizado:"realizadoTotal", "realizado total":"realizadoTotal", observacao:"observacao" },
   metasPessoais: { frente:"frente", vendedor:"vendedor", responsavel:"vendedor", "comissao alvo":"comissaoAlvo", "meta faturamento":"metaFaturamento", "realizado faturamento":"realizadoFaturamento", observacao:"observacao" },
   regrasComissao: { nome:"nome", tipo:"tipo", percentual:"percentual", "aplicar sobre":"aplicarSobre", alvo:"alvo", ativo:"ativo" },
   eventos: { tipo:"tipo", "regiao/parceiro":"regiaoParceiro", parceiro:"regiaoParceiro", regiao:"regiaoParceiro", publico:"publico", "participantes min":"participantesMin", "participantes max":"participantesMax", "custo unitario":"custoUnitario", objetivo:"objetivo", status:"status" },
-  rotas: {}, prioridadesP1: { cliente:"cliente", status:"status", ordem:"ordem", "acao recomendada":"acaoRecomendada" },
+  rotas: {}, prioridadesP1: { cliente:"cliente", status:"status", ordem:"ordem", "acao recomendada":"acaoRecomendada" }, empresas: { "nome fantasia":"nomeFantasia", "razao social":"razaoSocial", cnpj:"cnpj", "inscricao estadual":"inscricaoEstadual", telefone:"telefone", email:"email" }, formasPagamento: { nome:"nome", ativo:"ativo" }, ticketsMedios: { categoria:"categoria", "valor medio por hectare":"valorMedioHa", ativo:"ativo" },
 };
 
 export function parseCsv(content: string): string[][] {
@@ -67,18 +67,26 @@ export function buildImportPreview(fileName:string, entity:ImportEntity, rows:st
     const normalized: Record<string, unknown> = {};
     for (let c=0;c<header.length;c++) { const t=map[header[c]]; if (t) normalized[t]=r[c]?.trim(); }
     const errors = validateRow(entity, normalized);
-    return { row: idx+2, normalized, errors };
+    const warnings = warnRow(entity, normalized);
+    return { row: idx+2, normalized, errors, warnings };
   });
   return { fileName, entity, columns: header, mappedColumns: map, unmappedColumns, totalRows: parsed.length, validRows: parsed.filter(r=>!r.errors.length).length, errorRows: parsed.filter(r=>r.errors.length).length, sample: parsed.slice(0,5), rows: parsed };
 }
 
 function validateRow(entity:ImportEntity, row:Record<string,unknown>): string[] {
   const errs:string[]=[];
-  const required: Record<ImportEntity,string[]> = { clientes:["nome"], vendedores:["nome"], lancamentos:["data","cliente","tipo"], negocios:["cliente","nome"], produtos:["nome"], metasEmpresa:["mes","metaTotal"], metasPessoais:["frente"], regrasComissao:["nome"], eventos:["tipo","regiaoParceiro"], rotas:[], prioridadesP1:["cliente"] };
+  const required: Record<ImportEntity,string[]> = { clientes:["nome"], vendedores:["nome"], lancamentos:["data","cliente","tipo"], negocios:["cliente","nome"], produtos:["nome","unidade"], metasEmpresa:["mes","metaTotal"], metasPessoais:["frente"], regrasComissao:["nome"], eventos:["tipo","regiaoParceiro"], rotas:[], prioridadesP1:["cliente"], empresas:["nomeFantasia"], formasPagamento:["nome"], ticketsMedios:["categoria"] };
   for (const f of required[entity]) if(!String(row[f] ?? "").trim()) errs.push(`Campo obrigatório: ${f}`);
   ["areaHa","potencialTotal","valorPotencial","valorFechado","precoLista","precoMinimo","custo","estoqueAtual","estoqueReservado","comissaoAlvo","metaFaturamento","participantesMin","participantesMax","custoUnitario","metaTotal","percentual"].forEach((k)=>{ if(row[k]!=null && row[k]!=="" && parseNumber(row[k])===undefined) errs.push(`Número inválido: ${k}`); });
   ["data","dataProximaAcao","previsaoFechamento"].forEach((k)=>{ if(row[k] && !toIsoDate(row[k])) errs.push(`Data inválida: ${k}`); });
   return errs;
+}
+function warnRow(entity:ImportEntity,row:Record<string,unknown>): string[] {
+  const w:string[]=[];
+  if (entity==="clientes" && !String(row.documento ?? "").trim()) w.push("CPF/CNPJ ausente");
+  if (entity==="clientes" && !String(row.cidade ?? "").trim()) w.push("Cidade ausente");
+  if (entity==="produtos" && parseNumber(row.precoLista)===undefined) w.push("Produto sem preço");
+  return w;
 }
 
 export function applyImport<T extends ImportableRecord>(entity:ImportEntity, mode:ImportMode, current:T[], preview:ImportPreview): {data:T[]; imported:number; updated:number; ignored:number} {
@@ -99,7 +107,10 @@ function isDuplicate(entity:ImportEntity, a:ImportableRecord,b:ImportableRecord)
   const nz=(x:unknown)=>normalizeText(String(x || ""));
   if(a.id && b.id && a.id===b.id) return true;
   if(entity==="clientes") return (nz(a.nome)===nz(b.nome) && nz(a.cidade)===nz(b.cidade)) || nz(a.nome)===nz(b.nome);
-  if(entity==="produtos") return a.codigo && b.codigo ? nz(a.codigo)===nz(b.codigo) : nz(a.nome)===nz(b.nome);
+  if(entity==="produtos") return (a.codigo && b.codigo ? nz(a.codigo)===nz(b.codigo) : nz(a.nome)===nz(b.nome)) && nz(a.unidade)===nz(b.unidade);
+  if(entity==="empresas") return nz(a.cnpj) && nz(a.cnpj)===nz(b.cnpj) || nz(a.razaoSocial)===nz(b.razaoSocial);
+  if(entity==="formasPagamento") return nz(a.nome)===nz(b.nome);
+  if(entity==="ticketsMedios") return nz(a.categoria)===nz(b.categoria);
   if(entity==="vendedores") return nz(a.nome)===nz(b.nome);
   if(entity==="negocios") return a.clienteId===b.clienteId && nz(a.nome)===nz(b.nome);
   return false;
@@ -117,5 +128,8 @@ function normalizeEntityRow(entity:ImportEntity, n:Record<string,unknown>): unkn
   if (entity === "lancamentos") return { id, data:toIsoDate(n.data)||new Date().toISOString().slice(0,10), clienteId:String(n.cliente||""), tipo:String(n.tipo||"Visita"), frente:"Venda Direta", status:String(n.status||"Aberto"), oQueFoiRealizado:String(n.oQueFoiRealizado||""), geraOportunidade:parseBoolean(n.geraOportunidade), proximaAcao:String(n.proximaAcao||"") } as unknown as Lancamento;
   if (entity === "negocios") return { id, nome:String(n.nome||""), clienteId:String(n.cliente||""), vendedor:String(n.vendedor||""), origem:"Outro", produtos:String(n.produtos||"").split(",").map(s=>s.trim()).filter(Boolean), categoria:String(n.categoria||"Outros"), valorPotencial:parseNumber(n.valorPotencial)||0, valorFechado:parseNumber(n.valorFechado), status:String(n.status||"Novo"), probabilidade:parseNumber(n.probabilidade)||0, previsaoFechamento:toIsoDate(n.previsaoFechamento), dataCriacao:new Date().toISOString().slice(0,10), ultimaAtualizacao:new Date().toISOString().slice(0,10) } as unknown as Negocio;
   if (entity === "prioridadesP1") return { id, ordem:parseNumber(n.ordem)||1, clienteId:String(n.cliente||""), acaoRecomendada:String(n.acaoRecomendada||""), status:String(n.status||"Aberto") } as PrioridadeP1Item;
+  if (entity === "empresas") return { id, nomeFantasia:String(n.nomeFantasia||""), razaoSocial:String(n.razaoSocial||""), cnpj:String(n.cnpj||""), inscricaoEstadual:String(n.inscricaoEstadual||""), endereco:"", cidadeUf:"", telefone:String(n.telefone||""), email:String(n.email||""), consultorPadrao:"", observacoesComerciaisPadrao:"", ativa:true, padrao:false, logoDataUrl:"" } as Empresa;
+  if (entity === "formasPagamento") return { id, nome:String(n.nome||""), ativo:parseBoolean(n.ativo ?? true), padrao:false } as FormaPagamento;
+  if (entity === "ticketsMedios") return { id, categoria:String(n.categoria||"Outros"), valorMedioHa:parseNumber(n.valorMedioHa)||0, ativo:parseBoolean(n.ativo ?? true) } as TicketMedioRegra;
   return { id };
 }
