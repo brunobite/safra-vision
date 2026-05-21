@@ -87,7 +87,7 @@ export default function Dashboard() {
 
       <Card className="p-4">
         <h2 className="mb-3 text-sm font-semibold text-foreground">Resultado comercial da carteira</h2>
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <div className="grid grid-cols-2 gap-2 sm:gap-3 md:grid-cols-4">
         <KpiCard label="Potencial total da carteira" value={fmtBRL(potencialCarteira)} icon={Layers} />
         <KpiCard label="Taxa de acerto" value={`${taxa.toFixed(2)}%`} icon={Percent} />
         <KpiCard label="Meta calculada da carteira" value={fmtBRL(metaCarteira)} icon={TrendingUp} />
@@ -119,7 +119,7 @@ export default function Dashboard() {
 
       <Card className="p-4">
         <h2 className="mb-3 text-sm font-semibold text-foreground">Funil e pipeline</h2>
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <div className="grid grid-cols-2 gap-2 sm:gap-3 md:grid-cols-4">
           <KpiCard label="Pipeline aberto" value={fmtBRL(kpis.pipelineAberto)} icon={Layers} tone="muted" />
           <KpiCard label="Propostas enviadas" value={fmtNum(kpis.propostas)} icon={FileText} />
           <KpiCard label="Aproveitamento" value={fmtPct(kpis.aproveitamento)} icon={Award} tone={kpis.aproveitamento >= 0.5 ? "success" : "warning"} />
