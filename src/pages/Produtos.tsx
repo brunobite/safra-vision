@@ -76,7 +76,7 @@ export default function Produtos() {
         </div>
       </Card>
 
-      <Card className="overflow-x-auto p-0">
+      <Card className="hidden overflow-x-auto p-0 md:block">
         <Table>
           <TableHeader><TableRow>
             <TableHead>Código</TableHead><TableHead>Nome</TableHead><TableHead>Categoria</TableHead>
@@ -111,6 +111,27 @@ export default function Produtos() {
           </TableBody>
         </Table>
       </Card>
+      <div className="space-y-2 md:hidden">
+        {list.map((p) => {
+          const disp = p.estoqueAtual - p.estoqueReservado;
+          return (
+            <Card key={p.id} className="p-3 space-y-2">
+              <div className="flex items-start justify-between gap-2">
+                <div><div className="font-semibold">{p.nome}</div><div className="text-xs text-muted-foreground">{p.codigo} · {p.unidade}</div></div>
+                {p.ativo ? <Badge className="bg-success/15 text-success">Ativo</Badge> : <Badge variant="outline">Inativo</Badge>}
+              </div>
+              <div className="grid grid-cols-2 gap-1 text-xs">
+                <span>Preço: <b>{fmtBRL(p.precoLista)}</b></span><span>Custo: <b>{fmtBRL(p.custo)}</b></span>
+                <span>Margem: <b>{`${Number(p.margem || 0).toFixed(2).replace(".", ",")}%`}</b></span><span>Disponível: <b>{fmtNum(disp)}</b></span>
+              </div>
+              <div className="flex justify-end gap-1">
+                <Button size="sm" variant="outline" onClick={() => openEdit(p)}><Pencil className="mr-1 h-3.5 w-3.5" />Editar</Button>
+                <Button size="sm" variant="destructive" onClick={() => { if (!window.confirm("Esta ação não pode ser desfeita nesta versão. Deseja continuar?")) return; setProdutos(prev => prev.filter(x => x.id !== p.id)); toast.success("Excluído."); }}><Trash2 className="mr-1 h-3.5 w-3.5" />Excluir</Button>
+              </div>
+            </Card>
+          );
+        })}
+      </div>
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-3xl">

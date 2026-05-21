@@ -7,20 +7,20 @@ import {
 } from "@/components/ui/sidebar";
 
 const items = [
-  { title: "Dashboard", url: "/", icon: LayoutDashboard },
-  { title: "Lançamentos", url: "/lancamentos", icon: FilePlus2 },
-  { title: "Funil de Vendas", url: "/funil", icon: GitBranch },
-  { title: "Orçamentos", url: "/orcamentos", icon: FileText },
-  { title: "Metas", url: "/metas", icon: Target },
-  { title: "Relatórios", url: "/relatorios", icon: FileBarChart },
-  { title: "Clientes", url: "/clientes", icon: Users },
-  { title: "Produtos", url: "/produtos", icon: Package },
-  { title: "Preços e Estoque", url: "/precos-estoque", icon: Warehouse },
-  { title: "Rotas", url: "/rotas", icon: Route },
-  { title: "Prioridades P1", url: "/prioridades", icon: Star },
-  { title: "Eventos", url: "/eventos", icon: CalendarDays },
-  { title: "Próximas ações", url: "/proximas-acoes", icon: ListTodo },
-  { title: "Configurações", url: "/configuracoes", icon: Settings },
+  { group: "Visão geral", title: "Dashboard", url: "/", icon: LayoutDashboard },
+  { group: "Comercial", title: "Lançamentos", url: "/lancamentos", icon: FilePlus2 },
+  { group: "Comercial", title: "Próximas ações", url: "/proximas-acoes", icon: ListTodo },
+  { group: "Comercial", title: "Funil de Vendas", url: "/funil", icon: GitBranch },
+  { group: "Comercial", title: "Orçamentos", url: "/orcamentos", icon: FileText },
+  { group: "Cadastros", title: "Clientes", url: "/clientes", icon: Users },
+  { group: "Cadastros", title: "Produtos", url: "/produtos", icon: Package },
+  { group: "Cadastros", title: "Preços e Estoque", url: "/precos-estoque", icon: Warehouse },
+  { group: "Planejamento", title: "Metas", url: "/metas", icon: Target },
+  { group: "Planejamento", title: "Rotas", url: "/rotas", icon: Route },
+  { group: "Planejamento", title: "Prioridades P1", url: "/prioridades", icon: Star },
+  { group: "Planejamento", title: "Eventos", url: "/eventos", icon: CalendarDays },
+  { group: "Análises", title: "Relatórios", url: "/relatorios", icon: FileBarChart },
+  { group: "Sistema", title: "Configurações", url: "/configuracoes", icon: Settings },
 ];
 
 function AppSidebar() {
@@ -38,11 +38,12 @@ function AppSidebar() {
         </div>
       </SidebarHeader>
       <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupLabel>Menu</SidebarGroupLabel>
+        {Array.from(new Set(items.map((item) => item.group))).map((group) => (
+        <SidebarGroup key={group}>
+          <SidebarGroupLabel>{group}</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {items.map(item => (
+              {items.filter((item) => item.group === group).map(item => (
                 <SidebarMenuItem key={item.url}>
                   <SidebarMenuButton asChild tooltip={item.title}>
                     <NavLink to={item.url} end={item.url === "/"} className={({ isActive }) =>
@@ -57,6 +58,7 @@ function AppSidebar() {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+        ))}
       </SidebarContent>
     </Sidebar>
   );

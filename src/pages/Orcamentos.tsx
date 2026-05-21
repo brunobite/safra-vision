@@ -36,7 +36,20 @@ useEffect(() => {
 const addItem = () => setForm(f => ({ ...f, itens: [...f.itens, { id: `i${Date.now()}`, produtoId: "", produtoNome: "", categoria: "", unidadeProduto: "LT", dosePorHa: 0, unidadeDose: "L/ha", areaHa: f.areaAplicacaoHa, quantidadeTotal: 0, precoUnitario: 0, valorTotalItem: 0, custoPorHaItem: 0 }] }));
 
 return <div className="space-y-3"><Button onClick={() => { setEdit(null); setOpen(true); }}>Novo orçamento</Button>
-{orcamentos.map(o => <Card key={o.id} className="p-3 flex gap-2"><div className="flex-1">{o.codigo} - {fmtBRL(o.valorTotal)} - {o.status}</div><Button size="sm" variant="outline" onClick={() => { setEdit(o); setForm(o); setOpen(true); }}>Editar</Button><Button size="sm" onClick={() => gerarPdfOrcamento(o, clientes.find(c=>c.id===o.clienteId), empresas.find(e=>e.id===o.empresaId))}>PDF</Button></Card>)}
+{orcamentos.map(o => <Card key={o.id} className="p-3">
+  <div className="flex flex-col gap-2 md:flex-row md:items-center">
+    <div className="flex-1 text-sm">
+      <div className="font-semibold">{o.codigo} · {clientes.find(c=>c.id===o.clienteId)?.nome || "Sem cliente"}</div>
+      <div className="text-muted-foreground">Empresa: {empresas.find(e=>e.id===o.empresaId)?.nomeFantasia || "-"} · Validade: {o.validade} · {o.status}</div>
+      <div className="text-muted-foreground">Forma: {o.formaPagamento || "-"} · Prazo: {o.prazoPagamento || "-"}</div>
+    </div>
+    <div className="text-sm font-semibold">{fmtBRL(o.valorTotal)}</div>
+    <div className="flex gap-2">
+      <Button size="sm" variant="outline" onClick={() => { setEdit(o); setForm(o); setOpen(true); }}>Abrir/Editar</Button>
+      <Button size="sm" onClick={() => gerarPdfOrcamento(o, clientes.find(c=>c.id===o.clienteId), empresas.find(e=>e.id===o.empresaId))}>PDF</Button>
+    </div>
+  </div>
+  </Card>)}
 <Dialog open={open} onOpenChange={setOpen}><DialogContent className="max-h-[90vh] overflow-y-auto max-w-5xl"><DialogHeader><DialogTitle>{edit ? "Editar" : "Novo"} orçamento</DialogTitle></DialogHeader>
 <div className="grid gap-2 md:grid-cols-5"><div><Label>Cliente</Label><Select value={form.clienteId} onValueChange={v=>setForm({...form, clienteId:v})}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent>{clientes.map(c=><SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>)}</SelectContent></Select></div>
 <div><Label>Empresa</Label><Select value={form.empresaId} onValueChange={v=>setForm({...form, empresaId:v})}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent>{empresas.filter(e=>e.ativa).map(e=><SelectItem key={e.id} value={e.id}>{e.nomeFantasia}</SelectItem>)}</SelectContent></Select></div>
