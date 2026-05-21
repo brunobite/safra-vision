@@ -20,11 +20,11 @@ const toneMap: Record<NonNullable<Props["tone"]>, string> = {
 
 export function KpiCard({ label, value, hint, icon: Icon, tone = "primary" }: Props) {
   return (
-    <Card className="p-4 shadow-sm hover:shadow-md transition-shadow">
+    <Card className="p-3 sm:p-4 shadow-sm transition-shadow hover:shadow-md">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
-          <p className="mt-1 truncate text-xl font-semibold text-foreground">{value}</p>
+          <p className="mt-1 text-base font-semibold leading-tight text-foreground sm:text-lg md:text-xl break-words [overflow-wrap:anywhere]">{value}</p>
           {hint && <p className="mt-0.5 text-xs text-muted-foreground">{hint}</p>}
         </div>
         {Icon && (

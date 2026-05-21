@@ -1,5 +1,4 @@
 import { useMemo, useState } from "react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -41,17 +40,18 @@ export function GlobalFilters() {
   };
 
   return (
-    <Card className="p-4">
+    <Card className="p-3 sm:p-4">
       <div className="flex items-center justify-between gap-3">
-        <div>
-          <h2 className="text-sm font-semibold text-foreground">Dashboard</h2>
-          <p className="text-xs text-muted-foreground">Use o botão de filtros para refinar os indicadores.</p>
-        </div>
+        <h2 className="text-sm font-semibold text-foreground">Dashboard</h2>
 
-        <Button type="button" variant={activeFiltersCount > 0 ? "default" : "outline"} onClick={openModal}>
-          <Filter className="mr-2 h-4 w-4" />
-          Filtros
-          {activeFiltersCount > 0 && <Badge className="ml-2">{activeFiltersCount}</Badge>}
+        <Button
+          type="button"
+          variant="ghost"
+          className="h-auto px-1.5 py-1 text-xs font-medium text-muted-foreground hover:text-foreground"
+          onClick={openModal}
+        >
+          <Filter className="mr-1 h-3.5 w-3.5" />
+          <span>Filtros{activeFiltersCount > 0 ? ` (${activeFiltersCount})` : ""}</span>
         </Button>
       </div>
 
