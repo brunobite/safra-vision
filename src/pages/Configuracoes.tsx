@@ -17,7 +17,8 @@ import { getLocalDbStats, LocalDbStats, replaceLocalDatabase, resetLocalDatabase
 import { exportAllEntitiesToCsv } from "@/lib/csvService";
 import { exportWorkbook } from "@/lib/excelService";
 import { downloadBackupJson, parseBackupPayload } from "@/lib/backupService";
-import { applyImport, buildImportPreview, ImportEntity, ImportMode, ImportPreview, parseCsv } from "@/lib/importService";
+import { applyImport, buildImportPreview, IMPORT_TEMPLATES, ImportEntity, ImportMode, ImportPreview, parseCsv } from "@/lib/importService";
+import { saveAsTextFile } from "@/lib/fileDownload";
 import { openAppDb, promisifyRequest } from "@/lib/db";
 
 const APLICAR: { v: AplicarSobre; label: string }[] = [
@@ -50,6 +51,7 @@ export default function Configuracoes() {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [baseMode, setBaseMode] = useState<BaseMode>((localStorage.getItem("baseMode") as BaseMode) || "teste");
   const [importLogs, setImportLogs] = useState<ImportLog[]>([]);
+  const [lastBackupAt, setLastBackupAt] = useState<string>("");
   const [dadosEmpresa, setDadosEmpresa] = useState<Empresa>(defaultEmpresa);
   const categoriasTicket = [...new Set([...CATEGORIAS_PRODUTO_PADRAO, ...ticketsMedios.map((t) => t.categoria)])];
   const isCategoriaPadrao = (categoria: string) => CATEGORIAS_PRODUTO_PADRAO.includes(categoria as (typeof CATEGORIAS_PRODUTO_PADRAO)[number]);
@@ -114,8 +116,10 @@ export default function Configuracoes() {
     const file = event.target.files?.[0];
     if (!file) return;
     try {
-      const hasBackup = window.confirm("Você gerou backup da base atual?\nOK = Continuar mesmo assim\nCancelar = escolher gerar backup agora.");
-      if (!hasBackup) { downloadBackupJson(exportPayload); toast.message("Backup gerado. Selecione o arquivo novamente para importar."); return; }
+      const hasBackup = window.confirm("Backup recomendado antes de homologar dados reais.\nDeseja continuar sem gerar backup agora?");
+      if (!hasBackup) { downloadBackupJson(exportPayload); setLastBackupAt(new Date().toISOString()); toast.message("Backup gerado. Selecione o arquivo novamente para importar."); return; }
+      if (baseMode === "operacional") toast.warning("Use base Operacional apenas após validar os dados importados.");
+      toast.message("Você está importando dados em ambiente de teste/homologação.");
       const text = await file.text();
       const rows = parseCsv(text);
       if (rows.length < 2) throw new Error();
@@ -136,29 +140,37 @@ export default function Configuracoes() {
     const apply = (entity: ImportEntity, current: never[], setter: (v: never[])=>void) => {
       const result = applyImport(entity, importMode, current as { id: string }[], importPreview);
       setter(result.data as never[]);
-      toast.success(`Importação concluída: ${result.imported} importados, ${result.updated} atualizados, ${result.ignored} ignorados.`);
+      toast.success(`Importação concluída: ${result.imported} criados, ${result.updated} atualizados, ${result.ignored} ignorados, ${result.duplicates} duplicidades.`);
+      return result;
     };
 
-    if (importEntity === "clientes") apply("clientes", clientes as never[], setClientes);
-    if (importEntity === "vendedores") apply("vendedores", vendedores as never[], setVendedores);
-    if (importEntity === "lancamentos") apply("lancamentos", lancamentos as never[], setLancamentos);
-    if (importEntity === "negocios") apply("negocios", negocios as never[], setNegocios);
-    if (importEntity === "produtos") apply("produtos", produtos as never[], setProdutos);
-    if (importEntity === "metasEmpresa") apply("metasEmpresa", metasEmpresa as never[], setMetasEmpresa);
-    if (importEntity === "metasPessoais") apply("metasPessoais", metasPessoais as never[], setMetasPessoais);
-    if (importEntity === "regrasComissao") apply("regrasComissao", regras as never[], setRegras);
-    if (importEntity === "eventos") apply("eventos", eventos as never[], setEventos);
-    if (importEntity === "prioridadesP1") apply("prioridadesP1", prioridadesP1 as never[], setPrioridadesP1);
-    if (importEntity === "empresas") apply("empresas", empresas as never[], setEmpresas as never);
-    if (importEntity === "formasPagamento") apply("formasPagamento", formasPagamento as never[], setFormasPagamento as never);
-    if (importEntity === "ticketsMedios") apply("ticketsMedios", ticketsMedios as never[], setTicketsMedios as never);
-    const log: ImportLog = { id: `ilog-${Date.now()}`, arquivo: importPreview.fileName, dataHora: new Date().toISOString(), entidade: importEntity, registrosLidos: importPreview.totalRows, registrosCriados: importPreview.validRows, registrosAtualizados: 0, registrosIgnorados: importPreview.errorRows, erros: importPreview.errorRows, avisos: importPreview.rows.reduce((a,r)=>a+r.warnings.length,0) };
+    let summary = { imported: 0, updated: 0, ignored: 0, duplicates: 0 };
+    if (importEntity === "clientes") summary = apply("clientes", clientes as never[], setClientes) || summary;
+    if (importEntity === "vendedores") summary = apply("vendedores", vendedores as never[], setVendedores);
+    if (importEntity === "lancamentos") summary = apply("lancamentos", lancamentos as never[], setLancamentos);
+    if (importEntity === "negocios") summary = apply("negocios", negocios as never[], setNegocios);
+    if (importEntity === "produtos") summary = apply("produtos", produtos as never[], setProdutos);
+    if (importEntity === "metasEmpresa") summary = apply("metasEmpresa", metasEmpresa as never[], setMetasEmpresa);
+    if (importEntity === "metasPessoais") summary = apply("metasPessoais", metasPessoais as never[], setMetasPessoais);
+    if (importEntity === "regrasComissao") summary = apply("regrasComissao", regras as never[], setRegras);
+    if (importEntity === "eventos") summary = apply("eventos", eventos as never[], setEventos);
+    if (importEntity === "prioridadesP1") summary = apply("prioridadesP1", prioridadesP1 as never[], setPrioridadesP1);
+    if (importEntity === "empresas") summary = apply("empresas", empresas as never[], setEmpresas as never);
+    if (importEntity === "formasPagamento") summary = apply("formasPagamento", formasPagamento as never[], setFormasPagamento as never);
+    if (importEntity === "ticketsMedios") summary = apply("ticketsMedios", ticketsMedios as never[], setTicketsMedios as never);
+    const log: ImportLog = { id: `ilog-${Date.now()}`, arquivo: importPreview.fileName, dataHora: new Date().toISOString(), entidade: importEntity, registrosLidos: importPreview.totalRows, registrosCriados: summary.imported, registrosAtualizados: summary.updated, registrosIgnorados: summary.ignored, erros: importPreview.errorRows, avisos: importPreview.rows.reduce((a,r)=>a+r.warnings.length,0) };
     setImportLogs((prev)=>[log, ...prev]);
     void saveStore("importLogs", [log, ...importLogs]);
     setPreviewOpen(false);
     setImportPreview(null);
     void loadStats();
   };
+
+  const downloadTemplate = (key: keyof typeof IMPORT_TEMPLATES) => {
+    const csv = `${IMPORT_TEMPLATES[key].join(";")}\n`;
+    saveAsTextFile(`template_${key}.csv`, csv, "text/csv;charset=utf-8");
+  };
+
   const openNew = () => { setEdit(null); setForm(emptyRegra); setOpen(true); };
   const openEdit = (r: RegraComissao) => { setEdit(r); const { id, ...rest } = r; void id; setForm(rest); setOpen(true); };
   const save = () => {
@@ -250,7 +262,7 @@ export default function Configuracoes() {
           </div>
           {lastSavedAt && <div><b>Último salvamento em memória:</b> {new Date(lastSavedAt).toLocaleString("pt-BR")}</div>}
           <div className="rounded border p-3"><div className="font-semibold mb-1">Diagnóstico da base local</div><div className="text-xs text-amber-600 mb-2">Antes de importar dados reais, gere um backup da base atual.</div><div className="grid gap-1">{stats && Object.entries(stats.counts).map(([k, v]) => <div key={k}>{k}: {v}</div>)}</div><div className="mt-2 text-xs">Versão schema IndexedDB: 6</div></div>
-          <div className="rounded border p-3"><Label>Modo da base</Label><Select value={baseMode} onValueChange={(v: BaseMode)=>{ setBaseMode(v); localStorage.setItem("baseMode", v);}}><SelectTrigger className="mt-2 max-w-xs"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="teste">Teste</SelectItem><SelectItem value="operacional">Operacional</SelectItem></SelectContent></Select></div>
+          <div className="rounded border p-3"><Label>Modo da base</Label><Select value={baseMode} onValueChange={(v: BaseMode)=>{ setBaseMode(v); localStorage.setItem("baseMode", v); if (v === "operacional") toast.warning("Use base Operacional apenas após validar os dados importados.");}}><SelectTrigger className="mt-2 max-w-xs"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="teste">Teste</SelectItem><SelectItem value="operacional">Operacional</SelectItem></SelectContent></Select><div className="mt-2 text-xs text-amber-600">Você está importando dados em ambiente de teste/homologação.</div></div>
           <Button variant="destructive" onClick={async () => {
             if (!window.confirm("Esta ação apagará os dados locais deste navegador. Essa ação não pode ser desfeita nesta versão. Deseja continuar?")) return;
             await resetLocalDatabase();
@@ -263,7 +275,7 @@ export default function Configuracoes() {
 
           <Card className="space-y-3 border-dashed p-3">
             <div className="font-semibold">Importação de dados</div>
-            <p className="text-xs text-muted-foreground">Recomendamos gerar um backup JSON antes de importar dados.</p>
+            <p className="text-xs text-muted-foreground">Backup recomendado antes de homologar dados reais.</p><div className="text-xs">Último backup manual: {lastBackupAt ? new Date(lastBackupAt).toLocaleString("pt-BR") : "não registrado"}</div>
             <div className="grid gap-2 md:grid-cols-3">
               <Select value={importEntity} onValueChange={(v: ImportEntity) => setImportEntity(v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>
                 <SelectItem value="clientes">clientes</SelectItem><SelectItem value="vendedores">vendedores</SelectItem><SelectItem value="lancamentos">lancamentos</SelectItem><SelectItem value="negocios">negocios</SelectItem><SelectItem value="produtos">produtos</SelectItem><SelectItem value="metasEmpresa">metasEmpresa</SelectItem><SelectItem value="metasPessoais">metasPessoais</SelectItem><SelectItem value="regrasComissao">regrasComissao</SelectItem><SelectItem value="eventos">eventos</SelectItem><SelectItem value="prioridadesP1">prioridadesP1</SelectItem>
@@ -271,9 +283,10 @@ export default function Configuracoes() {
               <Select value={importMode} onValueChange={(v: ImportMode) => setImportMode(v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>
                 <SelectItem value="add">Adicionar novos registros</SelectItem><SelectItem value="update">Atualizar registros existentes</SelectItem><SelectItem value="replace">Substituir base da entidade selecionada</SelectItem>
               </SelectContent></Select>
-              <Button variant="outline" onClick={() => downloadBackupJson(exportPayload)}>Gerar backup antes de importar</Button>
+              <Button variant="outline" onClick={() => { downloadBackupJson(exportPayload); setLastBackupAt(new Date().toISOString()); }}>Gerar backup antes de importar</Button>
             </div>
             <div className="grid gap-2 sm:grid-cols-2">
+              <Button variant="outline" onClick={() => downloadTemplate("clientes")}>Modelo CSV clientes</Button><Button variant="outline" onClick={() => downloadTemplate("produtos")}>Modelo CSV produtos</Button><Button variant="outline" onClick={() => downloadTemplate("empresas")}>Modelo CSV empresas</Button><Button variant="outline" onClick={() => downloadTemplate("formasPagamento")}>Modelo CSV formas pagamento</Button><Button variant="outline" onClick={() => downloadTemplate("metas")}>Modelo CSV metas</Button><Button variant="outline" onClick={() => downloadTemplate("estoquePrecos")}>Modelo CSV estoque/preços</Button><Button variant="outline" onClick={() => downloadTemplate("ticketsMedios")}>Modelo CSV tickets médios</Button>
               <Button onClick={() => importFileRef.current?.click()}>Importar CSV</Button>
               <Button variant="secondary" onClick={() => importFileRef.current?.click()}>Importar Excel/XML</Button>
             </div>
@@ -295,7 +308,7 @@ export default function Configuracoes() {
   
     <Dialog open={previewOpen} onOpenChange={setPreviewOpen}><DialogContent className="max-w-4xl"><DialogHeader><DialogTitle>Prévia da importação</DialogTitle></DialogHeader>{importPreview && <div className="space-y-2 text-sm">
       <div><b>Arquivo:</b> {importPreview.fileName}</div><div><b>Entidade:</b> {importPreview.entity}</div><div><b>Modo:</b> {importMode}</div>
-      <div><b>Linhas lidas:</b> {importPreview.totalRows} | <b>Válidas:</b> {importPreview.validRows} | <b>Com erro:</b> {importPreview.errorRows}</div>
+      <div><b>Linhas lidas:</b> {importPreview.totalRows} | <b>Válidas:</b> {importPreview.validRows} | <b>Com erro:</b> {importPreview.errorRows} | <b>Com aviso:</b> {importPreview.warningRows}</div><div><b>Possíveis duplicidades:</b> {importPreview.duplicateRows} | <b>Obrigatórios ausentes:</b> {importPreview.missingRequiredRows}</div>
       <div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Linha</TableHead><TableHead>Dados normalizados</TableHead><TableHead>Erros</TableHead></TableRow></TableHeader><TableBody>{importPreview.sample.map(r => <TableRow key={r.row}><TableCell>{r.row}</TableCell><TableCell className="max-w-md whitespace-pre-wrap text-xs">{JSON.stringify(r.normalized)}</TableCell><TableCell className="text-xs text-destructive">{r.errors.join("; ") || "—"}</TableCell></TableRow>)}</TableBody></Table></div>
       <div className="text-xs text-muted-foreground">Colunas não reconhecidas: {importPreview.unmappedColumns.join(", ") || "nenhuma"}</div>
     </div>}<DialogFooter><Button variant="outline" onClick={() => setPreviewOpen(false)}>Cancelar</Button><Button onClick={confirmImport}>Confirmar importação</Button></DialogFooter></DialogContent></Dialog>
