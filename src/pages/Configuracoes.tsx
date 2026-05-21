@@ -34,7 +34,7 @@ export default function Configuracoes() {
   const {
     regras, setRegras, vendedores, setVendedores, ticketsMedios, setTicketsMedios, dbError, isSaving, lastSavedAt, saveError,
     clientes, lancamentos, negocios, produtos, metasEmpresa, metasPessoais, eventos, metasVendedor, metasCategoria, prioridadesP1, orcamentos, setOrcamentos, empresas, setEmpresas, formasPagamento, setFormasPagamento,
-    setClientes, setLancamentos, setNegocios, setProdutos, setMetasEmpresa, setMetasPessoais, setEventos, setMetasVendedor, setMetasCategoria, setPrioridadesP1,
+    setClientes, setLancamentos, setNegocios, setProdutos, setMetasEmpresa, setMetasPessoais, setEventos, setMetasVendedor, setMetasCategoria, setPrioridadesP1, appConfig, setAppConfig,
   } = useAppStore();
   const [open, setOpen] = useState(false);
   const [edit, setEdit] = useState<RegraComissao | null>(null);
@@ -199,6 +199,15 @@ export default function Configuracoes() {
   };
 
   return <div className="space-y-4">
+    <Card className="p-4">
+      <div className="grid gap-2 md:grid-cols-3 items-end">
+        <div>
+          <Label>Taxa de acerto da carteira (%)</Label>
+          <Input type="number" min={0} max={100} step="0.01" value={appConfig.taxaAcertoCarteira} onChange={(e)=>{const v=Math.min(100,Math.max(0,Number(e.target.value||0))); setAppConfig({ ...appConfig, taxaAcertoCarteira: v });}} />
+        </div>
+        <p className="text-xs text-muted-foreground md:col-span-2">Valor padrão sugerido: 12. Usado no Dashboard para calcular meta da carteira.</p>
+      </div>
+    </Card>
     {dbError && <Card className="border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{dbError}</Card>}
     <Tabs defaultValue="comissao">
       <TabsList>

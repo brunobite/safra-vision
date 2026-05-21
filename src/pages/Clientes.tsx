@@ -22,6 +22,7 @@ const empty: Omit<Cliente, "id"> = {
   nome: "", abc: "A", prioridade: "P2", rota: "Rota Norte", cidade: "", localidade: "", culturas: "",
   areaHa: 0, potencialTotal: 0, statusAtual: "Prospectar", frequenciaRetorno: "30 dias", retorno: "30 dias", vendedor: "", potencialCalculado: false, inativoManual: false,
   documento: "", inscricaoEstadual: "", endereco: "", telefone: "", email: "", nomeContato: "", culturaPrincipal: "", areaAplicacaoPotencial: "",
+  latitude: undefined, longitude: undefined, coordenadas: "", linkMapa: "", observacaoLocalizacao: "",
 };
 
 export default function Clientes() {
@@ -182,6 +183,11 @@ export default function Clientes() {
             <div><Label>Telefone</Label><Input value={form.telefone || ""} onChange={e => setForm({ ...form, telefone: e.target.value })} /></div>
             <div><Label>E-mail</Label><Input value={form.email || ""} onChange={e => setForm({ ...form, email: e.target.value })} /></div>
             <div><Label>Nome do contato</Label><Input value={form.nomeContato || ""} onChange={e => setForm({ ...form, nomeContato: e.target.value })} /></div>
+            <div><Label>Endereço</Label><Input value={form.endereco || ""} onChange={e => setForm({ ...form, endereco: e.target.value })} /></div>
+            <div><Label>Latitude</Label><Input type="number" step="0.000001" value={form.latitude ?? ""} onChange={e => setForm({ ...form, latitude: e.target.value ? Number(e.target.value) : undefined })} /></div>
+            <div><Label>Longitude</Label><Input type="number" step="0.000001" value={form.longitude ?? ""} onChange={e => setForm({ ...form, longitude: e.target.value ? Number(e.target.value) : undefined })} /></div>
+            <div><Label>Coordenadas</Label><Input value={form.coordenadas || ""} onChange={e => setForm({ ...form, coordenadas: e.target.value })} /></div>
+            <div><Label>Link do mapa</Label><Input value={form.linkMapa || ""} onChange={e => setForm({ ...form, linkMapa: e.target.value })} /></div>
           </div>
           <DialogFooter><Button onClick={save}>Salvar</Button></DialogFooter>
         </DialogContent>
@@ -197,6 +203,11 @@ export default function Clientes() {
               <div><span className="text-muted-foreground">Rota:</span> {view.rota}</div>
               <div><span className="text-muted-foreground">Cidade:</span> {view.cidade}</div>
               <div><span className="text-muted-foreground">Localidade:</span> {view.localidade}</div>
+              <div><span className="text-muted-foreground">CPF/CNPJ:</span> {view.documento || "—"}</div>
+              <div><span className="text-muted-foreground">IE:</span> {view.inscricaoEstadual || "—"}</div>
+              <div><span className="text-muted-foreground">Telefone:</span> {view.telefone || "—"}</div>
+              <div><span className="text-muted-foreground">Endereço:</span> {view.endereco || "—"}</div>
+              <div><span className="text-muted-foreground">Localização:</span> {view.latitude && view.longitude ? `${view.latitude}, ${view.longitude}` : (view.coordenadas || "—")}</div>
               <div><span className="text-muted-foreground">Culturas:</span> {view.culturas}</div>
               <div><span className="text-muted-foreground">Área:</span> {fmtNum(view.areaHa)} ha</div>
               <div><span className="text-muted-foreground">Potencial:</span> {fmtBRL(view.potencialTotal)}</div>

@@ -58,6 +58,9 @@ export interface Cliente {
   localidade: string;
   latitude?: number;
   longitude?: number;
+  coordenadas?: string;
+  linkMapa?: string;
+  observacaoLocalizacao?: string;
   culturas: string;
   culturasDetalhes?: ClienteCulturaArea[];
   areaHa: number;
@@ -85,6 +88,11 @@ export interface Cliente {
   dataProximaAcao?: string;
   tipoProximaAcao?: TipoProximaAcao;
   ultimaVisita?: string;
+}
+
+export interface AppConfig {
+  id: string;
+  taxaAcertoCarteira: number;
 }
 
 export interface Lancamento {

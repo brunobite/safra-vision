@@ -1,10 +1,10 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { GlobalFilters } from "@/components/GlobalFilters";
 import { KpiCard } from "@/components/dashboard/KpiCard";
 import { useAppStore } from "@/store/AppStore";
 import { calcDashboard, fmtBRL, fmtNum, fmtPct } from "@/utils/calculations";
 import {
-  Target, TrendingUp, AlertTriangle, FileText, CalendarDays, Layers, Clock, Percent, Banknote, Award,
+  TrendingUp, AlertTriangle, FileText, CalendarDays, Layers, Clock, Percent, Award,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import {
@@ -13,7 +13,8 @@ import {
 } from "recharts";
 
 export default function Dashboard() {
-  const { clientes, metasEmpresa, metasPessoais, filtered, lancamentos, negocios, regras, orcamentos, proximasAcoes } = useAppStore();
+  const { clientes, metasEmpresa, metasPessoais, filtered, lancamentos, negocios, regras, orcamentos, proximasAcoes, appConfig, clienteById } = useAppStore();
+  const [acaoFiltro, setAcaoFiltro] = useState<"hoje"|"semana"|"mes"|"atrasadas"|"todas">("hoje");
 
   const metaPessoalTotal = metasPessoais.reduce((s, m) => s + m.metaFaturamento, 0);
   const kpis = useMemo(
@@ -54,6 +55,12 @@ export default function Dashboard() {
 
 
   const hoje = new Date().toISOString().slice(0,10);
+  const potencialCarteira = clientes.reduce((s,c)=>s+(c.potencialTotal||0),0);
+  const taxa = Math.min(100, Math.max(0, appConfig.taxaAcertoCarteira || 0));
+  const metaCarteira = potencialCarteira * taxa / 100;
+  const realizado = negocios.filter(n=>n.status==="Fechado ganho").reduce((s,n)=>s+(n.valorFechado||0),0) + orcamentos.filter(o=>o.status==="Aprovado").reduce((s,o)=>s+o.total,0);
+  const pct = metaCarteira>0 ? realizado/metaCarteira : 0;
+  const gap = metaCarteira-realizado;
   const operacionais = useMemo(() => ({
     atrasados: clientes.filter(c => c.statusAtual !== "Inativo" && ((c.dataProximaAcao && c.dataProximaAcao < hoje) || (c.retorno && c.retorno < hoje))).length,
     proximasSemana: proximasAcoes.filter(a=>a.status==="Pendente" && a.data >= hoje).length,
@@ -79,17 +86,22 @@ export default function Dashboard() {
       <GlobalFilters />
 
       <Card className="p-4">
-        <h2 className="mb-3 text-sm font-semibold text-foreground">Resultado comercial</h2>
+        <h2 className="mb-3 text-sm font-semibold text-foreground">Resultado comercial da carteira</h2>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <KpiCard label="Meta Empresa" value={fmtBRL(kpis.metaEmpresa)} icon={Target} />
-        <KpiCard label="Realizado Empresa" value={fmtBRL(kpis.realizadoEmpresa)} icon={TrendingUp} tone="success" />
-        <KpiCard label="% Empresa" value={fmtPct(kpis.pctEmpresa)} icon={Percent} tone={kpis.pctEmpresa >= 1 ? "success" : kpis.pctEmpresa >= 0.8 ? "warning" : "destructive"} />
-        <KpiCard label="Gap Empresa" value={fmtBRL(kpis.gapEmpresa)} icon={AlertTriangle} tone={kpis.gapEmpresa >= 0 ? "success" : "destructive"} />
-        <KpiCard label="Meta Pessoal" value={fmtBRL(kpis.metaPessoal)} icon={Target} />
-        <KpiCard label="Realizado Pessoal" value={fmtBRL(kpis.realizadoPessoal)} icon={Banknote} tone="success" />
-        <KpiCard label="% Pessoal" value={fmtPct(kpis.pctPessoal)} icon={Percent} tone={kpis.pctPessoal >= 1 ? "success" : kpis.pctPessoal >= 0.8 ? "warning" : "destructive"} />
-        <KpiCard label="Gap Pessoal" value={fmtBRL(kpis.gapPessoal)} icon={AlertTriangle} tone={kpis.gapPessoal >= 0 ? "success" : "destructive"} />
+        <KpiCard label="Potencial total da carteira" value={fmtBRL(potencialCarteira)} icon={Layers} />
+        <KpiCard label="Taxa de acerto" value={`${taxa.toFixed(2)}%`} icon={Percent} />
+        <KpiCard label="Meta calculada da carteira" value={fmtBRL(metaCarteira)} icon={TrendingUp} />
+        <KpiCard label="Realizado" value={fmtBRL(realizado)} icon={TrendingUp} tone="success" />
+        <KpiCard label="% de atingimento" value={fmtPct(pct)} icon={Percent} tone={pct >= 1 ? "success" : pct >= 0.8 ? "warning" : "destructive"} />
+        <KpiCard label="Gap da meta" value={fmtBRL(gap)} icon={AlertTriangle} tone={gap <= 0 ? "success" : "destructive"} />
         </div>
+        {potencialCarteira === 0 && <p className="mt-3 text-xs text-muted-foreground">Potencial da carteira ainda não configurado.</p>}
+      </Card>
+
+      <Card className="p-4">
+        <h2 className="mb-3 text-sm font-semibold text-foreground">Agenda de ações</h2>
+        <div className="mb-3 flex gap-2">{(["hoje","semana","mes","atrasadas","todas"] as const).map(f=><button key={f} className={`rounded border px-2 py-1 text-xs ${acaoFiltro===f?"bg-primary text-primary-foreground":""}`} onClick={()=>setAcaoFiltro(f)}>{f}</button>)}</div>
+        <div className="space-y-2">{proximasAcoes.filter(a=>{const d=a.data; if(acaoFiltro==="hoje") return d===hoje; if(acaoFiltro==="atrasadas") return a.status==="Pendente"&&d<hoje; if(acaoFiltro==="semana") return d>=hoje && d<=new Date(Date.now()+6*86400000).toISOString().slice(0,10); if(acaoFiltro==="mes") return d.slice(0,7)===hoje.slice(0,7); return true;}).map(a=>{const color=(a.status==="Pendente"&&a.data<hoje)?"bg-red-100 text-red-700":a.data===hoje?"bg-blue-100 text-blue-700":a.descricao.toLowerCase().includes("prior")?"bg-yellow-100 text-yellow-700":"bg-emerald-100 text-emerald-700"; return <div key={a.id} className="rounded border p-2 text-xs"><div className="flex justify-between"><b>{clienteById(a.clienteId||"")?.nome||"Sem cliente"}</b><span className={`rounded px-2 py-0.5 ${color}`}>{a.status}</span></div><div>{a.data} • {a.tipo} • {a.responsavel || "Sem responsável"}</div><div>{a.descricao}</div></div>;})}</div>
       </Card>
 
       <Card className="p-4">
