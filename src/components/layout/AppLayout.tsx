@@ -5,6 +5,8 @@ import {
   SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger,
   SidebarHeader,
 } from "@/components/ui/sidebar";
+import { useState } from "react";
+import { Button } from "@/components/ui/button";
 
 const items = [
   { group: "Visão geral", title: "Dashboard", url: "/", icon: LayoutDashboard },
@@ -65,6 +67,7 @@ function AppSidebar() {
 }
 
 export default function AppLayout() {
+  const [open, setOpen] = useState(false);
   return (
     <SidebarProvider>
       <div className="flex min-h-screen w-full bg-background">
@@ -80,6 +83,16 @@ export default function AppLayout() {
           <main className="flex-1 p-4 md:p-6">
             <Outlet />
           </main>
+          <div className="fixed bottom-5 right-5 z-40">
+            <Button className="h-12 w-12 rounded-full text-xl" onClick={() => setOpen((v) => !v)}>+</Button>
+            {open && <div className="mt-2 w-48 rounded border bg-card p-2 text-sm shadow">
+              <NavLink className="block rounded px-2 py-1 hover:bg-accent" to="/lancamentos">Nova visita</NavLink>
+              <NavLink className="block rounded px-2 py-1 hover:bg-accent" to="/proximas-acoes">Nova ação</NavLink>
+              <NavLink className="block rounded px-2 py-1 hover:bg-accent" to="/clientes">Novo cliente</NavLink>
+              <NavLink className="block rounded px-2 py-1 hover:bg-accent" to="/funil">Nova oportunidade</NavLink>
+              <NavLink className="block rounded px-2 py-1 hover:bg-accent" to="/orcamentos">Novo orçamento</NavLink>
+            </div>}
+          </div>
         </div>
       </div>
     </SidebarProvider>

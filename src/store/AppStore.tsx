@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, ReactNode } from "react";
 import {
   Cliente, Lancamento, MetaEmpresa, MetaPessoal, Evento, PrioridadeP1Item,
-  Negocio, Produto, RegraComissao, Vendedor, MetaVendedor, MetaCategoria, TicketMedioRegra, Orcamento, Empresa, ProximaAcao, FormaPagamento,
+  Negocio, Produto, RegraComissao, Vendedor, MetaVendedor, MetaCategoria, TicketMedioRegra, Orcamento, Empresa, ProximaAcao, FormaPagamento, AppConfig,
 } from "@/types";
 import { bootstrapLocalDatabase, saveStore } from "@/lib/localRepository";
 
@@ -29,6 +29,7 @@ interface AppStoreCtx {
   empresas: Empresa[]; setEmpresas: React.Dispatch<React.SetStateAction<Empresa[]>>;
   proximasAcoes: ProximaAcao[]; setProximasAcoes: React.Dispatch<React.SetStateAction<ProximaAcao[]>>;
   formasPagamento: FormaPagamento[]; setFormasPagamento: React.Dispatch<React.SetStateAction<FormaPagamento[]>>;
+  appConfig: AppConfig; setAppConfig: React.Dispatch<React.SetStateAction<AppConfig>>;
   isLoading: boolean;
   isSaving: boolean;
   lastSavedAt: string | null;
@@ -66,6 +67,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const [empresas, setEmpresas] = useState<Empresa[]>([]);
   const [proximasAcoes, setProximasAcoes] = useState<ProximaAcao[]>([]);
   const [formasPagamento, setFormasPagamento] = useState<FormaPagamento[]>([]);
+  const [appConfig, setAppConfig] = useState<AppConfig>({ id: "main", taxaAcertoCarteira: 12 });
   const [filters, setFilters] = useState<Filters>(defaultFilters);
   const [isLoading, setIsLoading] = useState(true);
   const [isReady, setIsReady] = useState(false);
@@ -96,6 +98,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         setEmpresas((localData as {empresas?: Empresa[]}).empresas || []);
         setProximasAcoes((localData as {proximasAcoes?: ProximaAcao[]}).proximasAcoes || []);
         setFormasPagamento((localData as {formasPagamento?: FormaPagamento[]}).formasPagamento || []);
+        setAppConfig((localData as {appConfig?: AppConfig[]}).appConfig?.[0] || { id: "main", taxaAcertoCarteira: 12 });
       } catch (error) {
         console.error(error);
         setDbError("Não foi possível acessar o banco local deste navegador. Os dados podem não ser salvos até o problema ser resolvido.");
@@ -141,6 +144,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => { void persistStore("empresas", empresas as never); }, [empresas]);
   useEffect(() => { void persistStore("proximasAcoes", proximasAcoes as never); }, [proximasAcoes]);
   useEffect(() => { void persistStore("formasPagamento", formasPagamento as never); }, [formasPagamento]);
+  useEffect(() => { void persistStore("appConfig", [appConfig] as never); }, [appConfig]);
 
   const cMap = useMemo(() => new Map(clientes.map(c => [c.id, c])), [clientes]);
   const pMap = useMemo(() => new Map(produtos.map(p => [p.id, p])), [produtos]);
@@ -179,7 +183,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       metasVendedor, setMetasVendedor, metasCategoria, setMetasCategoria,
       eventos, setEventos, prioridadesP1, setPrioridadesP1,
       negocios, setNegocios, produtos, setProdutos,
-      regras, setRegras, vendedores, setVendedores, ticketsMedios, setTicketsMedios, orcamentos, setOrcamentos, empresas, setEmpresas, proximasAcoes, setProximasAcoes, formasPagamento, setFormasPagamento,
+      regras, setRegras, vendedores, setVendedores, ticketsMedios, setTicketsMedios, orcamentos, setOrcamentos, empresas, setEmpresas, proximasAcoes, setProximasAcoes, formasPagamento, setFormasPagamento, appConfig, setAppConfig,
       isLoading, isReady, dbError, isSaving, lastSavedAt, saveError,
       filters, setFilters,
       filtered: { lancamentos: filteredLancs, negocios: filteredNegs },

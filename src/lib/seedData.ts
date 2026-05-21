@@ -22,6 +22,7 @@ export const seedData = {
   orcamentos: [],
   orcamentoItens: [],
   empresas: [],
+  appConfig: [{ id: "main", taxaAcertoCarteira: 12 }],
 };
 
 export type SeedData = typeof seedData;
