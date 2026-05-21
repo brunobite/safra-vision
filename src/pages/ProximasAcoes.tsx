@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ProximaAcao, StatusProximaAcao, TipoProximaAcao } from "@/types";
+import { Badge } from "@/components/ui/badge";
 
 const TIPOS: TipoProximaAcao[] = ["Visita", "Ligação", "Enviar orçamento", "Cobrar retorno", "Pós-venda", "Renovação", "Outro"];
 const STATUSES: StatusProximaAcao[] = ["Pendente", "Concluída", "Cancelada"];
@@ -14,6 +15,7 @@ export default function ProximasAcoes() {
   const { proximasAcoes, setProximasAcoes, clientes, vendedores, clienteById } = useAppStore();
   const [form, setForm] = useState<Partial<ProximaAcao>>({ data: new Date().toISOString().slice(0,10), tipo: "Visita", status: "Pendente" });
   const [fStatus, setFStatus] = useState("__all__");
+  const hoje = new Date().toISOString().slice(0, 10);
 
   const salvar = () => {
     if (!form.data || !form.descricao) return;
@@ -24,6 +26,12 @@ export default function ProximasAcoes() {
   };
 
   const lista = useMemo(() => proximasAcoes.filter((a) => fStatus === "__all__" || a.status === fStatus).sort((a,b)=>a.data.localeCompare(b.data)), [proximasAcoes, fStatus]);
+  const badge = (a: ProximaAcao) => {
+    if (a.status === "Concluída") return <Badge className="bg-emerald-600">Concluída</Badge>;
+    if (a.status === "Cancelada") return <Badge variant="outline">Cancelada</Badge>;
+    if (a.data < hoje) return <Badge variant="destructive">Vencida</Badge>;
+    return <Badge className="bg-amber-500">Pendente</Badge>;
+  };
 
   return <div className="space-y-4"><Card className="p-4 grid gap-3 md:grid-cols-3">
     <div><Label>Data</Label><Input type="date" value={form.data || ""} onChange={(e)=>setForm({...form,data:e.target.value})}/></div>
@@ -35,5 +43,9 @@ export default function ProximasAcoes() {
     <Button onClick={salvar}>Criar ação</Button>
   </Card>
   <Card className="p-4"><div className="mb-3 w-60"><Label>Filtro status</Label><Select value={fStatus} onValueChange={setFStatus}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="__all__">Todos</SelectItem>{STATUSES.map(s=><SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent></Select></div>
-  <div className="space-y-2">{lista.map((a)=><div key={a.id} className="rounded border p-2 text-sm flex flex-wrap gap-3 items-center"><b>{a.data}</b><span>{clienteById(a.clienteId || "")?.nome || "Sem cliente"}</span><span>{a.tipo}</span><span>{a.descricao}</span><span>{a.responsavel || "—"}</span><Select value={a.status} onValueChange={(v: StatusProximaAcao)=>setProximasAcoes(prev=>prev.map(x=>x.id===a.id?{...x,status:v,updatedAt:new Date().toISOString()}:x))}><SelectTrigger className="w-36"><SelectValue/></SelectTrigger><SelectContent>{STATUSES.map(s=><SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent></Select></div>)}</div></Card></div>;
+  <div className="space-y-2">{lista.map((a)=><div key={a.id} className="rounded-xl border bg-card p-3 text-sm">
+    <div className="mb-2 flex flex-wrap items-center justify-between gap-2"><b>{clienteById(a.clienteId || "")?.nome || "Sem cliente"}</b>{badge(a)}</div>
+    <div className="grid gap-1 text-muted-foreground md:grid-cols-2"><span><b className="text-foreground">Data:</b> {a.data}</span><span><b className="text-foreground">Tipo:</b> {a.tipo}</span><span><b className="text-foreground">Responsável:</b> {a.responsavel || "—"}</span><span><b className="text-foreground">Descrição:</b> {a.descricao}</span></div>
+    <div className="mt-3"><Select value={a.status} onValueChange={(v: StatusProximaAcao)=>setProximasAcoes(prev=>prev.map(x=>x.id===a.id?{...x,status:v,updatedAt:new Date().toISOString()}:x))}><SelectTrigger className="w-full md:w-44"><SelectValue/></SelectTrigger><SelectContent>{STATUSES.map(s=><SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent></Select></div>
+    </div>)}</div></Card></div>;
 }

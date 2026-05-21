@@ -78,7 +78,9 @@ export default function Dashboard() {
     <div className="space-y-6">
       <GlobalFilters />
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+      <Card className="p-4">
+        <h2 className="mb-3 text-sm font-semibold text-foreground">Resultado comercial</h2>
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <KpiCard label="Meta Empresa" value={fmtBRL(kpis.metaEmpresa)} icon={Target} />
         <KpiCard label="Realizado Empresa" value={fmtBRL(kpis.realizadoEmpresa)} icon={TrendingUp} tone="success" />
         <KpiCard label="% Empresa" value={fmtPct(kpis.pctEmpresa)} icon={Percent} tone={kpis.pctEmpresa >= 1 ? "success" : kpis.pctEmpresa >= 0.8 ? "warning" : "destructive"} />
@@ -87,18 +89,31 @@ export default function Dashboard() {
         <KpiCard label="Realizado Pessoal" value={fmtBRL(kpis.realizadoPessoal)} icon={Banknote} tone="success" />
         <KpiCard label="% Pessoal" value={fmtPct(kpis.pctPessoal)} icon={Percent} tone={kpis.pctPessoal >= 1 ? "success" : kpis.pctPessoal >= 0.8 ? "warning" : "destructive"} />
         <KpiCard label="Gap Pessoal" value={fmtBRL(kpis.gapPessoal)} icon={AlertTriangle} tone={kpis.gapPessoal >= 0 ? "success" : "destructive"} />
-        <KpiCard label="Propostas enviadas" value={fmtNum(kpis.propostas)} icon={FileText} />
-        <KpiCard label="Eventos lançados" value={fmtNum(kpis.eventos)} icon={CalendarDays} />
+        </div>
+      </Card>
+
+      <Card className="p-4">
+        <h2 className="mb-3 text-sm font-semibold text-foreground">Operação comercial</h2>
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
         <KpiCard label="Pipeline aberto" value={fmtBRL(kpis.pipelineAberto)} icon={Layers} tone="muted" />
-        <KpiCard label="Pendências" value={fmtNum(kpis.pendencias)} icon={Clock} tone={kpis.pendencias > 0 ? "warning" : "success"} />
-        <KpiCard label="Aproveitamento" value={fmtPct(kpis.aproveitamento)} icon={Award} tone={kpis.aproveitamento >= 0.5 ? "success" : "warning"} />
         <KpiCard label="Clientes atrasados" value={fmtNum(operacionais.atrasados)} icon={AlertTriangle} tone="destructive" />
         <KpiCard label="Próximas ações" value={fmtNum(operacionais.proximasSemana)} icon={Clock} />
         <KpiCard label="Clientes sem visita" value={fmtNum(operacionais.semVisita)} icon={CalendarDays} tone="warning" />
         <KpiCard label="Orçamentos abertos" value={fmtNum(operacionais.orcamentosAbertos)} icon={FileText} />
         <KpiCard label="Negócios abertos" value={fmtNum(operacionais.negociosAbertos)} icon={Layers} />
         <KpiCard label="Visitas do mês" value={fmtNum(operacionais.visitasMes)} icon={TrendingUp} />
-      </div>
+        </div>
+      </Card>
+
+      <Card className="p-4">
+        <h2 className="mb-3 text-sm font-semibold text-foreground">Funil e pipeline</h2>
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <KpiCard label="Pipeline aberto" value={fmtBRL(kpis.pipelineAberto)} icon={Layers} tone="muted" />
+          <KpiCard label="Propostas enviadas" value={fmtNum(kpis.propostas)} icon={FileText} />
+          <KpiCard label="Aproveitamento" value={fmtPct(kpis.aproveitamento)} icon={Award} tone={kpis.aproveitamento >= 0.5 ? "success" : "warning"} />
+          <KpiCard label="Pendências" value={fmtNum(kpis.pendencias)} icon={Clock} tone={kpis.pendencias > 0 ? "warning" : "success"} />
+        </div>
+      </Card>
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card className="p-4 lg:col-span-2">
