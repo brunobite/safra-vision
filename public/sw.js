@@ -1,4 +1,4 @@
-const CACHE_NAME = 'safra-vision-pwa-v2';
+const CACHE_NAME = 'safra-vision-pwa-v3';
 const BASE_URL = self.registration.scope;
 const APP_SHELL = [
   `${BASE_URL}`,
@@ -37,15 +37,30 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  if (request.mode === 'navigate') {
+    event.respondWith(
+      fetch(request)
+        .then((networkResponse) => {
+          const responseClone = networkResponse.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(request, responseClone));
+          return networkResponse;
+        })
+        .catch(async () => {
+          const cachedNavigation = await caches.match(request);
+          if (cachedNavigation) {
+            return cachedNavigation;
+          }
+
+          return caches.match(`${BASE_URL}index.html`);
+        })
+    );
+
+    return;
+  }
+
   event.respondWith(
     caches.match(request).then((cachedResponse) => {
-      return cachedResponse || fetch(request).catch(() => {
-        if (request.mode === 'navigate') {
-          return caches.match(`${BASE_URL}index.html`);
-        }
-
-        return undefined;
-      });
+      return cachedResponse || fetch(request);
     })
   );
 });
