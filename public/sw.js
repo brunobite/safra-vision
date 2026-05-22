@@ -1,10 +1,11 @@
-const CACHE_NAME = 'safra-vision-pwa-v1';
+const CACHE_NAME = 'safra-vision-pwa-v2';
+const BASE_URL = self.registration.scope;
 const APP_SHELL = [
-  '/',
-  '/index.html',
-  '/manifest.webmanifest',
-  '/favicon.ico',
-  '/placeholder.svg'
+  `${BASE_URL}`,
+  `${BASE_URL}index.html`,
+  `${BASE_URL}manifest.webmanifest`,
+  `${BASE_URL}favicon.ico`,
+  `${BASE_URL}placeholder.svg`
 ];
 
 self.addEventListener('install', (event) => {
@@ -40,7 +41,7 @@ self.addEventListener('fetch', (event) => {
     caches.match(request).then((cachedResponse) => {
       return cachedResponse || fetch(request).catch(() => {
         if (request.mode === 'navigate') {
-          return caches.match('/index.html');
+          return caches.match(`${BASE_URL}index.html`);
         }
 
         return undefined;

@@ -2,20 +2,20 @@
   "name": "Safra Vision",
   "short_name": "Safra Vision",
   "description": "Painel de gestão técnica e comercial para acompanhamento de clientes, metas e ações da safra.",
-  "start_url": "/",
-  "scope": "/",
+  "start_url": "./",
+  "scope": "./",
   "display": "standalone",
   "orientation": "portrait-primary",
   "background_color": "#ffffff",
   "theme_color": "#166534",
   "icons": [
     {
-      "src": "/favicon.ico",
+      "src": "./favicon.ico",
       "sizes": "48x48",
       "type": "image/x-icon"
     },
     {
-      "src": "/placeholder.svg",
+      "src": "./placeholder.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any"
