@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -43,7 +43,7 @@ export default function Clientes() {
   const ultimaVisita = (id: string) => visitasCliente(id).sort((a, b) => b.data.localeCompare(a.data))[0]?.data;
   const proximaAcaoPendente = (id: string) => proximasAcoes.find(a => a.clienteId === id && a.status === "Pendente");
   const totalProximasAcoesAbertas = (id: string) => proximasAcoes.filter(a => a.clienteId === id && a.status === "Pendente").length;
-  const atrasado = (c: Cliente) => isClienteAtrasado(c, proximasAcoes);
+  const atrasado = useCallback((c: Cliente) => isClienteAtrasado(c, proximasAcoes), [proximasAcoes]);
   const lista = useMemo(() => clientes.filter(c =>
     (!busca || c.nome.toLowerCase().includes(busca.toLowerCase())) &&
     (!fAbc || c.abc === fAbc) &&
@@ -51,7 +51,7 @@ export default function Clientes() {
     (!fRota || c.rota === fRota) && (!fStatus || c.statusAtual === fStatus) &&
     (!fCidade || c.cidade === fCidade) &&
     (!fAtrasado || (fAtrasado === "sim" ? atrasado(c) : !atrasado(c)))
-  ), [clientes, busca, fAbc, fPri, fRota, fStatus, fCidade, fAtrasado, proximasAcoes]);
+  ), [clientes, busca, fAbc, fPri, fRota, fStatus, fCidade, fAtrasado, atrasado]);
 
   const totais = useMemo(() => ({
     potencial: lista.reduce((s, c) => s + c.potencialTotal, 0),

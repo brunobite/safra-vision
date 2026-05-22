@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState, ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, ReactNode } from "react";
 import {
   Cliente, Lancamento, MetaEmpresa, MetaPessoal, Evento, PrioridadeP1Item,
   Negocio, Produto, RegraComissao, Vendedor, MetaVendedor, MetaCategoria, TicketMedioRegra, Orcamento, Empresa, ProximaAcao, FormaPagamento, AppConfig,
@@ -112,7 +112,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     void init();
   }, []);
 
-  const persistStore = async <T extends { id: string }>(store: Parameters<typeof saveStore<T>>[0], data: T[]) => {
+  const persistStore = useCallback(async <T extends { id: string }>(store: Parameters<typeof saveStore<T>>[0], data: T[]) => {
     if (!isReady || !hasHydratedRef.current || dbError) return;
     setIsSaving(true);
     setSaveError(null);
@@ -125,26 +125,26 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsSaving(false);
     }
-  };
+  }, [dbError, isReady]);
 
-  useEffect(() => { void persistStore("clientes", clientes); }, [clientes]);
-  useEffect(() => { void persistStore("lancamentos", lancamentos); }, [lancamentos]);
-  useEffect(() => { void persistStore("metasEmpresa", metasEmpresa); }, [metasEmpresa]);
-  useEffect(() => { void persistStore("metasPessoais", metasPessoais); }, [metasPessoais]);
-  useEffect(() => { void persistStore("metasVendedor", metasVendedor); }, [metasVendedor]);
-  useEffect(() => { void persistStore("metasCategoria", metasCategoria); }, [metasCategoria]);
-  useEffect(() => { void persistStore("eventos", eventos); }, [eventos]);
-  useEffect(() => { void persistStore("prioridadesP1", prioridadesP1); }, [prioridadesP1]);
-  useEffect(() => { void persistStore("negocios", negocios); }, [negocios]);
-  useEffect(() => { void persistStore("produtos", produtos); }, [produtos]);
-  useEffect(() => { void persistStore("regrasComissao", regras); }, [regras]);
-  useEffect(() => { void persistStore("vendedores", vendedores); }, [vendedores]);
-  useEffect(() => { void persistStore("configuracoes", ticketsMedios as never); }, [ticketsMedios]);
-  useEffect(() => { void persistStore("orcamentos", orcamentos as never); }, [orcamentos]);
-  useEffect(() => { void persistStore("empresas", empresas as never); }, [empresas]);
-  useEffect(() => { void persistStore("proximasAcoes", proximasAcoes as never); }, [proximasAcoes]);
-  useEffect(() => { void persistStore("formasPagamento", formasPagamento as never); }, [formasPagamento]);
-  useEffect(() => { void persistStore("appConfig", [appConfig] as never); }, [appConfig]);
+  useEffect(() => { void persistStore("clientes", clientes); }, [clientes, persistStore]);
+  useEffect(() => { void persistStore("lancamentos", lancamentos); }, [lancamentos, persistStore]);
+  useEffect(() => { void persistStore("metasEmpresa", metasEmpresa); }, [metasEmpresa, persistStore]);
+  useEffect(() => { void persistStore("metasPessoais", metasPessoais); }, [metasPessoais, persistStore]);
+  useEffect(() => { void persistStore("metasVendedor", metasVendedor); }, [metasVendedor, persistStore]);
+  useEffect(() => { void persistStore("metasCategoria", metasCategoria); }, [metasCategoria, persistStore]);
+  useEffect(() => { void persistStore("eventos", eventos); }, [eventos, persistStore]);
+  useEffect(() => { void persistStore("prioridadesP1", prioridadesP1); }, [prioridadesP1, persistStore]);
+  useEffect(() => { void persistStore("negocios", negocios); }, [negocios, persistStore]);
+  useEffect(() => { void persistStore("produtos", produtos); }, [produtos, persistStore]);
+  useEffect(() => { void persistStore("regrasComissao", regras); }, [regras, persistStore]);
+  useEffect(() => { void persistStore("vendedores", vendedores); }, [vendedores, persistStore]);
+  useEffect(() => { void persistStore("configuracoes", ticketsMedios as never); }, [ticketsMedios, persistStore]);
+  useEffect(() => { void persistStore("orcamentos", orcamentos as never); }, [orcamentos, persistStore]);
+  useEffect(() => { void persistStore("empresas", empresas as never); }, [empresas, persistStore]);
+  useEffect(() => { void persistStore("proximasAcoes", proximasAcoes as never); }, [proximasAcoes, persistStore]);
+  useEffect(() => { void persistStore("formasPagamento", formasPagamento as never); }, [formasPagamento, persistStore]);
+  useEffect(() => { void persistStore("appConfig", [appConfig] as never); }, [appConfig, persistStore]);
 
   const cMap = useMemo(() => new Map(clientes.map(c => [c.id, c])), [clientes]);
   const pMap = useMemo(() => new Map(produtos.map(p => [p.id, p])), [produtos]);
