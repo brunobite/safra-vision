@@ -11,9 +11,9 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { useAppStore } from "@/store/AppStore";
 import { ROTAS_NOMES } from "@/data/mockData";
-import { Cliente, ABC, ClienteCulturaArea } from "@/types";
+import { Cliente, ABC } from "@/types";
 import { fmtBRL, fmtNum } from "@/utils/calculations";
-import { computeClienteStatus, CULTURAS_SUGERIDAS, formatDateBR, isClienteAtrasado, normalizarCulturas, parseFrequenciaDias, sugestaoRetornoDias } from "@/lib/clientesUtils";
+import { computeClienteStatus, formatDateBR, isClienteAtrasado, sugestaoRetornoDias } from "@/lib/clientesUtils";
 import { Plus, Pencil, Trash2, Eye, Search } from "lucide-react";
 import { toast } from "sonner";
 
@@ -26,7 +26,7 @@ const empty: Omit<Cliente, "id"> = {
 };
 
 export default function Clientes() {
-  const { clientes, setClientes, lancamentos, negocios, ticketsMedios, orcamentos, proximasAcoes } = useAppStore();
+  const { clientes, setClientes, lancamentos, negocios, ticketsMedios, orcamentos, proximasAcoes, vendedores } = useAppStore();
   const [busca, setBusca] = useState("");
   const [fAbc, setFAbc] = useState(""); const [fPri, setFPri] = useState(""); const [fRota, setFRota] = useState(""); const [fStatus, setFStatus] = useState(""); const [fCidade, setFCidade] = useState(""); const [fAtrasado, setFAtrasado] = useState("");
   const [open, setOpen] = useState(false);
@@ -128,7 +128,7 @@ export default function Clientes() {
         <Table>
           <TableHeader><TableRow>
             <TableHead>Cliente</TableHead><TableHead>ABC</TableHead>
-            <TableHead>Rota</TableHead><TableHead>Cidade</TableHead><TableHead>Culturas</TableHead>
+            <TableHead>Rota</TableHead><TableHead>Cidade</TableHead>
             <TableHead className="text-right">Área (ha)</TableHead><TableHead className="text-right">Potencial</TableHead>
             <TableHead>Status</TableHead><TableHead>Última visita</TableHead><TableHead>Próxima ação</TableHead><TableHead>Próximo retorno</TableHead><TableHead className="text-right">Ações</TableHead>
           </TableRow></TableHeader>
@@ -137,7 +137,7 @@ export default function Clientes() {
               <TableRow key={c.id}>
                 <TableCell className="font-medium">{c.nome}</TableCell>
                 <TableCell><Badge variant="outline">{c.abc}</Badge></TableCell>
-                                <TableCell>{c.rota}</TableCell><TableCell>{c.cidade}</TableCell><TableCell className="max-w-[160px] truncate">{c.culturas}</TableCell>
+                                <TableCell>{c.rota}</TableCell><TableCell>{c.cidade}</TableCell>
                 <TableCell className="text-right">{fmtNum(c.areaHa)}</TableCell>
                 <TableCell className="text-right">{fmtBRL(c.potencialTotal)}</TableCell>
                 <TableCell>{c.statusAtual} {atrasado(c) && <Badge className="ml-1" variant="destructive">Atrasado</Badge>}</TableCell><TableCell>{formatDateBR(ultimaVisita(c.id)) || "Sem visita registrada"}</TableCell><TableCell>{proximaAcaoPendente(c.id)?.descricao || "—"}</TableCell><TableCell>{formatDateBR(proximaAcaoPendente(c.id)?.data || c.retorno)}</TableCell>
@@ -168,10 +168,9 @@ export default function Clientes() {
             <div><Label>ABC</Label><Select value={form.abc} onValueChange={(v: ABC) => setForm({ ...form, abc: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{["A","B","C"].map(v => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent></Select></div>
             <div><Label>Prioridade</Label><Select value={form.prioridade} onValueChange={v => setForm({ ...form, prioridade: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{["P1","P2","P3"].map(v => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent></Select></div>
             <div><Label>Rota</Label><Select value={form.rota} onValueChange={v => setForm({ ...form, rota: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{ROTAS_NOMES.map(v => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent></Select></div>
+            <div><Label>Vendedor</Label><Select value={form.vendedor || ALL} onValueChange={v => setForm({ ...form, vendedor: v === ALL ? "" : v })}><SelectTrigger><SelectValue placeholder="Não definido" /></SelectTrigger><SelectContent><SelectItem value={ALL}>Não definido</SelectItem>{vendedores.filter(v=>v.ativo).map(v => <SelectItem key={v.id} value={v.nome}>{v.nome}</SelectItem>)}</SelectContent></Select></div>
             <div><Label>Cidade</Label><Input value={form.cidade} onChange={e => setForm({ ...form, cidade: e.target.value })} /></div>
-            <div><Label>Localidade</Label><Input value={form.localidade} onChange={e => setForm({ ...form, localidade: e.target.value })} /></div>
-            <div className="md:col-span-2"><Label>Culturas do cliente</Label><div className="space-y-2">{normalizarCulturas(form.culturasDetalhes, form.culturas).map((item, idx) => <div key={item.id} className="grid grid-cols-12 gap-2"><Select value={item.cultura} onValueChange={v=>{ const next=[...normalizarCulturas(form.culturasDetalhes, form.culturas)]; next[idx]={...item,cultura:v}; setForm({...form,culturasDetalhes:next,culturas:next.map(x=>x.cultura).join(", "),areaHa:next.reduce((s,x)=>s+(x.areaHa||0),0)});}}><SelectTrigger className="col-span-7"><SelectValue/></SelectTrigger><SelectContent>{CULTURAS_SUGERIDAS.map(c=> <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent></Select><Input className="col-span-4" type="number" step="0.01" value={item.areaHa} onChange={e=>{ const next=[...normalizarCulturas(form.culturasDetalhes, form.culturas)]; next[idx]={...item,areaHa:+e.target.value}; setForm({...form,culturasDetalhes:next,culturas:next.map(x=>x.cultura).join(", "),areaHa:next.reduce((s,x)=>s+(x.areaHa||0),0)});}} /><Button className="col-span-1" variant="ghost" onClick={()=>{ const next=normalizarCulturas(form.culturasDetalhes, form.culturas).filter((_,i)=>i!==idx); setForm({...form,culturasDetalhes:next,culturas:next.map(x=>x.cultura).join(", "),areaHa:next.reduce((s,x)=>s+(x.areaHa||0),0)});}}><Trash2 className="h-3 w-3"/></Button></div>)}<Button type="button" variant="outline" onClick={()=>{ const next=[...normalizarCulturas(form.culturasDetalhes, form.culturas),{id:`ca-${Date.now()}`,cultura:"Soja",areaHa:0} as ClienteCulturaArea]; setForm({...form,culturasDetalhes:next}); }}>Adicionar cultura</Button></div></div>
-            <div><Label>Área (ha)</Label><Input type="number" step="0.01" value={form.areaHa} disabled /></div>
+            <div><Label>Área (ha)</Label><Input type="number" step="0.01" value={form.areaHa} onChange={e => setForm({ ...form, areaHa: Number(e.target.value || 0) })} /></div>
             <div><Label>Potencial total</Label><Input type="number" step="0.01" value={valorMedioSegmentosAtivos > 0 ? form.areaHa * valorMedioSegmentosAtivos : 0} disabled /></div>
             <div className="md:col-span-2 text-xs text-muted-foreground">Potencial calculado automaticamente: área total do cliente × soma dos valores médios por hectare dos segmentos ativos.</div>
             <div><Label>Inativo manual</Label><Select value={form.inativoManual ? "1":"0"} onValueChange={v=>setForm({ ...form, inativoManual: v==="1" })}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="0">Não</SelectItem><SelectItem value="1">Sim</SelectItem></SelectContent></Select></div>
@@ -202,14 +201,13 @@ export default function Clientes() {
               <div><span className="text-muted-foreground">Prioridade:</span> {view.prioridade}</div>
               <div><span className="text-muted-foreground">Rota:</span> {view.rota}</div>
               <div><span className="text-muted-foreground">Cidade:</span> {view.cidade}</div>
-              <div><span className="text-muted-foreground">Localidade:</span> {view.localidade}</div>
-              <div><span className="text-muted-foreground">CPF/CNPJ:</span> {view.documento || "—"}</div>
+                            <div><span className="text-muted-foreground">CPF/CNPJ:</span> {view.documento || "—"}</div>
               <div><span className="text-muted-foreground">IE:</span> {view.inscricaoEstadual || "—"}</div>
               <div><span className="text-muted-foreground">Telefone:</span> {view.telefone || "—"}</div>
               <div><span className="text-muted-foreground">Endereço:</span> {view.endereco || "—"}</div>
+              <div><span className="text-muted-foreground">Vendedor:</span> {view.vendedor || "—"}</div>
               <div><span className="text-muted-foreground">Localização:</span> {view.latitude && view.longitude ? `${view.latitude}, ${view.longitude}` : (view.coordenadas || "—")}</div>
-              <div><span className="text-muted-foreground">Culturas:</span> {view.culturas}</div>
-              <div><span className="text-muted-foreground">Área:</span> {fmtNum(view.areaHa)} ha</div>
+                            <div><span className="text-muted-foreground">Área:</span> {fmtNum(view.areaHa)} ha</div>
               <div><span className="text-muted-foreground">Potencial:</span> {fmtBRL(view.potencialTotal)}</div>
               <div><span className="text-muted-foreground">Status:</span> {view.statusAtual}</div>
               <div><span className="text-muted-foreground">Frequência:</span> {view.frequenciaRetorno}</div>
