@@ -55,13 +55,13 @@ export interface Cliente {
   prioridade: Prioridade;
   rota: string;
   cidade: string;
-  localidade: string;
+  localidade?: string;
   latitude?: number;
   longitude?: number;
   coordenadas?: string;
   linkMapa?: string;
   observacaoLocalizacao?: string;
-  culturas: string;
+  culturas?: string;
   culturasDetalhes?: ClienteCulturaArea[];
   areaHa: number;
   potencialTotal: number;
