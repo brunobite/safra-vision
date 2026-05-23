@@ -136,11 +136,28 @@ export async function getLocalDbStats(): Promise<LocalDbStats> {
 
 export async function resetLocalDatabase() {
   return withDb(async (db) => {
-    storesToLoad.forEach((store) => {
+    for (const store of storesToLoad) {
       const tx = db.transaction(store, "readwrite");
       tx.objectStore(store).clear();
-    });
-    await seedInitialData(db);
+      await waitForTransaction(tx);
+    }
+    await writeDbMeta(db, { seeded: true, versaoSchema: DB_VERSION });
+  });
+}
+
+export async function clearOperationalStores() {
+  const operationalStores: StoreName[] = [
+    "clientes", "lancamentos", "negocios", "produtos", "eventos", "prioridadesP1",
+    "orcamentos", "orcamentoItens", "proximasAcoes", "importLogs",
+  ];
+
+  return withDb(async (db) => {
+    for (const store of operationalStores) {
+      const tx = db.transaction(store, "readwrite");
+      tx.objectStore(store).clear();
+      await waitForTransaction(tx);
+    }
+    await writeDbMeta(db, { seeded: true, versaoSchema: DB_VERSION });
   });
 }
 
