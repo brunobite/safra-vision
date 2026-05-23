@@ -14,6 +14,7 @@ import { BaseMode, ImportLog, RegraComissao, AplicarSobre, FaixaComissao, CATEGO
 import { Plus, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { getLocalDbStats, LocalDbStats, replaceLocalDatabase, resetLocalDatabase, saveStore } from "@/lib/localRepository";
+import { clearLocalAppDeviceData } from "@/lib/clientCleanup";
 import { exportAllEntitiesToCsv } from "@/lib/csvService";
 import { exportWorkbook } from "@/lib/excelService";
 import { downloadBackupJson, parseBackupPayload } from "@/lib/backupService";
@@ -275,9 +276,15 @@ export default function Configuracoes() {
           <Button variant="destructive" onClick={async () => {
             if (!window.confirm("Esta ação apagará os dados locais deste navegador. Essa ação não pode ser desfeita nesta versão. Deseja continuar?")) return;
             await resetLocalDatabase();
-            toast.success("Base local limpa. Recarregando dados de demonstração...");
+            toast.success("Base local limpa. Recarregando aplicação sem dados operacionais.");
             window.location.reload();
           }}>Limpar base local</Button>
+          <Button variant="outline" onClick={async () => {
+            if (!window.confirm("Esta ação removerá IndexedDB/cache/localStorage/sessionStorage e service worker deste dispositivo. Deseja continuar?")) return;
+            await clearLocalAppDeviceData();
+            toast.success("Dados locais deste dispositivo foram removidos.");
+            window.location.reload();
+          }}>Limpar dados locais deste dispositivo</Button>
           <Card className="space-y-2 border-dashed p-3">
             <div className="font-semibold">Exportação e backup</div>
             <p className="text-xs text-muted-foreground">Use estas opções para salvar seus dados fora do navegador, enviar por e-mail, WhatsApp ou guardar em local seguro.</p>

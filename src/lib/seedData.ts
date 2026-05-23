@@ -5,23 +5,29 @@ import {
   initialVendedores,
 } from "@/data/mockData";
 
+const enableDemoData = import.meta.env.VITE_ENABLE_DEMO_DATA === "true";
+const enableDemoProducts = import.meta.env.VITE_ENABLE_DEMO_PRODUCTS === "true";
+
 export const seedData = {
-  clientes: initialClientes,
-  vendedores: initialVendedores,
-  lancamentos: initialLancamentos,
-  negocios: initialNegocios,
-  produtos: initialProdutos,
-  metasEmpresa: initialMetasEmpresa,
-  metasPessoais: initialMetasPessoais,
-  metasVendedor: initialMetasVendedor,
-  metasCategoria: initialMetasCategoria,
-  regrasComissao: initialRegrasComissao,
-  eventos: initialEventos,
-  prioridadesP1: initialPrioridadesP1,
+  clientes: enableDemoData ? initialClientes : [],
+  vendedores: enableDemoData ? initialVendedores : [],
+  lancamentos: enableDemoData ? initialLancamentos : [],
+  negocios: enableDemoData ? initialNegocios : [],
+  produtos: enableDemoProducts ? initialProdutos : [],
+  metasEmpresa: enableDemoData ? initialMetasEmpresa : [],
+  metasPessoais: enableDemoData ? initialMetasPessoais : [],
+  metasVendedor: enableDemoData ? initialMetasVendedor : [],
+  metasCategoria: enableDemoData ? initialMetasCategoria : [],
+  regrasComissao: enableDemoData ? initialRegrasComissao : [],
+  eventos: enableDemoData ? initialEventos : [],
+  prioridadesP1: enableDemoData ? initialPrioridadesP1 : [],
   configuracoes: [{ id: "cfg-show-custo-ha", key: "showCustoPorHectare", value: true }],
   orcamentos: [],
   orcamentoItens: [],
   empresas: [],
+  proximasAcoes: [],
+  formasPagamento: [],
+  importLogs: [],
   appConfig: [{ id: "main", taxaAcertoCarteira: 12 }],
 };
 
