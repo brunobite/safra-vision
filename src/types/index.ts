@@ -92,7 +92,7 @@ export interface Cliente {
 
 export interface AppConfig {
   id: string;
-  taxaAcertoCarteira: number;
+  percentualAcertoEsperado: number;
 }
 
 export interface Lancamento {

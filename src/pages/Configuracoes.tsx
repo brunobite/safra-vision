@@ -204,7 +204,7 @@ export default function Configuracoes() {
       <div className="grid gap-2 md:grid-cols-3 items-end">
         <div>
           <Label>Taxa de acerto da carteira (%)</Label>
-          <Input type="number" min={0} max={100} step="0.01" value={appConfig.taxaAcertoCarteira} onChange={(e)=>{const v=Math.min(100,Math.max(0,Number(e.target.value||0))); setAppConfig({ ...appConfig, taxaAcertoCarteira: v });}} />
+          <Input type="number" min={0} max={100} step="0.01" value={appConfig.percentualAcertoEsperado} onChange={(e)=>{const v=Math.min(100,Math.max(0,Number(e.target.value||0))); setAppConfig({ ...appConfig, percentualAcertoEsperado: v });}} />
         </div>
         <p className="text-xs text-muted-foreground md:col-span-2">Valor padrão sugerido: 12. Usado no Dashboard para calcular meta da carteira.</p>
       </div>
