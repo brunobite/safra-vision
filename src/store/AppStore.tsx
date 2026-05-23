@@ -67,7 +67,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const [empresas, setEmpresas] = useState<Empresa[]>([]);
   const [proximasAcoes, setProximasAcoes] = useState<ProximaAcao[]>([]);
   const [formasPagamento, setFormasPagamento] = useState<FormaPagamento[]>([]);
-  const [appConfig, setAppConfig] = useState<AppConfig>({ id: "main", taxaAcertoCarteira: 12 });
+  const [appConfig, setAppConfig] = useState<AppConfig>({ id: "main", percentualAcertoEsperado: 12 });
   const [filters, setFilters] = useState<Filters>(defaultFilters);
   const [isLoading, setIsLoading] = useState(true);
   const [isReady, setIsReady] = useState(false);
@@ -98,7 +98,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         setEmpresas((localData as {empresas?: Empresa[]}).empresas || []);
         setProximasAcoes((localData as {proximasAcoes?: ProximaAcao[]}).proximasAcoes || []);
         setFormasPagamento((localData as {formasPagamento?: FormaPagamento[]}).formasPagamento || []);
-        setAppConfig((localData as {appConfig?: AppConfig[]}).appConfig?.[0] || { id: "main", taxaAcertoCarteira: 12 });
+        setAppConfig((localData as {appConfig?: AppConfig[]}).appConfig?.[0] || { id: "main", percentualAcertoEsperado: 12 });
       } catch (error) {
         console.error(error);
         setDbError("Não foi possível acessar o banco local deste navegador. Os dados podem não ser salvos até o problema ser resolvido.");

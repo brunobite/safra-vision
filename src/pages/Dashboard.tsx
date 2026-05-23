@@ -56,7 +56,7 @@ export default function Dashboard() {
 
   const hoje = new Date().toISOString().slice(0,10);
   const potencialCarteira = clientes.reduce((s,c)=>s+(c.potencialTotal||0),0);
-  const taxa = Math.min(100, Math.max(0, appConfig.taxaAcertoCarteira || 0));
+  const taxa = Math.min(100, Math.max(0, appConfig.percentualAcertoEsperado || 0));
   const metaCarteira = potencialCarteira * taxa / 100;
   const realizado = negocios.filter(n=>n.status==="Fechado ganho").reduce((s,n)=>s+(n.valorFechado||0),0) + orcamentos.filter(o=>o.status==="Aprovado").reduce((s,o)=>s+o.total,0);
   const pct = metaCarteira>0 ? realizado/metaCarteira : 0;

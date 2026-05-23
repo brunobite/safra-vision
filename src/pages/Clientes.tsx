@@ -57,15 +57,15 @@ export default function Clientes() {
     potencial: lista.reduce((s, c) => s + c.potencialTotal, 0),
     area: lista.reduce((s, c) => s + c.areaHa, 0),
   }), [lista]);
-  const ticketAtivo = useMemo(() => ticketsMedios.filter(t=>t.ativo && t.valorMedioHa > 0).reduce((s,t)=>s+t.valorMedioHa,0), [ticketsMedios]);
+  const valorMedioSegmentosAtivos = useMemo(() => ticketsMedios.filter(t=>t.ativo && t.valorMedioHa > 0).reduce((s,t)=>s+t.valorMedioHa,0), [ticketsMedios]);
 
   useEffect(() => {
     setClientes(prev => prev.map((c) => {
-      const potencialTotal = ticketAtivo > 0 ? c.areaHa * ticketAtivo : 0;
-      if (c.potencialTotal === potencialTotal && c.potencialCalculado === (ticketAtivo > 0)) return c;
-      return { ...c, potencialTotal, potencialCalculado: ticketAtivo > 0 };
+      const potencialTotal = valorMedioSegmentosAtivos > 0 ? c.areaHa * valorMedioSegmentosAtivos : 0;
+      if (c.potencialTotal === potencialTotal && c.potencialCalculado === (valorMedioSegmentosAtivos > 0)) return c;
+      return { ...c, potencialTotal, potencialCalculado: valorMedioSegmentosAtivos > 0 };
     }));
-  }, [ticketAtivo, setClientes]);
+  }, [valorMedioSegmentosAtivos, setClientes]);
 
   const openNew = () => { setEdit(null); setForm(empty); setOpen(true); };
   const openEdit = (c: Cliente) => { setEdit(c); const { id, ...rest } = c; void id; setForm(rest); setOpen(true); };
@@ -82,8 +82,8 @@ export default function Clientes() {
   
   const save = () => {
     if (!form.nome) return toast.error("Nome obrigatório.");
-    const potencialCalculado = ticketAtivo>0 ? form.areaHa * ticketAtivo : 0;
-    const base = { ...form, potencialTotal: potencialCalculado, potencialCalculado: ticketAtivo>0, frequenciaRetorno: form.frequenciaRetorno || `${sugestaoRetornoDias(form as Cliente, computeClienteStatus(form as Cliente, lancamentos, negocios, orcamentos), negocios)} dias`, statusAtual: computeClienteStatus({ ...form, id: edit?.id || "novo" } as Cliente, lancamentos, negocios, orcamentos) };
+    const potencialCalculado = valorMedioSegmentosAtivos>0 ? form.areaHa * valorMedioSegmentosAtivos : 0;
+    const base = { ...form, potencialTotal: potencialCalculado, potencialCalculado: valorMedioSegmentosAtivos>0, frequenciaRetorno: form.frequenciaRetorno || `${sugestaoRetornoDias(form as Cliente, computeClienteStatus(form as Cliente, lancamentos, negocios, orcamentos), negocios)} dias`, statusAtual: computeClienteStatus({ ...form, id: edit?.id || "novo" } as Cliente, lancamentos, negocios, orcamentos) };
     if (edit) setClientes(prev => prev.map(c => c.id === edit.id ? { ...base, id: edit.id } : c));
     else setClientes(prev => [...prev, { ...base, id: `c${Date.now()}` }]);
     setOpen(false); toast.success("Cliente salvo.");
@@ -172,8 +172,8 @@ export default function Clientes() {
             <div><Label>Localidade</Label><Input value={form.localidade} onChange={e => setForm({ ...form, localidade: e.target.value })} /></div>
             <div className="md:col-span-2"><Label>Culturas do cliente</Label><div className="space-y-2">{normalizarCulturas(form.culturasDetalhes, form.culturas).map((item, idx) => <div key={item.id} className="grid grid-cols-12 gap-2"><Select value={item.cultura} onValueChange={v=>{ const next=[...normalizarCulturas(form.culturasDetalhes, form.culturas)]; next[idx]={...item,cultura:v}; setForm({...form,culturasDetalhes:next,culturas:next.map(x=>x.cultura).join(", "),areaHa:next.reduce((s,x)=>s+(x.areaHa||0),0)});}}><SelectTrigger className="col-span-7"><SelectValue/></SelectTrigger><SelectContent>{CULTURAS_SUGERIDAS.map(c=> <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent></Select><Input className="col-span-4" type="number" step="0.01" value={item.areaHa} onChange={e=>{ const next=[...normalizarCulturas(form.culturasDetalhes, form.culturas)]; next[idx]={...item,areaHa:+e.target.value}; setForm({...form,culturasDetalhes:next,culturas:next.map(x=>x.cultura).join(", "),areaHa:next.reduce((s,x)=>s+(x.areaHa||0),0)});}} /><Button className="col-span-1" variant="ghost" onClick={()=>{ const next=normalizarCulturas(form.culturasDetalhes, form.culturas).filter((_,i)=>i!==idx); setForm({...form,culturasDetalhes:next,culturas:next.map(x=>x.cultura).join(", "),areaHa:next.reduce((s,x)=>s+(x.areaHa||0),0)});}}><Trash2 className="h-3 w-3"/></Button></div>)}<Button type="button" variant="outline" onClick={()=>{ const next=[...normalizarCulturas(form.culturasDetalhes, form.culturas),{id:`ca-${Date.now()}`,cultura:"Soja",areaHa:0} as ClienteCulturaArea]; setForm({...form,culturasDetalhes:next}); }}>Adicionar cultura</Button></div></div>
             <div><Label>Área (ha)</Label><Input type="number" step="0.01" value={form.areaHa} disabled /></div>
-            <div><Label>Potencial total</Label><Input type="number" step="0.01" value={ticketAtivo > 0 ? form.areaHa * ticketAtivo : 0} disabled /></div>
-            <div className="md:col-span-2 text-xs text-muted-foreground">Potencial calculado automaticamente com base na área do cliente e nos tickets médios ativos por linha de produto.</div>
+            <div><Label>Potencial total</Label><Input type="number" step="0.01" value={valorMedioSegmentosAtivos > 0 ? form.areaHa * valorMedioSegmentosAtivos : 0} disabled /></div>
+            <div className="md:col-span-2 text-xs text-muted-foreground">Potencial calculado automaticamente: área total do cliente × soma dos valores médios por hectare dos segmentos ativos.</div>
             <div><Label>Inativo manual</Label><Select value={form.inativoManual ? "1":"0"} onValueChange={v=>setForm({ ...form, inativoManual: v==="1" })}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="0">Não</SelectItem><SelectItem value="1">Sim</SelectItem></SelectContent></Select></div>
             <div><Label>Status atual</Label><Input value={form.statusAtual} disabled /></div>
             <div><Label>Frequência de retorno</Label><Input value={form.frequenciaRetorno} onChange={e => setForm({ ...form, frequenciaRetorno: e.target.value })} /></div>
