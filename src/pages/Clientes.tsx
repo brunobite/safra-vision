@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,7 @@ import { ROTAS_NOMES } from "@/data/mockData";
 import { Cliente, ABC } from "@/types";
 import { fmtBRL, fmtNum } from "@/utils/calculations";
 import { computeClienteStatus, formatDateBR, isClienteAtrasado, sugestaoRetornoDias } from "@/lib/clientesUtils";
+import { calcularPotencialCliente, calcularValorMedioHaSegmentosAtivos } from "@/utils/businessRules";
 import { Plus, Pencil, Trash2, Eye, Search } from "lucide-react";
 import { toast } from "sonner";
 
@@ -57,15 +58,7 @@ export default function Clientes() {
     potencial: lista.reduce((s, c) => s + c.potencialTotal, 0),
     area: lista.reduce((s, c) => s + c.areaHa, 0),
   }), [lista]);
-  const valorMedioSegmentosAtivos = useMemo(() => ticketsMedios.filter(t=>t.ativo && t.valorMedioHa > 0).reduce((s,t)=>s+t.valorMedioHa,0), [ticketsMedios]);
-
-  useEffect(() => {
-    setClientes(prev => prev.map((c) => {
-      const potencialTotal = valorMedioSegmentosAtivos > 0 ? c.areaHa * valorMedioSegmentosAtivos : 0;
-      if (c.potencialTotal === potencialTotal && c.potencialCalculado === (valorMedioSegmentosAtivos > 0)) return c;
-      return { ...c, potencialTotal, potencialCalculado: valorMedioSegmentosAtivos > 0 };
-    }));
-  }, [valorMedioSegmentosAtivos, setClientes]);
+  const valorMedioSegmentosAtivos = useMemo(() => calcularValorMedioHaSegmentosAtivos(ticketsMedios), [ticketsMedios]);
 
   const openNew = () => { setEdit(null); setForm(empty); setOpen(true); };
   const openEdit = (c: Cliente) => { setEdit(c); const { id, ...rest } = c; void id; setForm(rest); setOpen(true); };
@@ -82,7 +75,7 @@ export default function Clientes() {
   
   const save = () => {
     if (!form.nome) return toast.error("Nome obrigatório.");
-    const potencialCalculado = valorMedioSegmentosAtivos>0 ? form.areaHa * valorMedioSegmentosAtivos : 0;
+    const potencialCalculado = calcularPotencialCliente(form as Cliente, ticketsMedios);
     const base = { ...form, potencialTotal: potencialCalculado, potencialCalculado: valorMedioSegmentosAtivos>0, frequenciaRetorno: form.frequenciaRetorno || `${sugestaoRetornoDias(form as Cliente, computeClienteStatus(form as Cliente, lancamentos, negocios, orcamentos), negocios)} dias`, statusAtual: computeClienteStatus({ ...form, id: edit?.id || "novo" } as Cliente, lancamentos, negocios, orcamentos) };
     if (edit) setClientes(prev => prev.map(c => c.id === edit.id ? { ...base, id: edit.id } : c));
     else setClientes(prev => [...prev, { ...base, id: `c${Date.now()}` }]);

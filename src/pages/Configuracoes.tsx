@@ -117,6 +117,11 @@ export default function Configuracoes() {
     const file = event.target.files?.[0];
     if (!file) return;
     try {
+      const ext = file.name.split(".").pop()?.toLowerCase();
+      if (ext && ["xlsx", "xls", "xml"].includes(ext)) {
+        toast.error("Importação Excel ainda não suportada. Exporte a planilha como CSV e tente novamente.");
+        return;
+      }
       const hasBackup = window.confirm("Backup recomendado antes de homologar dados reais.\nDeseja continuar sem gerar backup agora?");
       if (!hasBackup) { downloadBackupJson(exportPayload); setLastBackupAt(new Date().toISOString()); toast.message("Backup gerado. Selecione o arquivo novamente para importar."); return; }
       if (baseMode === "operacional") toast.warning("Use base Operacional apenas após validar os dados importados.");
@@ -304,9 +309,9 @@ export default function Configuracoes() {
             <div className="grid gap-2 sm:grid-cols-2">
               <Button variant="outline" onClick={() => downloadTemplate("clientes")}>Modelo CSV clientes</Button><Button variant="outline" onClick={() => downloadTemplate("produtos")}>Modelo CSV produtos</Button><Button variant="outline" onClick={() => downloadTemplate("empresas")}>Modelo CSV empresas</Button><Button variant="outline" onClick={() => downloadTemplate("formasPagamento")}>Modelo CSV formas pagamento</Button><Button variant="outline" onClick={() => downloadTemplate("metas")}>Modelo CSV metas</Button><Button variant="outline" onClick={() => downloadTemplate("estoquePrecos")}>Modelo CSV estoque/preços</Button><Button variant="outline" onClick={() => downloadTemplate("ticketsMedios")}>Modelo CSV tickets médios</Button>
               <Button onClick={() => importFileRef.current?.click()}>Importar CSV</Button>
-              <Button variant="secondary" onClick={() => importFileRef.current?.click()}>Importar Excel/XML</Button>
+              <Button variant="secondary" onClick={() => toast.error("Importação Excel ainda não suportada. Exporte a planilha como CSV e tente novamente.")}>Importar Excel/XML</Button>
             </div>
-            <input ref={importFileRef} type="file" accept=".csv,text/csv,.xml,.xls,.xlsx" className="hidden" onChange={handleImportFile} />
+            <input ref={importFileRef} type="file" accept=".csv,text/csv" className="hidden" onChange={handleImportFile} />
           </Card>
             <div className="grid gap-2 sm:grid-cols-2">
               <Button onClick={() => exportWorkbook(exportPayload)}>Exportar Excel</Button>
