@@ -32,6 +32,8 @@ export interface ProximaAcao {
   orcamentoId?: string;
   responsavel?: string;
   descricao: string;
+  objetivo?: string;
+  observacoes?: string;
   tipo: TipoProximaAcao;
   data: string;
   status: StatusProximaAcao;
