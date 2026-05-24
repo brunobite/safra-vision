@@ -8,20 +8,30 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ProximaAcao, StatusProximaAcao, TipoProximaAcao } from "@/types";
 import { Badge } from "@/components/ui/badge";
 
-const TIPOS: TipoProximaAcao[] = ["Visita", "Ligação", "Enviar orçamento", "Cobrar retorno", "Pós-venda", "Renovação", "Outro"];
+const TIPOS: TipoProximaAcao[] = ["Visita", "Ligação", "WhatsApp", "Enviar orçamento", "Cobrar retorno", "Pós-venda", "Renovação", "Outro"];
 const STATUSES: StatusProximaAcao[] = ["Pendente", "Concluída", "Cancelada"];
 
 export default function ProximasAcoes() {
   const { proximasAcoes, setProximasAcoes, clientes, vendedores, clienteById } = useAppStore();
   const [form, setForm] = useState<Partial<ProximaAcao>>({ data: new Date().toISOString().slice(0,10), tipo: "Visita", status: "Pendente" });
+  const [buscaCliente, setBuscaCliente] = useState("");
   const [fStatus, setFStatus] = useState("__all__");
   const hoje = new Date().toISOString().slice(0, 10);
+  const clientesFiltrados = useMemo(() => {
+    const termo = buscaCliente.trim().toLowerCase();
+    if (!termo) return clientes.slice(0, 30);
+    return clientes.filter((c) =>
+      [c.nome, c.localidade || "", c.cidade, c.rota, c.vendedor || ""]
+        .some((campo) => campo.toLowerCase().includes(termo))
+    ).slice(0, 30);
+  }, [buscaCliente, clientes]);
 
   const salvar = () => {
-    if (!form.data || !form.descricao || !form.objetivo || !form.responsavel) return;
+    if (!form.clienteId || !form.data || !form.descricao || !form.objetivo || !form.responsavel) return;
     const now = new Date().toISOString();
     const item: ProximaAcao = { id: `pa${Date.now()}`, descricao: form.descricao, objetivo: form.objetivo, observacoes: form.observacoes, data: form.data, tipo: form.tipo || "Outro", status: form.status || "Pendente", responsavel: form.responsavel, clienteId: form.clienteId, createdAt: now, updatedAt: now, origem: "Avulsa" };
     setProximasAcoes((p) => [item, ...p]);
+    setBuscaCliente("");
     setForm({ data: new Date().toISOString().slice(0,10), tipo: "Visita", status: "Pendente" });
   };
 
@@ -35,7 +45,16 @@ export default function ProximasAcoes() {
 
   return <div className="space-y-4"><Card className="p-4 grid gap-3 md:grid-cols-3">
     <div><Label>Data</Label><Input type="date" value={form.data || ""} onChange={(e)=>setForm({...form,data:e.target.value})}/></div>
-    <div><Label>Cliente</Label><Select value={form.clienteId || "__none__"} onValueChange={(v)=>setForm({...form,clienteId:v==="__none__"?undefined:v})}><SelectTrigger><SelectValue placeholder="Opcional"/></SelectTrigger><SelectContent><SelectItem value="__none__">Avulsa</SelectItem>{clientes.map(c=><SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>)}</SelectContent></Select></div>
+    <div className="space-y-2"><Label>Cliente</Label>
+      <Input value={buscaCliente} onChange={(e)=>setBuscaCliente(e.target.value)} placeholder="Buscar por nome, fazenda, cidade, rota ou vendedor" />
+      <Select value={form.clienteId || "__none__"} onValueChange={(v)=>setForm({...form,clienteId:v==="__none__"?undefined:v})}>
+        <SelectTrigger><SelectValue placeholder="Selecione o cliente"/></SelectTrigger>
+        <SelectContent>
+          <SelectItem value="__none__">Selecione...</SelectItem>
+          {clientesFiltrados.map(c=><SelectItem key={c.id} value={c.id}>{c.nome} • {c.localidade || c.cidade} • {c.rota}</SelectItem>)}
+        </SelectContent>
+      </Select>
+    </div>
     <div><Label>Responsável</Label><Select value={form.responsavel || "__none__"} onValueChange={(v)=>setForm({...form,responsavel:v==="__none__"?undefined:v})}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="__none__">Não definido</SelectItem>{vendedores.map(v=><SelectItem key={v.id} value={v.nome}>{v.nome}</SelectItem>)}</SelectContent></Select></div>
     <div><Label>Tipo</Label><Select value={form.tipo || "Visita"} onValueChange={(v: TipoProximaAcao)=>setForm({...form,tipo:v})}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent>{TIPOS.map(t=><SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent></Select></div>
     <div><Label>Status</Label><Select value={form.status || "Pendente"} onValueChange={(v: StatusProximaAcao)=>setForm({...form,status:v})}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent>{STATUSES.map(s=><SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent></Select></div>
