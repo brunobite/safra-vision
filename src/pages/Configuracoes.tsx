@@ -18,9 +18,10 @@ import { clearLocalAppDeviceData } from "@/lib/clientCleanup";
 import { exportAllEntitiesToCsv } from "@/lib/csvService";
 import { exportWorkbook } from "@/lib/excelService";
 import { downloadBackupJson, parseBackupPayload } from "@/lib/backupService";
-import { applyImport, buildImportPreview, IMPORT_TEMPLATES, ImportEntity, ImportMode, ImportPreview, parseCsv } from "@/lib/importService";
+import { applyImport, buildImportPreview, IMPORT_TEMPLATES, ImportMode, ImportPreview, parseCsv } from "@/lib/importService";
 import { saveAsTextFile } from "@/lib/fileDownload";
 import { openAppDb, promisifyRequest } from "@/lib/db";
+import * as XLSX from "xlsx";
 
 const APLICAR: { v: AplicarSobre; label: string }[] = [
   { v: "realizado_empresa", label: "Realizado empresa" }, { v: "realizado_pessoal", label: "Realizado pessoal" },
@@ -46,7 +47,6 @@ export default function Configuracoes() {
   const [stats, setStats] = useState<LocalDbStats | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const importFileRef = useRef<HTMLInputElement | null>(null);
-  const [importEntity, setImportEntity] = useState<ImportEntity>("clientes");
   const [importMode, setImportMode] = useState<ImportMode>("add");
   const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -118,18 +118,28 @@ export default function Configuracoes() {
     if (!file) return;
     try {
       const ext = file.name.split(".").pop()?.toLowerCase();
-      if (ext && ["xlsx", "xls", "xml"].includes(ext)) {
-        toast.error("Importação Excel ainda não suportada. Exporte a planilha como CSV e tente novamente.");
+      if (ext === "xml" || ext === "xls") {
+        toast.error("Formato não suportado. Use CSV ou XLSX.");
         return;
       }
       const hasBackup = window.confirm("Backup recomendado antes de homologar dados reais.\nDeseja continuar sem gerar backup agora?");
       if (!hasBackup) { downloadBackupJson(exportPayload); setLastBackupAt(new Date().toISOString()); toast.message("Backup gerado. Selecione o arquivo novamente para importar."); return; }
       if (baseMode === "operacional") toast.warning("Use base Operacional apenas após validar os dados importados.");
       toast.message("Você está importando dados em ambiente de teste/homologação.");
-      const text = await file.text();
-      const rows = parseCsv(text);
+      let rows: string[][] = [];
+      if (ext === "xlsx") {
+        const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
+        const firstSheet = wb.SheetNames[0];
+        const ws = firstSheet ? wb.Sheets[firstSheet] : undefined;
+        if (!ws) throw new Error();
+        rows = (XLSX.utils.sheet_to_json(ws, { header: 1, raw: false }) as unknown[][])
+          .map((row) => row.map((cell) => String(cell ?? "")));
+      } else {
+        const text = await file.text();
+        rows = parseCsv(text);
+      }
       if (rows.length < 2) throw new Error();
-      const preview = buildImportPreview(file.name, importEntity, rows);
+      const preview = buildImportPreview(file.name, "clientes", rows);
       setImportPreview(preview);
       setPreviewOpen(true);
     } catch {
@@ -143,28 +153,16 @@ export default function Configuracoes() {
     if (!importPreview) return;
     if (importMode === "replace" && !window.confirm("Esta ação substituirá todos os dados atuais desta entidade pelos dados importados. Essa ação não pode ser desfeita nesta versão. Deseja continuar?")) return;
 
-    const apply = (entity: ImportEntity, current: never[], setter: (v: never[])=>void) => {
-      const result = applyImport(entity, importMode, current as { id: string }[], importPreview);
+    const applyClientes = (current: never[], setter: (v: never[])=>void) => {
+      const result = applyImport("clientes", importMode, current as { id: string }[], importPreview);
       setter(result.data as never[]);
       toast.success(`Importação concluída: ${result.imported} criados, ${result.updated} atualizados, ${result.ignored} ignorados, ${result.duplicates} duplicidades.`);
       return result;
     };
 
     let summary = { imported: 0, updated: 0, ignored: 0, duplicates: 0 };
-    if (importEntity === "clientes") summary = apply("clientes", clientes as never[], setClientes) || summary;
-    if (importEntity === "vendedores") summary = apply("vendedores", vendedores as never[], setVendedores);
-    if (importEntity === "lancamentos") summary = apply("lancamentos", lancamentos as never[], setLancamentos);
-    if (importEntity === "negocios") summary = apply("negocios", negocios as never[], setNegocios);
-    if (importEntity === "produtos") summary = apply("produtos", produtos as never[], setProdutos);
-    if (importEntity === "metasEmpresa") summary = apply("metasEmpresa", metasEmpresa as never[], setMetasEmpresa);
-    if (importEntity === "metasPessoais") summary = apply("metasPessoais", metasPessoais as never[], setMetasPessoais);
-    if (importEntity === "regrasComissao") summary = apply("regrasComissao", regras as never[], setRegras);
-    if (importEntity === "eventos") summary = apply("eventos", eventos as never[], setEventos);
-    if (importEntity === "prioridadesP1") summary = apply("prioridadesP1", prioridadesP1 as never[], setPrioridadesP1);
-    if (importEntity === "empresas") summary = apply("empresas", empresas as never[], setEmpresas as never);
-    if (importEntity === "formasPagamento") summary = apply("formasPagamento", formasPagamento as never[], setFormasPagamento as never);
-    if (importEntity === "ticketsMedios") summary = apply("ticketsMedios", ticketsMedios as never[], setTicketsMedios as never);
-    const log: ImportLog = { id: `ilog-${Date.now()}`, arquivo: importPreview.fileName, dataHora: new Date().toISOString(), entidade: importEntity, registrosLidos: importPreview.totalRows, registrosCriados: summary.imported, registrosAtualizados: summary.updated, registrosIgnorados: summary.ignored, erros: importPreview.errorRows, avisos: importPreview.rows.reduce((a,r)=>a+r.warnings.length,0) };
+    summary = applyClientes(clientes as never[], setClientes) || summary;
+    const log: ImportLog = { id: `ilog-${Date.now()}`, arquivo: importPreview.fileName, dataHora: new Date().toISOString(), entidade: "clientes", registrosLidos: importPreview.totalRows, registrosCriados: summary.imported, registrosAtualizados: summary.updated, registrosIgnorados: summary.ignored, erros: importPreview.errorRows, avisos: importPreview.rows.reduce((a,r)=>a+r.warnings.length,0) };
     setImportLogs((prev)=>[log, ...prev]);
     void saveStore("importLogs", [log, ...importLogs]);
     setPreviewOpen(false);
@@ -172,9 +170,20 @@ export default function Configuracoes() {
     void loadStats();
   };
 
-  const downloadTemplate = (key: keyof typeof IMPORT_TEMPLATES) => {
-    const csv = `${IMPORT_TEMPLATES[key].join(";")}\n`;
-    saveAsTextFile(`template_${key}.csv`, csv, "text/csv;charset=utf-8");
+  const downloadTemplateClientes = () => {
+    const headers = IMPORT_TEMPLATES.clientes;
+    const csv = `${headers.join(";")}\n`;
+    saveAsTextFile("modelo_clientes.csv", csv, "text/csv;charset=utf-8");
+    const ws = XLSX.utils.aoa_to_sheet([headers]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Clientes");
+    const out = XLSX.write(wb, { type: "array", bookType: "xlsx" });
+    const blob = new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "modelo_clientes.xlsx";
+    a.click();
+    URL.revokeObjectURL(a.href);
   };
 
   const openNew = () => { setEdit(null); setForm(emptyRegra); setOpen(true); };
@@ -295,23 +304,19 @@ export default function Configuracoes() {
             <p className="text-xs text-muted-foreground">Use estas opções para salvar seus dados fora do navegador, enviar por e-mail, WhatsApp ou guardar em local seguro.</p>
 
           <Card className="space-y-3 border-dashed p-3">
-            <div className="font-semibold">Importação de dados</div>
-            <p className="text-xs text-muted-foreground">Backup recomendado antes de homologar dados reais.</p><div className="text-xs">Último backup manual: {lastBackupAt ? new Date(lastBackupAt).toLocaleString("pt-BR") : "não registrado"}</div>
-            <div className="grid gap-2 md:grid-cols-3">
-              <Select value={importEntity} onValueChange={(v: ImportEntity) => setImportEntity(v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>
-                <SelectItem value="clientes">clientes</SelectItem><SelectItem value="vendedores">vendedores</SelectItem><SelectItem value="lancamentos">lancamentos</SelectItem><SelectItem value="negocios">negocios</SelectItem><SelectItem value="produtos">produtos</SelectItem><SelectItem value="metasEmpresa">metasEmpresa</SelectItem><SelectItem value="metasPessoais">metasPessoais</SelectItem><SelectItem value="regrasComissao">regrasComissao</SelectItem><SelectItem value="eventos">eventos</SelectItem><SelectItem value="prioridadesP1">prioridadesP1</SelectItem>
-              </SelectContent></Select>
+            <div className="font-semibold">Importação de clientes</div>
+            <p className="text-xs text-muted-foreground">Baixe o modelo, preencha os dados e importe a planilha para cadastrar ou atualizar clientes.</p><div className="text-xs">Último backup manual: {lastBackupAt ? new Date(lastBackupAt).toLocaleString("pt-BR") : "não registrado"}</div>
+            <div className="grid gap-2 md:grid-cols-2">
               <Select value={importMode} onValueChange={(v: ImportMode) => setImportMode(v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>
-                <SelectItem value="add">Adicionar novos registros</SelectItem><SelectItem value="update">Atualizar registros existentes</SelectItem><SelectItem value="replace">Substituir base da entidade selecionada</SelectItem>
+                <SelectItem value="add">Adicionar novos registros</SelectItem><SelectItem value="update">Atualizar registros existentes</SelectItem><SelectItem value="replace">Substituir base de clientes</SelectItem>
               </SelectContent></Select>
               <Button variant="outline" onClick={() => { downloadBackupJson(exportPayload); setLastBackupAt(new Date().toISOString()); }}>Gerar backup antes de importar</Button>
             </div>
             <div className="grid gap-2 sm:grid-cols-2">
-              <Button variant="outline" onClick={() => downloadTemplate("clientes")}>Modelo CSV clientes</Button><Button variant="outline" onClick={() => downloadTemplate("produtos")}>Modelo CSV produtos</Button><Button variant="outline" onClick={() => downloadTemplate("empresas")}>Modelo CSV empresas</Button><Button variant="outline" onClick={() => downloadTemplate("formasPagamento")}>Modelo CSV formas pagamento</Button><Button variant="outline" onClick={() => downloadTemplate("metas")}>Modelo CSV metas</Button><Button variant="outline" onClick={() => downloadTemplate("estoquePrecos")}>Modelo CSV estoque/preços</Button><Button variant="outline" onClick={() => downloadTemplate("ticketsMedios")}>Modelo CSV tickets médios</Button>
-              <Button onClick={() => importFileRef.current?.click()}>Importar CSV</Button>
-              <Button variant="secondary" onClick={() => toast.error("Importação Excel ainda não suportada. Exporte a planilha como CSV e tente novamente.")}>Importar Excel/XML</Button>
+              <Button variant="outline" onClick={downloadTemplateClientes}>Baixar planilha modelo de clientes</Button>
+              <Button onClick={() => importFileRef.current?.click()}>Importar planilha de clientes</Button>
             </div>
-            <input ref={importFileRef} type="file" accept=".csv,text/csv" className="hidden" onChange={handleImportFile} />
+            <input ref={importFileRef} type="file" accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="hidden" onChange={handleImportFile} />
           </Card>
             <div className="grid gap-2 sm:grid-cols-2">
               <Button onClick={() => exportWorkbook(exportPayload)}>Exportar Excel</Button>

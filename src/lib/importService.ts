@@ -25,11 +25,15 @@ const normalizeText = (value: string) => value.normalize("NFD").replace(/\p{Diac
 const parseBoolean = (value: unknown) => ["sim", "true", "1", "s", "yes"].includes(String(value ?? "").trim().toLowerCase());
 export const parseNumber = (value: unknown) => {
   if (value == null || value === "") return undefined;
+
   const text = String(value).trim().replace(/\s/g, "");
   if (!text) return undefined;
+
   const hasComma = text.includes(",");
   const hasDot = text.includes(".");
+
   let raw = text;
+
   if (hasComma && hasDot) {
     raw = text.lastIndexOf(",") > text.lastIndexOf(".")
       ? text.replace(/\./g, "").replace(",", ".")
@@ -38,11 +42,27 @@ export const parseNumber = (value: unknown) => {
     raw = text.replace(",", ".");
   } else if (hasDot) {
     const parts = text.split(".");
-    raw = parts.length > 2 ? text.replace(/\./g, "") : text;
+
+    if (parts.length > 2) {
+      raw = text.replace(/\./g, "");
+    } else {
+      const [integerPart, decimalPart] = parts;
+      const integerDigits = integerPart.replace("-", "");
+
+      const looksLikeThousands =
+        !text.startsWith("-") &&
+        decimalPart.length === 3 &&
+        integerDigits.length >= 1 &&
+        integerDigits.length <= 3;
+
+      raw = looksLikeThousands ? text.replace(".", "") : text;
+    }
   }
+
   const n = Number(raw);
   return Number.isFinite(n) ? n : undefined;
 };
+
 const toIsoDate = (value: unknown) => {
   const txt = String(value ?? "").trim();
   if (!txt) return undefined;
@@ -55,7 +75,7 @@ const toIsoDate = (value: unknown) => {
 };
 
 const aliases: Record<ImportEntity, Record<string, string>> = {
-  clientes: { cliente:"nome", "id_importacao":"idImportacao", id_importacao:"idImportacao", "fonte":"fonte", nome:"nome", "nome do cliente":"nome", "razao social":"nome", "fazenda_propriedade":"localidade", abc:"abc", prioridade:"prioridade", rota:"rota", cidade:"cidade", localidade:"endereco", endereco:"endereco", vendedor:"vendedor", culturas:"culturas", cultura:"cultura", culturasdetalhes:"culturasDetalhes", "area_total_ha":"areaHa", area_ha:"areaHa", "status_atual":"statusAtual", "inativo_manual":"inativoManual", "inativo manual":"inativoManual", "frequencia_retorno":"frequenciaRetorno", "frequencia de retorno":"frequenciaRetorno", "cpf_cnpj":"documento", documento:"documento", "inscricao_estadual":"inscricaoEstadual", "inscrição estadual":"inscricaoEstadual", telefone:"telefone", "e-mail":"email", email:"email", "nome_contato":"nomeContato", "nome do contato":"nomeContato", latitude:"latitude", longitude:"longitude", coordenadas:"coordenadas", link_mapa:"linkMapa", observacoes:"observacao", observação:"observacao", "area soja":"areaSoja", "area arroz":"areaArroz", "area milho":"areaMilho", "area trigo":"areaTrigo", "area pastagem":"areaPastagem", "area aveia":"areaAveia" },
+  clientes: { cliente:"nome", "id_importacao":"idImportacao", "fonte":"fonte", nome:"nome", "nome do cliente":"nome", "razao social":"nome", "fazenda_propriedade":"localidade", abc:"abc", prioridade:"prioridade", rota:"rota", cidade:"cidade", localidade:"endereco", endereco:"endereco", vendedor:"vendedor", culturas:"culturas", cultura:"cultura", culturasdetalhes:"culturasDetalhes", "area_total_ha":"areaHa", area_ha:"areaHa", "status_atual":"statusAtual", "inativo_manual":"inativoManual", "inativo manual":"inativoManual", "frequencia_retorno":"frequenciaRetorno", "frequencia de retorno":"frequenciaRetorno", "cpf_cnpj":"documento", documento:"documento", "inscricao_estadual":"inscricaoEstadual", "inscrição estadual":"inscricaoEstadual", telefone:"telefone", "e-mail":"email", email:"email", "nome_contato":"nomeContato", "nome do contato":"nomeContato", latitude:"latitude", longitude:"longitude", coordenadas:"coordenadas", link_mapa:"linkMapa", observacoes:"observacao", observação:"observacao", "area soja":"areaSoja", "area arroz":"areaArroz", "area milho":"areaMilho", "area trigo":"areaTrigo", "area pastagem":"areaPastagem", "area aveia":"areaAveia" },
   vendedores: { nome:"nome", vendedor:"nome", responsavel:"nome", email:"email", "e-mail":"email", ativo:"ativo" },
   lancamentos: { data:"data", cliente:"cliente", tipo:"tipo", status:"status", descricao:"oQueFoiRealizado" },
   negocios: { cliente:"cliente", oportunidade:"nome", negocio:"nome", produtos:"produtos", categoria:"categoria", "valor potencial":"valorPotencial", "valor fechado":"valorFechado", status:"status", probabilidade:"probabilidade", vendedor:"vendedor" },
