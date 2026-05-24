@@ -71,6 +71,18 @@ export default function Dashboard() {
     visitasMes: lancamentos.filter(l=>l.tipo==="Visita" && l.data.slice(0,7)===hoje.slice(0,7)).length,
   }), [clientes, proximasAcoes, lancamentos, orcamentos, negocios, hoje]);
 
+
+  const executivos = useMemo(() => {
+    const topPotencial = [...clientes].sort((a,b)=>(b.potencialTotal||0)-(a.potencialTotal||0)).slice(0,5);
+    const semAcao = clientes.filter((c) => !proximasAcoes.some((a) => a.clienteId === c.id && a.status === "Pendente"));
+    const rotaCritica = Object.entries(clientes.reduce((m,c)=>{const k=c.rota||"Sem rota"; m[k]=(m[k]||0)+(c.statusAtual!=="Inativo" && !proximasAcoes.some((a)=>a.clienteId===c.id&&a.status==="Pendente")?1:0); return m;}, {} as Record<string,number>)).sort((a,b)=>b[1]-a[1]).slice(0,5);
+    const visitasSemana = lancamentos.filter((l) => l.tipo === "Visita" && l.data >= hoje && l.data <= new Date(Date.now()+6*86400000).toISOString().slice(0,10));
+    const visitasAtrasadas = proximasAcoes.filter((a) => a.tipo === "Visita" && a.status === "Pendente" && a.data < hoje);
+    const semVisitaPlanejada = clientes.filter((c) => !proximasAcoes.some((a)=>a.clienteId===c.id && a.tipo==="Visita" && a.status==="Pendente")).length;
+    const porResponsavel = Object.entries(proximasAcoes.filter((a)=>a.status==="Pendente").reduce((m,a)=>{const k=a.responsavel||"Sem responsável"; m[k]=(m[k]||0)+1; return m;}, {} as Record<string,number>));
+    return { topPotencial, semAcao, rotaCritica, visitasSemana, visitasAtrasadas, semVisitaPlanejada, porResponsavel };
+  }, [clientes, proximasAcoes, lancamentos, hoje]);
+
   const potXFech = useMemo(() => {
     const m: Record<string, { Potencial: number; Fechado: number }> = {};
     negocios.forEach(n => {
@@ -115,6 +127,20 @@ export default function Dashboard() {
         <KpiCard label="Orçamentos abertos" value={fmtNum(operacionais.orcamentosAbertos)} icon={FileText} />
         <KpiCard label="Negócios abertos" value={fmtNum(operacionais.negociosAbertos)} icon={Layers} />
         <KpiCard label="Visitas do mês" value={fmtNum(operacionais.visitasMes)} icon={TrendingUp} />
+        </div>
+      </Card>
+
+
+
+      <Card className="p-4">
+        <h2 className="mb-3 text-sm font-semibold text-foreground">Bloco executivo da carteira</h2>
+        <div className="grid gap-2 text-xs md:grid-cols-2">
+          <div><b>Top clientes por potencial:</b> {executivos.topPotencial.map((c) => `${c.nome} (${fmtBRL(c.potencialTotal || 0)})`).join(", ") || "—"}</div>
+          <div><b>Clientes críticos sem ação:</b> {executivos.semAcao.slice(0,8).map((c) => c.nome).join(", ") || "—"}</div>
+          <div><b>Rotas críticas:</b> {executivos.rotaCritica.map(([r,q]) => `${r} (${q})`).join(", ") || "—"}</div>
+          <div><b>Clientes sem visita planejada:</b> {fmtNum(executivos.semVisitaPlanejada)}</div>
+          <div><b>Visitas da semana:</b> {fmtNum(executivos.visitasSemana.length)} | <b>Visitas atrasadas:</b> {fmtNum(executivos.visitasAtrasadas.length)}</div>
+          <div><b>Clientes por responsável (ações pendentes):</b> {executivos.porResponsavel.map(([r,q]) => `${r} (${q})`).join(", ") || "—"}</div>
         </div>
       </Card>
 

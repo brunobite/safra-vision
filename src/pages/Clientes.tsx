@@ -30,6 +30,7 @@ export default function Clientes() {
   const { clientes, setClientes, lancamentos, negocios, ticketsMedios, orcamentos, proximasAcoes, vendedores } = useAppStore();
   const [busca, setBusca] = useState("");
   const [fAbc, setFAbc] = useState(""); const [fPri, setFPri] = useState(""); const [fRota, setFRota] = useState(""); const [fStatus, setFStatus] = useState(""); const [fCidade, setFCidade] = useState(""); const [fAtrasado, setFAtrasado] = useState("");
+  const [fVendedor, setFVendedor] = useState(""); const [fGeo, setFGeo] = useState(""); const [fProximaAcao, setFProximaAcao] = useState(""); const [fIncompletos, setFIncompletos] = useState("");
   const [open, setOpen] = useState(false);
   const [edit, setEdit] = useState<Cliente | null>(null);
   const [form, setForm] = useState<Omit<Cliente, "id">>(empty);
@@ -51,14 +52,33 @@ export default function Clientes() {
     (!fPri || c.prioridade === fPri) &&
     (!fRota || c.rota === fRota) && (!fStatus || c.statusAtual === fStatus) &&
     (!fCidade || c.cidade === fCidade) &&
-    (!fAtrasado || (fAtrasado === "sim" ? atrasado(c) : !atrasado(c)))
-  ), [clientes, busca, fAbc, fPri, fRota, fStatus, fCidade, fAtrasado, atrasado]);
+    (!fAtrasado || (fAtrasado === "sim" ? atrasado(c) : !atrasado(c))) &&
+    (!fVendedor || (c.vendedor || "") === fVendedor) &&
+    (!fGeo || (fGeo === "com" ? (!!c.latitude && !!c.longitude) : (!c.latitude || !c.longitude))) &&
+    (!fProximaAcao || (fProximaAcao === "com" ? !!proximaAcaoPendente(c.id) : !proximaAcaoPendente(c.id))) &&
+    (!fIncompletos || (fIncompletos === "sim" ? (!c.vendedor || !c.rota || !c.telefone || !c.documento || !c.latitude || !c.longitude || !c.abc || !c.prioridade || !proximaAcaoPendente(c.id)) : !!c.vendedor && !!c.rota && !!c.telefone && !!c.documento && !!c.latitude && !!c.longitude && !!c.abc && !!c.prioridade && !!proximaAcaoPendente(c.id)))
+  ), [clientes, busca, fAbc, fPri, fRota, fStatus, fCidade, fAtrasado, fVendedor, fGeo, fProximaAcao, fIncompletos, atrasado, proximaAcaoPendente]);
 
   const totais = useMemo(() => ({
     potencial: lista.reduce((s, c) => s + c.potencialTotal, 0),
     area: lista.reduce((s, c) => s + c.areaHa, 0),
   }), [lista]);
   const valorMedioSegmentosAtivos = useMemo(() => calcularValorMedioHaSegmentosAtivos(ticketsMedios), [ticketsMedios]);
+  const qualidadeBase = useMemo(() => ({
+    totalClientes: clientes.length,
+    areaTotal: clientes.reduce((s, c) => s + (c.areaHa || 0), 0),
+    semVendedor: clientes.filter((c) => !c.vendedor).length,
+    semRota: clientes.filter((c) => !c.rota).length,
+    semTelefone: clientes.filter((c) => !c.telefone).length,
+    semDocumento: clientes.filter((c) => !c.documento).length,
+    semGeo: clientes.filter((c) => !c.latitude || !c.longitude).length,
+    semPrioridadeAbc: clientes.filter((c) => !c.prioridade || !c.abc).length,
+    semProximaAcao: clientes.filter((c) => !proximaAcaoPendente(c.id)).length,
+    porVendedor: Object.entries(clientes.reduce((m, c) => { const k = c.vendedor || "Sem vendedor"; m[k] = (m[k] || 0) + 1; return m; }, {} as Record<string, number>)),
+    porRota: Object.entries(clientes.reduce((m, c) => { const k = c.rota || "Sem rota"; m[k] = (m[k] || 0) + 1; return m; }, {} as Record<string, number>)),
+    porCidade: Object.entries(clientes.reduce((m, c) => { const k = c.cidade || "Sem cidade"; m[k] = (m[k] || 0) + 1; return m; }, {} as Record<string, number>)),
+  }), [clientes, proximaAcaoPendente]);
+
 
   const openNew = () => { setEdit(null); setForm(empty); setOpen(true); };
   const openEdit = (c: Cliente) => { setEdit(c); const { id, ...rest } = c; void id; setForm(rest); setOpen(true); };
@@ -107,6 +127,18 @@ export default function Clientes() {
             <Select value={fStatus || ALL} onValueChange={v => setFStatus(v === ALL ? "" : v)}><SelectTrigger className="w-36"><SelectValue placeholder="Todos" /></SelectTrigger>
               <SelectContent><SelectItem value={ALL}>Todos</SelectItem>{statuses.map(v => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent></Select>
           </div>
+          <div><Label className="text-xs">Vendedor</Label>
+            <Select value={fVendedor || ALL} onValueChange={v => setFVendedor(v === ALL ? "" : v)}><SelectTrigger className="w-40"><SelectValue placeholder="Todos" /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todos</SelectItem>{vendedores.filter(v=>v.ativo).map(v => <SelectItem key={v.id} value={v.nome}>{v.nome}</SelectItem>)}</SelectContent></Select>
+          </div>
+          <div><Label className="text-xs">Geo</Label>
+            <Select value={fGeo || ALL} onValueChange={v => setFGeo(v === ALL ? "" : v)}><SelectTrigger className="w-32"><SelectValue placeholder="Todos" /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todos</SelectItem><SelectItem value="com">Com geo</SelectItem><SelectItem value="sem">Sem geo</SelectItem></SelectContent></Select>
+          </div>
+          <div><Label className="text-xs">Próxima ação</Label>
+            <Select value={fProximaAcao || ALL} onValueChange={v => setFProximaAcao(v === ALL ? "" : v)}><SelectTrigger className="w-36"><SelectValue placeholder="Todos" /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todos</SelectItem><SelectItem value="com">Com ação</SelectItem><SelectItem value="sem">Sem ação</SelectItem></SelectContent></Select>
+          </div>
+          <div><Label className="text-xs">Incompletos</Label>
+            <Select value={fIncompletos || ALL} onValueChange={v => setFIncompletos(v === ALL ? "" : v)}><SelectTrigger className="w-36"><SelectValue placeholder="Todos" /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todos</SelectItem><SelectItem value="sim">Incompletos</SelectItem><SelectItem value="nao">Completos</SelectItem></SelectContent></Select>
+          </div>
           <Button onClick={openNew}><Plus className="mr-1 h-4 w-4" /> Novo cliente</Button>
         </div>
         <div className="mt-3 flex gap-4 text-sm">
@@ -115,6 +147,18 @@ export default function Clientes() {
           <Badge variant="outline">Potencial: {fmtBRL(totais.potencial)}</Badge>
         </div>
         <p className="mt-1 text-[11px] text-muted-foreground">Cidades disponíveis: {cidades.join(", ")}</p>
+        <div className="mt-3 grid gap-2 text-xs md:grid-cols-3">
+          <Badge variant="secondary">Base: {qualidadeBase.totalClientes} clientes • {fmtNum(qualidadeBase.areaTotal)} ha</Badge>
+          <Badge variant="destructive">Sem vendedor: {qualidadeBase.semVendedor}</Badge><Badge variant="destructive">Sem rota: {qualidadeBase.semRota}</Badge>
+          <Badge variant="destructive">Sem telefone: {qualidadeBase.semTelefone}</Badge><Badge variant="destructive">Sem CPF/CNPJ: {qualidadeBase.semDocumento}</Badge>
+          <Badge variant="destructive">Sem geo: {qualidadeBase.semGeo}</Badge><Badge variant="destructive">Sem prioridade/ABC: {qualidadeBase.semPrioridadeAbc}</Badge>
+          <Badge variant="destructive">Sem próxima ação: {qualidadeBase.semProximaAcao}</Badge>
+        </div>
+        <div className="mt-2 grid gap-3 text-xs text-muted-foreground md:grid-cols-3">
+          <div><b className="text-foreground">Clientes por vendedor:</b> {qualidadeBase.porVendedor.map(([k,v]) => `${k} (${v})`).join(", ")}</div>
+          <div><b className="text-foreground">Clientes por rota:</b> {qualidadeBase.porRota.map(([k,v]) => `${k} (${v})`).join(", ")}</div>
+          <div><b className="text-foreground">Clientes por cidade:</b> {qualidadeBase.porCidade.map(([k,v]) => `${k} (${v})`).join(", ")}</div>
+        </div>
       </Card>
 
       <Card className="overflow-x-auto p-0">
