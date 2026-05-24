@@ -4,6 +4,7 @@ import {
   Negocio, Produto, RegraComissao, Vendedor, MetaVendedor, MetaCategoria, TicketMedioRegra, Orcamento, Empresa, ProximaAcao, FormaPagamento, AppConfig,
 } from "@/types";
 import { bootstrapLocalDatabase, saveStore } from "@/lib/localRepository";
+import { calcularPotencialCliente, calcularValorMedioHaSegmentosAtivos } from "@/utils/businessRules";
 
 interface Filters {
   dataInicial: string; dataFinal: string; mes: string;
@@ -145,6 +146,20 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => { void persistStore("proximasAcoes", proximasAcoes as never); }, [proximasAcoes, persistStore]);
   useEffect(() => { void persistStore("formasPagamento", formasPagamento as never); }, [formasPagamento, persistStore]);
   useEffect(() => { void persistStore("appConfig", [appConfig] as never); }, [appConfig, persistStore]);
+  useEffect(() => {
+    const valorMedio = calcularValorMedioHaSegmentosAtivos(ticketsMedios);
+    setClientes((prev) => {
+      let changed = false;
+      const next = prev.map((c) => {
+        const potencialTotal = calcularPotencialCliente(c, ticketsMedios);
+        const potencialCalculado = valorMedio > 0;
+        if (c.potencialTotal === potencialTotal && c.potencialCalculado === potencialCalculado) return c;
+        changed = true;
+        return { ...c, potencialTotal, potencialCalculado };
+      });
+      return changed ? next : prev;
+    });
+  }, [ticketsMedios, setClientes]);
 
   const cMap = useMemo(() => new Map(clientes.map(c => [c.id, c])), [clientes]);
   const pMap = useMemo(() => new Map(produtos.map(p => [p.id, p])), [produtos]);

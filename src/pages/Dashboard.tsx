@@ -3,6 +3,7 @@ import { GlobalFilters } from "@/components/GlobalFilters";
 import { KpiCard } from "@/components/dashboard/KpiCard";
 import { useAppStore } from "@/store/AppStore";
 import { calcDashboard, fmtBRL, fmtNum, fmtPct } from "@/utils/calculations";
+import { calcularMetaCarteira, calcularPotencialCarteira, calcularRealizadoCarteira } from "@/utils/businessRules";
 import {
   TrendingUp, AlertTriangle, FileText, CalendarDays, Layers, Clock, Percent, Award,
 } from "lucide-react";
@@ -13,7 +14,7 @@ import {
 } from "recharts";
 
 export default function Dashboard() {
-  const { clientes, metasEmpresa, metasPessoais, filtered, lancamentos, negocios, regras, orcamentos, proximasAcoes, appConfig, clienteById } = useAppStore();
+  const { clientes, metasEmpresa, metasPessoais, filtered, lancamentos, negocios, regras, orcamentos, proximasAcoes, appConfig, clienteById, ticketsMedios } = useAppStore();
   const [acaoFiltro, setAcaoFiltro] = useState<"hoje"|"semana"|"mes"|"atrasadas"|"todas">("hoje");
 
   const metaPessoalTotal = metasPessoais.reduce((s, m) => s + m.metaFaturamento, 0);
@@ -55,12 +56,12 @@ export default function Dashboard() {
 
 
   const hoje = new Date().toISOString().slice(0,10);
-  const potencialCarteira = clientes.reduce((s,c)=>s+(c.potencialTotal||0),0);
+  const potencialCarteira = calcularPotencialCarteira(clientes, ticketsMedios);
   const taxa = Math.min(100, Math.max(0, appConfig.percentualAcertoEsperado || 0));
-  const metaCarteira = potencialCarteira * taxa / 100;
-  const realizado = negocios.filter(n=>n.status==="Fechado ganho").reduce((s,n)=>s+(n.valorFechado||0),0) + orcamentos.filter(o=>o.status==="Aprovado").reduce((s,o)=>s+o.total,0);
+  const metaCarteira = calcularMetaCarteira(clientes, ticketsMedios, taxa);
+  const realizado = calcularRealizadoCarteira(negocios, orcamentos);
   const pct = metaCarteira>0 ? realizado/metaCarteira : 0;
-  const gap = metaCarteira-realizado;
+  const gapParaMeta = metaCarteira-realizado;
   const operacionais = useMemo(() => ({
     atrasados: clientes.filter(c => c.statusAtual !== "Inativo" && ((c.dataProximaAcao && c.dataProximaAcao < hoje) || (c.retorno && c.retorno < hoje))).length,
     proximasSemana: proximasAcoes.filter(a=>a.status==="Pendente" && a.data >= hoje).length,
@@ -93,7 +94,7 @@ export default function Dashboard() {
         <KpiCard label="Meta calculada da carteira" value={fmtBRL(metaCarteira)} icon={TrendingUp} />
         <KpiCard label="Realizado" value={fmtBRL(realizado)} icon={TrendingUp} tone="success" />
         <KpiCard label="% de atingimento" value={fmtPct(pct)} icon={Percent} tone={pct >= 1 ? "success" : pct >= 0.8 ? "warning" : "destructive"} />
-        <KpiCard label="Gap da meta" value={fmtBRL(gap)} icon={AlertTriangle} tone={gap <= 0 ? "success" : "destructive"} />
+        <KpiCard label="Gap para meta" value={fmtBRL(gapParaMeta)} icon={AlertTriangle} tone={gapParaMeta <= 0 ? "success" : "destructive"} />
         </div>
         {potencialCarteira === 0 && <p className="mt-3 text-xs text-muted-foreground">Potencial da carteira ainda não configurado.</p>}
       </Card>
