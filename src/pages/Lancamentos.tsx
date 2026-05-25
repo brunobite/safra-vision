@@ -11,7 +11,7 @@ import { useAppStore } from "@/store/AppStore";
 import { CategoriaProduto, CATEGORIAS_PRODUTO, FrenteComercial, Lancamento, OrcamentoItem, OrigemNegocio, StatusFunil, StatusLancamento, TipoLancamento, TipoProximaAcao, UnidadeDose } from "@/types";
 import { GlobalFilters } from "@/components/GlobalFilters";
 import { toast } from "sonner";
-import { ArrowRight, Eraser, Pencil, Plus, Save, Search, Trash2 } from "lucide-react";
+import { ArrowRight, Eraser, Eye, Pencil, Plus, Save, Search, Trash2 } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { fmtBRL } from "@/utils/calculations";
@@ -34,12 +34,28 @@ const qConvert = (dose: number, unidadeDose: UnidadeDose, unidadeProduto: string
   return { comercial: doseTotal, base: `${doseTotal.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} ${unidadeProduto}` };
 };
 
+const toFormState = (l: Lancamento): FormState => ({
+  ...empty(),
+  ...l,
+  tipo: l.tipo || "Visita",
+  frente: l.frente || "Venda Direta",
+  status: l.status || "Aberto",
+  oQueFoiRealizado: l.oQueFoiRealizado || "",
+  vendedor: l.vendedor || "Bruno",
+  geraOportunidade: !!l.negocioId || !!l.geraOportunidade,
+  proximaAcao: l.proximaAcao || "",
+  dataProximaAcao: l.dataProximaAcao || "",
+  tipoProximaAcao: l.tipoProximaAcao || "Visita",
+});
+
 export default function Lancamentos() {
-  const { lancamentos, setLancamentos, clientes, clienteById, filtered, vendedores, setNegocios, setClientes, setProximasAcoes, produtos, setOrcamentos, empresas } = useAppStore();
+  const { lancamentos, setLancamentos, clientes, clienteById, filtered, vendedores, setNegocios, setClientes, setProximasAcoes, produtos, setOrcamentos, empresas, negocios } = useAppStore();
   const [form, setForm] = useState<FormState>(empty);
   const [editId, setEditId] = useState<string | null>(null);
   const [busca, setBusca] = useState("");
   const [open, setOpen] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [detailsLancamento, setDetailsLancamento] = useState<Lancamento | null>(null);
   const [step, setStep] = useState<1 | 2>(1);
   const nav = useNavigate();
   const [params, setParams] = useSearchParams();
@@ -55,6 +71,20 @@ export default function Lancamentos() {
 
   const reset = () => { setForm(empty()); setEditId(null); setStep(1); setOpen(false); };
   const addProduto = () => setForm(f => ({ ...f, oppProdutos: [...f.oppProdutos, { produtoId: "", precoUnitario: 0, dosePorHa: 0, unidadeDose: "L/ha", areaHa: f.oppAreaAplicacaoHa || 0 }] }));
+
+  const abrirEdicao = (id: string) => {
+    const lanc = lancamentos.find(l => l.id === id);
+    if (!lanc) return toast.error("Lançamento não encontrado.");
+    setForm(toFormState(lanc));
+    setEditId(lanc.id);
+    setStep(1);
+    setOpen(true);
+  };
+
+  const abrirDetalhes = (lanc: Lancamento) => {
+    setDetailsLancamento(lanc);
+    setDetailsOpen(true);
+  };
 
   const salvar = (gerarOrcamento = false) => {
     if (!form.clienteId || !form.data || !form.oQueFoiRealizado) return toast.error("Preencha os campos obrigatórios da visita.");
@@ -94,12 +124,29 @@ export default function Lancamentos() {
     reset();
   };
 
-  const lista = useMemo(() => filtered.lancamentos.filter(l => !busca || clienteById(l.clienteId)?.nome.toLowerCase().includes(busca.toLowerCase())).sort((a, b) => b.data.localeCompare(a.data)), [filtered.lancamentos, busca, clienteById]);
+  const lista = useMemo(() => {
+    const termo = busca.trim().toLowerCase();
+    return filtered.lancamentos
+      .filter(l => {
+        if (!termo) return true;
+        const alvo = [
+          clienteById(l.clienteId)?.nome,
+          l.oQueFoiRealizado,
+          l.proximaAcao,
+          l.status,
+          l.frente,
+          l.vendedor,
+          l.tipo,
+        ].map(v => (v || "").toLowerCase());
+        return alvo.some(v => v.includes(termo));
+      })
+      .sort((a, b) => b.data.localeCompare(a.data));
+  }, [filtered.lancamentos, busca, clienteById]);
 
   return <div className="space-y-6"><GlobalFilters />
     <Card className="p-5 space-y-4"><div className="flex items-center justify-between"><h2 className="text-base font-semibold">Fluxo guiado: Visita → Oportunidade → Orçamento</h2><Button onClick={() => { setOpen(true); setStep(1); }}><Plus className="mr-1 h-4 w-4" />Novo lançamento</Button></div></Card>
     <Dialog open={open} onOpenChange={setOpen}><DialogContent className="max-h-[90vh] overflow-y-auto max-w-4xl"><DialogHeader><DialogTitle>{step === 1 ? "Etapa 1 — Dados da visita" : "Etapa 2 — Configurar oportunidade"}</DialogTitle></DialogHeader>
-      {step === 1 && <div className="space-y-3"><div className="grid gap-3 md:grid-cols-3"><div><Label>Data *</Label><Input type="date" value={form.data} onChange={e => setForm({ ...form, data: e.target.value })} /></div><div><Label>Cliente *</Label><Select value={form.clienteId} onValueChange={v => setForm({ ...form, clienteId: v })}><SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger><SelectContent>{clientes.map(c => <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>)}</SelectContent></Select></div><div><Label>Vendedor</Label><Select value={form.vendedor} onValueChange={v => setForm({ ...form, vendedor: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{vendedores.map(v => <SelectItem key={v.id} value={v.nome}>{v.nome}</SelectItem>)}</SelectContent></Select></div></div>
+{step === 1 && <div className="space-y-3"><div className="grid gap-3 md:grid-cols-3"><div><Label>Data *</Label><Input type="date" value={form.data} onChange={e => setForm({ ...form, data: e.target.value })} /></div><div><Label>Cliente *</Label><Select value={form.clienteId} onValueChange={v => setForm({ ...form, clienteId: v })}><SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger><SelectContent>{clientes.map(c => <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>)}</SelectContent></Select></div><div><Label>Vendedor</Label><Select value={form.vendedor} onValueChange={v => setForm({ ...form, vendedor: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{vendedores.map(v => <SelectItem key={v.id} value={v.nome}>{v.nome}</SelectItem>)}</SelectContent></Select></div></div>
       <div className="grid gap-3 md:grid-cols-2"><div><Label>Frente comercial</Label><Select value={form.frente} onValueChange={(v: FrenteComercial) => setForm({ ...form, frente: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{FRENTES.map(f => <SelectItem key={f} value={f}>{f}</SelectItem>)}</SelectContent></Select></div><div><Label>Status</Label><Select value={form.status} onValueChange={(v: StatusLancamento) => setForm({ ...form, status: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{STATUSES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent></Select></div></div>
       <div><Label>O que foi realizado? *</Label><Textarea rows={2} value={form.oQueFoiRealizado} onChange={e => setForm({ ...form, oQueFoiRealizado: e.target.value })} /></div>
       <div className="grid gap-3 md:grid-cols-3"><div><Label>Próxima ação</Label><Input value={form.proximaAcao || ""} onChange={e => setForm({ ...form, proximaAcao: e.target.value })} /></div><div><Label>Tipo</Label><Select value={form.tipoProximaAcao || "Visita"} onValueChange={(v: TipoProximaAcao) => setForm({ ...form, tipoProximaAcao: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{PROX_TIPOS.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent></Select></div><div><Label>Data da próxima ação</Label><Input type="date" value={form.dataProximaAcao || ""} onChange={e => setForm({ ...form, dataProximaAcao: e.target.value })} /></div></div>
@@ -116,6 +163,24 @@ export default function Lancamentos() {
       <div className="rounded-md border p-3 text-sm">Resumo da oportunidade: Total {fmtBRL(form.oppProdutos.reduce((s, it) => { const p = produtos.find(x => x.id === it.produtoId); const calc = qConvert(it.dosePorHa, it.unidadeDose, p?.unidade || "LT", it.areaHa || form.oppAreaAplicacaoHa || 0); return s + calc.comercial * it.precoUnitario; }, 0))} · Produtos {form.oppProdutos.length} · Cliente {clienteById(form.clienteId)?.nome || "-"} · Área total {form.oppAreaAplicacaoHa} ha · Próxima ação {form.proximaAcao || "-"}</div>
       <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => setStep(1)}>Voltar para visita</Button><Button onClick={() => { setForm({ ...form, geraOportunidade: true }); salvar(false); }}><Save className="mr-1 h-4 w-4" />Salvar visita e oportunidade</Button><Button variant="secondary" onClick={() => { setForm({ ...form, geraOportunidade: true }); salvar(true); }}>Salvar e gerar orçamento</Button><Button variant="outline" onClick={reset}><Eraser className="mr-1 h-4 w-4" />Limpar</Button></div></div>}
     </DialogContent></Dialog>
-    <Card className="p-0"><div className="flex items-center gap-2 border-b p-4"><Search className="h-4 w-4" /><Input className="max-w-md" placeholder="Buscar cliente..." value={busca} onChange={e => setBusca(e.target.value)} /><Badge variant="outline" className="ml-auto">{lista.length}</Badge></div><Table><TableHeader><TableRow><TableHead>Data</TableHead><TableHead>Cliente</TableHead><TableHead>Oportunidade</TableHead><TableHead>Ações</TableHead></TableRow></TableHeader><TableBody>{lista.map(l => <TableRow key={l.id}><TableCell>{l.data}</TableCell><TableCell>{clienteById(l.clienteId)?.nome}</TableCell><TableCell>{l.negocioId ? "Sim" : "Não"}</TableCell><TableCell><div className="flex gap-1"><Button size="icon" variant="ghost" onClick={() => nav('/funil')}><ArrowRight className="h-3.5 w-3.5" /></Button><Button size="icon" variant="ghost"><Pencil className="h-3.5 w-3.5" /></Button></div></TableCell></TableRow>)}</TableBody></Table></Card>
+
+    <Dialog open={detailsOpen} onOpenChange={setDetailsOpen}><DialogContent className="max-h-[90vh] overflow-y-auto max-w-3xl"><DialogHeader><DialogTitle>Detalhes do lançamento</DialogTitle></DialogHeader>
+      {detailsLancamento && <div className="space-y-3 text-sm">
+        <div className="grid gap-2 md:grid-cols-2">
+          <p><b>Data:</b> {detailsLancamento.data}</p><p><b>Cliente:</b> {clienteById(detailsLancamento.clienteId)?.nome || "-"}</p>
+          <p><b>Tipo:</b> {detailsLancamento.tipo || "-"}</p><p><b>Frente:</b> {detailsLancamento.frente || "-"}</p>
+          <p><b>Status:</b> {detailsLancamento.status || "-"}</p><p><b>Vendedor:</b> {detailsLancamento.vendedor || "-"}</p>
+          <p><b>Próxima ação:</b> {detailsLancamento.proximaAcao || "-"}</p><p><b>Data da próxima ação:</b> {detailsLancamento.dataProximaAcao || "-"}</p>
+          <p><b>Tipo da próxima ação:</b> {detailsLancamento.tipoProximaAcao || "-"}</p><p><b>Oportunidade:</b> {detailsLancamento.negocioId ? "Sim" : "Não"}</p>
+          <p className="md:col-span-2"><b>Negócio vinculado:</b> {detailsLancamento.negocioId ? `${negocios.find(n => n.id === detailsLancamento.negocioId)?.nome || "Negócio"} (${detailsLancamento.negocioId})` : "Sem vínculo"}</p>
+        </div>
+        <div><b>O que foi realizado?</b><p className="whitespace-pre-wrap rounded-md border p-2 mt-1">{detailsLancamento.oQueFoiRealizado || "-"}</p></div>
+      </div>}
+    </DialogContent></Dialog>
+
+    <Card className="p-0"><div className="flex items-center gap-2 border-b p-4"><Search className="h-4 w-4" /><Input className="max-w-md" placeholder="Buscar cliente, ação, status, frente..." value={busca} onChange={e => setBusca(e.target.value)} /><Badge variant="outline" className="ml-auto">{lista.length}</Badge></div>
+      <div className="hidden md:block"><Table><TableHeader><TableRow><TableHead>Data</TableHead><TableHead>Cliente</TableHead><TableHead>Tipo</TableHead><TableHead>Frente</TableHead><TableHead>Status</TableHead><TableHead>O que foi realizado?</TableHead><TableHead>Próxima ação</TableHead><TableHead>Data próxima ação</TableHead><TableHead>Oportunidade</TableHead><TableHead>Ações</TableHead></TableRow></TableHeader><TableBody>{lista.map(l => <TableRow key={l.id}><TableCell>{l.data}</TableCell><TableCell>{clienteById(l.clienteId)?.nome}</TableCell><TableCell>{l.tipo || "-"}</TableCell><TableCell>{l.frente || "-"}</TableCell><TableCell>{l.status || "-"}</TableCell><TableCell className="max-w-[280px]"><p className="line-clamp-3 whitespace-pre-wrap">{l.oQueFoiRealizado || "-"}</p></TableCell><TableCell>{l.proximaAcao || "-"}</TableCell><TableCell>{l.dataProximaAcao || "-"}</TableCell><TableCell>{l.negocioId ? "Sim" : "Não"}</TableCell><TableCell><div className="flex gap-1"><Button size="icon" variant="ghost" onClick={() => abrirDetalhes(l)}><Eye className="h-3.5 w-3.5" /></Button><Button size="icon" variant="ghost" onClick={() => nav('/funil')}><ArrowRight className="h-3.5 w-3.5" /></Button><Button size="icon" variant="ghost" onClick={() => abrirEdicao(l.id)}><Pencil className="h-3.5 w-3.5" /></Button></div></TableCell></TableRow>)}</TableBody></Table></div>
+      <div className="grid gap-3 p-4 md:hidden">{lista.map(l => <Card key={l.id} className="p-3 space-y-2"><div className="flex items-start justify-between gap-2"><div><p className="text-sm font-semibold">{clienteById(l.clienteId)?.nome || "-"}</p><p className="text-xs text-muted-foreground">{l.data} · {l.tipo || "-"}</p></div><Badge variant="outline">{l.status || "-"}</Badge></div><p className="text-sm"><b>Frente:</b> {l.frente || "-"}</p><p className="text-sm whitespace-pre-wrap line-clamp-4"><b>Realizado:</b> {l.oQueFoiRealizado || "-"}</p><p className="text-sm"><b>Próxima:</b> {l.proximaAcao || "-"} {l.dataProximaAcao ? `(${l.dataProximaAcao})` : ""}</p><p className="text-sm"><b>Oportunidade:</b> {l.negocioId ? "Sim" : "Não"}</p><div className="flex gap-1"><Button size="sm" variant="outline" onClick={() => abrirDetalhes(l)}>Ver detalhes</Button><Button size="icon" variant="ghost" onClick={() => abrirEdicao(l.id)}><Pencil className="h-3.5 w-3.5" /></Button><Button size="icon" variant="ghost" onClick={() => nav('/funil')}><ArrowRight className="h-3.5 w-3.5" /></Button></div></Card>)}</div>
+    </Card>
   </div>;
 }
