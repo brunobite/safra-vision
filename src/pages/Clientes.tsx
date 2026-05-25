@@ -146,7 +146,7 @@ export default function Clientes() {
               <span className="col-span-2"><b>Geo:</b> {c.latitude && c.longitude ? <span className="inline-flex items-center gap-1"><MapPin className="h-3 w-3" />Com geolocalização</span> : "Sem geolocalização"}</span>
             </div>
             <div className="mt-3 flex justify-end gap-1">
-              <Button size="icon" variant="ghost" onClick={() => setView(c)}><Eye className="h-3.5 w-3.5" /></Button>
+              <Button size="icon" variant="ghost" onClick={() => nav(`/clientes/${c.id}`)}><Eye className="h-3.5 w-3.5" /></Button>
               <Button size="icon" variant="ghost" onClick={() => openEdit(c)}><Pencil className="h-3.5 w-3.5" /></Button>
             </div>
           </Card>
@@ -164,7 +164,7 @@ export default function Clientes() {
           <TableBody>
             {lista.map(c => (
               <TableRow key={c.id}>
-                <TableCell className="font-medium">{c.nome}</TableCell>
+                <TableCell className="font-medium"><button className="text-left text-primary hover:underline" onClick={() => nav(`/clientes/${c.id}`)}>{c.nome}</button></TableCell>
                 <TableCell><Badge variant="outline">{c.abc}</Badge></TableCell>
                                 <TableCell>{c.rota}</TableCell><TableCell>{c.cidade}</TableCell>
                 <TableCell className="text-right">{fmtNum(c.areaHa)}</TableCell>
@@ -172,7 +172,7 @@ export default function Clientes() {
                 <TableCell>{c.statusAtual} {atrasado(c) && <Badge className="ml-1" variant="destructive">Atrasado</Badge>}</TableCell><TableCell>{formatDateBR(ultimaVisita(c.id)) || "Sem visita registrada"}</TableCell><TableCell>{proximaAcaoPendente(c.id)?.descricao || "—"}</TableCell><TableCell>{formatDateBR(proximaAcaoPendente(c.id)?.data || c.retorno)}</TableCell>
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-1">
-                    <Button size="icon" variant="ghost" onClick={() => setView(c)}><Eye className="h-3.5 w-3.5" /></Button>
+                    <Button size="icon" variant="ghost" onClick={() => nav(`/clientes/${c.id}`)}><Eye className="h-3.5 w-3.5" /></Button>
                     <Button size="icon" variant="ghost" onClick={() => openEdit(c)}><Pencil className="h-3.5 w-3.5" /></Button>
                     <AlertDialog>
                       <AlertDialogTrigger asChild><Button size="icon" variant="ghost"><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button></AlertDialogTrigger>
