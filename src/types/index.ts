@@ -34,6 +34,12 @@ export interface ProximaAcao {
   descricao: string;
   objetivo?: string;
   observacoes?: string;
+  segmento?: string;
+  responsavel?: string;
+  proximaAcaoId?: string;
+  dataPrevistaFechamento?: string;
+  dataDecisao?: string;
+  motivoPerda?: string;
   tipo: TipoProximaAcao;
   data: string;
   status: StatusProximaAcao;
@@ -137,6 +143,12 @@ export interface Negocio {
   dataProximaAcao?: string;
   motivoPerda?: string;
   observacoes?: string;
+  segmento?: string;
+  responsavel?: string;
+  proximaAcaoId?: string;
+  dataPrevistaFechamento?: string;
+  dataDecisao?: string;
+  motivoPerda?: string;
   lancamentoId?: string;
 }
 
@@ -213,6 +225,12 @@ export interface Produto {
   ultimaAtualizacao?: string;
   ativo: boolean;
   observacoes?: string;
+  segmento?: string;
+  responsavel?: string;
+  proximaAcaoId?: string;
+  dataPrevistaFechamento?: string;
+  dataDecisao?: string;
+  motivoPerda?: string;
 }
 
 export type AplicarSobre =
@@ -260,7 +278,7 @@ export interface ImportLog {
 
 export interface NegocioProdutoItem { produtoId: string; quantidade: number; precoUnitario: number; }
 
-export type OrcamentoStatus = "Rascunho" | "Enviado" | "Aprovado" | "Reprovado" | "Cancelado";
+export type OrcamentoStatus = "Rascunho" | "Aberto" | "Enviado" | "Em negociação" | "Aprovado" | "Recusado" | "Vencido" | "Reprovado" | "Cancelado";
 export type UnidadeDose = "L/ha" | "mL/ha" | "kg/ha" | "g/ha" | "ton/ha" | "un/ha";
 
 export interface OrcamentoItem {
@@ -277,6 +295,12 @@ export interface OrcamentoItem {
   valorTotalItem: number;
   custoPorHaItem: number;
   observacoes?: string;
+  segmento?: string;
+  responsavel?: string;
+  proximaAcaoId?: string;
+  dataPrevistaFechamento?: string;
+  dataDecisao?: string;
+  motivoPerda?: string;
 }
 
 export interface Orcamento {
@@ -298,6 +322,12 @@ export interface Orcamento {
   formaPagamento?: string;
   prazoPagamento?: string;
   observacoes?: string;
+  segmento?: string;
+  responsavel?: string;
+  proximaAcaoId?: string;
+  dataPrevistaFechamento?: string;
+  dataDecisao?: string;
+  motivoPerda?: string;
   createdAt: string;
   updatedAt: string;
 }

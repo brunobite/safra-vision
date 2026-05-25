@@ -47,7 +47,10 @@ export default function ClienteFicha360() {
   const diasSemContato = ultimaVisita ? Math.floor((Date.now() - new Date(ultimaVisita).getTime()) / 86400000) : "—";
   const acoesAbertas = acoesCliente.filter((a) => ["Pendente", "Em andamento", "Reagendada"].includes(a.status)).length;
   const acoesVencidas = acoesCliente.filter((a) => a.status === "Pendente" && a.data < new Date().toISOString().slice(0, 10)).length;
-  const orcAbertos = orcamentos.filter((o) => o.clienteId === id && ["Rascunho", "Enviado"].includes(o.status)).length;
+  const orcAbertos = orcamentos.filter((o) => o.clienteId === id && ["Aberto", "Rascunho", "Em negociação"].includes(o.status)).length;
+  const orcEnviados = orcamentos.filter((o) => o.clienteId === id && o.status === "Enviado").length;
+  const orcAprovados = orcamentos.filter((o) => o.clienteId === id && o.status === "Aprovado").length;
+  const orcPerdidos = orcamentos.filter((o) => o.clienteId === id && ["Recusado", "Vencido", "Reprovado", "Cancelado"].includes(o.status)).length;
   const negociosGanhos = negocios.filter((n) => n.clienteId === id && n.status === "Fechado ganho").length;
 
   return <div className="space-y-4">
@@ -67,7 +70,7 @@ export default function ClienteFicha360() {
       <h2 className="mb-3 text-sm font-semibold">Resumo comercial</h2>
       <div className="grid grid-cols-2 gap-2 text-sm md:grid-cols-5">
         <div>Potencial: <b>{fmtBRL(cliente.potencialTotal || 0)}</b></div><div>Realizado: <b>{fmtBRL(realizadoCliente)}</b></div><div>Gap: <b>{fmtBRL((cliente.potencialTotal || 0) - realizadoCliente)}</b></div><div>Última visita: <b>{formatDateBR(ultimaVisita) || "—"}</b></div><div>Próxima ação: <b>{proximaPendente ? formatDateBR(proximaPendente.data) : "—"}</b></div>
-        <div>Dias sem contato: <b>{diasSemContato}</b></div><div>Total visitas: <b>{visitas.length}</b></div><div>Ações abertas: <b>{acoesAbertas}</b></div><div>Ações vencidas: <b>{acoesVencidas}</b></div><div>Orçamentos abertos: <b>{orcAbertos}</b></div><div>Negócios ganhos: <b>{negociosGanhos}</b></div>
+        <div>Dias sem contato: <b>{diasSemContato}</b></div><div>Total visitas: <b>{visitas.length}</b></div><div>Ações abertas: <b>{acoesAbertas}</b></div><div>Ações vencidas: <b>{acoesVencidas}</b></div><div>Orç. abertos: <b>{orcAbertos}</b></div><div>Orç. enviados: <b>{orcEnviados}</b></div><div>Orç. aprovados: <b>{orcAprovados}</b></div><div>Orç. perdidos: <b>{orcPerdidos}</b></div><div>Negócios ganhos: <b>{negociosGanhos}</b></div>
       </div>
     </Card>
 
