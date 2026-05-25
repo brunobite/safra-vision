@@ -115,7 +115,6 @@ export default function Clientes() {
           <Button variant="outline" onClick={() => setFiltrosOpen(true)}><Filter className="mr-2 h-4 w-4" />Filtros</Button>
           <Button onClick={openNew}><Plus className="mr-1 h-4 w-4" /> Novo cliente</Button>
         </div>
-        </div>
         <div className="mt-3 flex gap-4 text-sm">
           <Badge variant="outline">Clientes: {lista.length}</Badge>
           <Badge variant="outline">Área total: {fmtNum(totais.area)} ha</Badge>
