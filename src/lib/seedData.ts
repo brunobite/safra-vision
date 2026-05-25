@@ -13,6 +13,7 @@ export const seedData = {
   vendedores: enableDemoData ? initialVendedores : [],
   lancamentos: enableDemoData ? initialLancamentos : [],
   negocios: enableDemoData ? initialNegocios : [],
+  oportunidades: [],
   produtos: enableDemoProducts ? initialProdutos : [],
   metasEmpresa: enableDemoData ? initialMetasEmpresa : [],
   metasPessoais: enableDemoData ? initialMetasPessoais : [],

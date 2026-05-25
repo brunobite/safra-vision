@@ -1,11 +1,12 @@
 export const DB_NAME = "safra-2627-operacional";
-export const DB_VERSION = 7;
+export const DB_VERSION = 8;
 
 export const STORE_NAMES = [
   "clientes",
   "vendedores",
   "lancamentos",
   "negocios",
+  "oportunidades",
   "produtos",
   "metasEmpresa",
   "metasPessoais",
