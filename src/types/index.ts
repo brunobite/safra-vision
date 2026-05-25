@@ -15,20 +15,26 @@ export const STATUS_FUNIL: StatusFunil[] = [
   "Aguardando cliente", "Aguardando parceiro", "Fechado ganho", "Fechado perdido",
 ];
 
-export type OrigemNegocio = "Visita" | "Ligação" | "WhatsApp" | "Evento" | "Indicação" | "Outro";
+export type OrigemNegocio = "Visita" | "Ligação" | "WhatsApp" | "Evento" | "Indicação" | "Manual" | "Outro";
+
+export type OrigemOportunidade = "Visita" | "WhatsApp" | "Ligação" | "Indicação" | "Manual" | "Outro";
+export type EtapaOportunidade = "Identificada" | "Qualificação" | "Necessidade definida" | "Orçamento em elaboração" | "Orçamento enviado" | "Negociação" | "Ganha" | "Perdida" | "Cancelada";
+export type MotivoPerdaOportunidade = "Preço" | "Prazo" | "Concorrente" | "Condição de pagamento" | "Cliente adiou decisão" | "Sem interesse" | "Crédito" | "Produto indisponível" | "Outro";
 
 export type CategoriaProduto = string;
 export const CATEGORIAS_PRODUTO_PADRAO = ["Adjuvantes", "Nutrição", "Fertilizantes", "Sementes", "Defensivos", "Biológicos", "Outros"] as const;
 export const CATEGORIAS_PRODUTO: CategoriaProduto[] = [...CATEGORIAS_PRODUTO_PADRAO];
 
 
-export type TipoProximaAcao = "Visita" | "Ligação" | "WhatsApp" | "Enviar orçamento" | "Cobrar retorno" | "Pós-venda" | "Renovação" | "Outro";
+export type TipoProximaAcao = "Visita" | "Ligação" | "WhatsApp" | "Reunião" | "Follow-up" | "Orçamento" | "Enviar orçamento" | "Cobrar retorno" | "Pós-venda" | "Renovação" | "Outro";
 export type StatusProximaAcao = "Pendente" | "Em andamento" | "Realizada" | "Reagendada" | "Cancelada" | "Concluída";
 
 export interface ProximaAcao {
   id: string;
   clienteId?: string;
   negocioId?: string;
+  oportunidadeId?: string;
+  oportunidadeId?: string;
   orcamentoId?: string;
   responsavel?: string;
   descricao: string;
@@ -120,6 +126,7 @@ export interface Lancamento {
   vendedor?: string;
   geraOportunidade?: boolean;
   negocioId?: string;
+  oportunidadeId?: string;
   proximaAcao?: string;
   dataProximaAcao?: string;
   tipoProximaAcao?: TipoProximaAcao;
@@ -152,6 +159,26 @@ export interface Negocio {
   lancamentoId?: string;
 }
 
+
+export interface OportunidadeComercial {
+  id: string;
+  clienteId: string;
+  origem: OrigemOportunidade;
+  segmento?: string;
+  necessidade?: string;
+  valorEstimado?: number;
+  responsavel?: string;
+  etapa: EtapaOportunidade;
+  previsaoFechamento?: string;
+  probabilidade?: number;
+  observacoes?: string;
+  dataFechamento?: string;
+  valorFinal?: number;
+  motivoPerda?: MotivoPerdaOportunidade;
+  concorrente?: string;
+  createdAt: string;
+  updatedAt: string;
+}
 export interface MetaEmpresa {
   id: string;
   mes: string;
@@ -278,7 +305,7 @@ export interface ImportLog {
 
 export interface NegocioProdutoItem { produtoId: string; quantidade: number; precoUnitario: number; }
 
-export type OrcamentoStatus = "Rascunho" | "Aberto" | "Enviado" | "Em negociação" | "Aprovado" | "Recusado" | "Vencido" | "Reprovado" | "Cancelado";
+export type OrcamentoStatus = "Rascunho" | "Enviado" | "Em revisão" | "Reenviado" | "Aprovado" | "Perdido" | "Expirado" | "Cancelado" | "Aberto" | "Em negociação" | "Recusado" | "Vencido" | "Reprovado";
 export type UnidadeDose = "L/ha" | "mL/ha" | "kg/ha" | "g/ha" | "ton/ha" | "un/ha";
 
 export interface OrcamentoItem {
@@ -309,6 +336,7 @@ export interface Orcamento {
   codigo: string;
   clienteId: string;
   negocioId?: string;
+  oportunidadeId?: string;
   vendedor: string;
   data: string;
   validade?: string;

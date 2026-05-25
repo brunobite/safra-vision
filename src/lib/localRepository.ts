@@ -16,7 +16,7 @@ export interface LocalDbStats {
 }
 
 const storesToLoad: StoreName[] = [
-  "clientes", "vendedores", "lancamentos", "negocios", "produtos", "metasEmpresa",
+  "clientes", "vendedores", "lancamentos", "negocios", "oportunidades", "produtos", "metasEmpresa",
   "metasPessoais", "metasVendedor", "metasCategoria", "regrasComissao", "eventos",
   "prioridadesP1", "configuracoes", "orcamentos", "orcamentoItens", "empresas", "proximasAcoes",
   "formasPagamento", "importLogs", "appConfig",
@@ -147,7 +147,7 @@ export async function resetLocalDatabase() {
 
 export async function clearOperationalStores() {
   const operationalStores: StoreName[] = [
-    "clientes", "lancamentos", "negocios", "produtos", "eventos", "prioridadesP1",
+    "clientes", "lancamentos", "negocios", "oportunidades", "produtos", "eventos", "prioridadesP1",
     "orcamentos", "orcamentoItens", "proximasAcoes", "importLogs",
   ];
 
