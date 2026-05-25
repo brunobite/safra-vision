@@ -28,7 +28,7 @@ const empty: Omit<Negocio, "id"> = {
 };
 
 export default function FunilVendas() {
-  const { negocios, setNegocios, clientes, clienteById, vendedores, filtered } = useAppStore();
+  const { negocios, setNegocios, clientes, clienteById, vendedores, filtered, orcamentos } = useAppStore();
   const nav = useNavigate();
   const [params, setParams] = useSearchParams();
   const [open, setOpen] = useState(false);
@@ -88,6 +88,23 @@ export default function FunilVendas() {
   };
 
   const colunas: StatusFunil[] = STATUS_FUNIL;
+  const funilOrcamentos = useMemo(() => {
+    const etapas = ["Prospecção", "Contato feito", "Orçamento enviado", "Negociação", "Aprovado", "Perdido"] as const;
+    const mapped = {
+      "Prospecção": orcamentos.filter(o => ["Rascunho", "Aberto"].includes(o.status)),
+      "Contato feito": negocios.filter(n => ["Contato iniciado","Qualificado"].includes(n.status as string)).map(n => ({ valorTotal: n.valorPotencial })),
+      "Orçamento enviado": orcamentos.filter(o => o.status === "Enviado"),
+      "Negociação": orcamentos.filter(o => o.status === "Em negociação"),
+      "Aprovado": orcamentos.filter(o => o.status === "Aprovado"),
+      "Perdido": orcamentos.filter(o => ["Recusado", "Vencido", "Reprovado", "Cancelado"].includes(o.status)),
+    } as const;
+    const rows = etapas.map((etapa) => { const arr = mapped[etapa] as Array<{valorTotal:number}>; const total = arr.reduce((s,x)=>s+(x.valorTotal||0),0); return { etapa, qtd: arr.length, valor: total, ticket: arr.length? total/arr.length:0 }; });
+    const aprovado = rows.find(r=>r.etapa==="Aprovado")?.qtd || 0;
+    const perdido = rows.find(r=>r.etapa==="Perdido")?.qtd || 0;
+    const taxa = (aprovado+perdido)>0 ? aprovado/(aprovado+perdido) : 0;
+    return { rows, taxa, valorPrevisto: rows.reduce((s,r)=>s+r.valor,0), valorAprovado: rows.find(r=>r.etapa==="Aprovado")?.valor||0, valorPerdido: rows.find(r=>r.etapa==="Perdido")?.valor||0 };
+  }, [orcamentos, negocios]);
+
 
   return (
     <div className="space-y-4">
@@ -104,7 +121,7 @@ export default function FunilVendas() {
         <KpiCard label="Ações da semana" value={fmtNum(metrics.semana)} />
       </div>
 
-      <div className="flex justify-end">
+      <Card className="p-3"><h3 className="mb-2 text-sm font-semibold">Funil comercial de orçamentos</h3><div className="grid gap-2 md:grid-cols-3">{funilOrcamentos.rows.map(r=><div key={r.etapa} className="rounded border p-2 text-xs"><b>{r.etapa}</b><div>Qtd: {fmtNum(r.qtd)}</div><div>Valor: {fmtBRL(r.valor)}</div><div>Ticket médio: {fmtBRL(r.ticket)}</div></div>)}</div><div className="mt-2 text-xs">Taxa conversão: <b>{fmtPct(funilOrcamentos.taxa)}</b> • Valor previsto: <b>{fmtBRL(funilOrcamentos.valorPrevisto)}</b> • Aprovado: <b>{fmtBRL(funilOrcamentos.valorAprovado)}</b> • Perdido: <b>{fmtBRL(funilOrcamentos.valorPerdido)}</b></div></Card><div className="flex justify-end">
         <Button onClick={openNew}><Plus className="mr-1 h-4 w-4" /> Novo negócio</Button>
       </div>
 

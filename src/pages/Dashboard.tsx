@@ -85,6 +85,22 @@ export default function Dashboard() {
     return { topPotencial, semAcao, rotaCritica, visitasSemana, visitasAtrasadas, semVisitaPlanejada, porResponsavel };
   }, [clientes, proximasAcoes, lancamentos, hoje]);
 
+
+  const comercial = useMemo(() => {
+    const abertos = orcamentos.filter(o => ["Aberto","Rascunho"].includes(o.status));
+    const negociacao = orcamentos.filter(o => o.status === "Em negociação");
+    const aprovados = orcamentos.filter(o => o.status === "Aprovado");
+    const perdidos = orcamentos.filter(o => ["Recusado","Vencido","Reprovado","Cancelado"].includes(o.status));
+    const soma = (arr: typeof orcamentos) => arr.reduce((s,o)=>s+(o.valorTotal||0),0);
+    const taxa = (aprovados.length+perdidos.length)>0 ? aprovados.length/(aprovados.length+perdidos.length) : 0;
+    const ticket = aprovados.length ? soma(aprovados)/aprovados.length : 0;
+    const porAberto = Object.values(clientes.reduce((m,c)=>{const v=abertos.filter(o=>o.clienteId===c.id).reduce((s,o)=>s+o.valorTotal,0); if(v>0)m[c.id]={id:c.id,nome:c.nome,valor:v}; return m;}, {} as Record<string,{id:string,nome:string,valor:number}>)).sort((a,b)=>b.valor-a.valor).slice(0,5);
+    const porRealizado = Object.values(clientes.reduce((m,c)=>{const v=negocios.filter(n=>n.clienteId===c.id&&n.status==="Fechado ganho").reduce((s,n)=>s+(n.valorFechado||0),0); if(v>0)m[c.id]={id:c.id,nome:c.nome,valor:v}; return m;}, {} as Record<string,{id:string,nome:string,valor:number}>)).sort((a,b)=>b.valor-a.valor).slice(0,5);
+    const hoje = new Date();
+    const parados = abertos.filter(o => Math.floor((hoje.getTime()-new Date(o.updatedAt||o.data).getTime())/86400000) >= 15).sort((a,b)=>a.updatedAt.localeCompare(b.updatedAt)).slice(0,5);
+    return {abertos:soma(abertos), negociacao:soma(negociacao), aprovados:soma(aprovados), perdidos:soma(perdidos), taxa, ticket, porAberto, porRealizado, parados};
+  }, [orcamentos, clientes, negocios]);
+
   const potXFech = useMemo(() => {
     const m: Record<string, { Potencial: number; Fechado: number }> = {};
     negocios.forEach(n => {
@@ -117,6 +133,24 @@ export default function Dashboard() {
         <h2 className="mb-3 text-sm font-semibold text-foreground">Agenda de ações</h2>
         <div className="mb-3 flex gap-2">{(["hoje","semana","mes","atrasadas","todas"] as const).map(f=><button key={f} className={`rounded border px-2 py-1 text-xs ${acaoFiltro===f?"bg-primary text-primary-foreground":""}`} onClick={()=>setAcaoFiltro(f)}>{f}</button>)}</div>
         <div className="space-y-2">{proximasAcoes.filter(a=>{const d=a.data; if(acaoFiltro==="hoje") return d===hoje; if(acaoFiltro==="atrasadas") return a.status==="Pendente"&&d<hoje; if(acaoFiltro==="semana") return d>=hoje && d<=new Date(Date.now()+6*86400000).toISOString().slice(0,10); if(acaoFiltro==="mes") return d.slice(0,7)===hoje.slice(0,7); return true;}).map(a=>{const color=(a.status==="Pendente"&&a.data<hoje)?"bg-red-100 text-red-700":a.data===hoje?"bg-blue-100 text-blue-700":a.descricao.toLowerCase().includes("prior")?"bg-yellow-100 text-yellow-700":"bg-emerald-100 text-emerald-700"; return <div key={a.id} className="rounded border p-2 text-xs"><div className="flex justify-between"><b>{clienteById(a.clienteId||"")?.nome||"Sem cliente"}</b><span className={`rounded px-2 py-0.5 ${color}`}>{a.status}</span></div><div>{a.data} • {a.tipo} • {a.responsavel || "Sem responsável"}</div><div>{a.descricao}</div></div>;})}</div>
+      </Card>
+
+
+      <Card className="p-4">
+        <h2 className="mb-3 text-sm font-semibold text-foreground">Bloco comercial (orçamentos)</h2>
+        <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+          <KpiCard label="Orçamentos abertos" value={fmtBRL(comercial.abertos)} icon={FileText} />
+          <KpiCard label="Em negociação" value={fmtBRL(comercial.negociacao)} icon={Layers} />
+          <KpiCard label="Aprovado" value={fmtBRL(comercial.aprovados)} icon={Award} tone="success" />
+          <KpiCard label="Perdido" value={fmtBRL(comercial.perdidos)} icon={AlertTriangle} tone="destructive" />
+          <KpiCard label="Conversão" value={fmtPct(comercial.taxa)} icon={Percent} />
+          <KpiCard label="Ticket médio" value={fmtBRL(comercial.ticket)} icon={TrendingUp} />
+        </div>
+        <div className="mt-3 grid gap-2 text-xs md:grid-cols-3">
+          <div><b>Top clientes por orçamento aberto:</b> {comercial.porAberto.map(c=>`${c.nome} (${fmtBRL(c.valor)})`).join(", ") || "—"}</div>
+          <div><b>Top clientes por realizado:</b> {comercial.porRealizado.map(c=>`${c.nome} (${fmtBRL(c.valor)})`).join(", ") || "—"}</div>
+          <div><b>Orçamentos parados (15+ dias):</b> {comercial.parados.map(o=>`${clienteById(o.clienteId)?.nome || o.clienteId} (${o.codigo})`).join(", ") || "—"}</div>
+        </div>
       </Card>
 
       <Card className="p-4">
