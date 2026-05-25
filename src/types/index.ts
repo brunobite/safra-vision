@@ -23,7 +23,7 @@ export const CATEGORIAS_PRODUTO: CategoriaProduto[] = [...CATEGORIAS_PRODUTO_PAD
 
 
 export type TipoProximaAcao = "Visita" | "Ligação" | "WhatsApp" | "Enviar orçamento" | "Cobrar retorno" | "Pós-venda" | "Renovação" | "Outro";
-export type StatusProximaAcao = "Pendente" | "Concluída" | "Cancelada";
+export type StatusProximaAcao = "Pendente" | "Em andamento" | "Realizada" | "Reagendada" | "Cancelada" | "Concluída";
 
 export interface ProximaAcao {
   id: string;
