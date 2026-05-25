@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, ReactNode } from "react";
 import {
   Cliente, Lancamento, MetaEmpresa, MetaPessoal, Evento, PrioridadeP1Item,
-  Negocio, Produto, RegraComissao, Vendedor, MetaVendedor, MetaCategoria, TicketMedioRegra, Orcamento, Empresa, ProximaAcao, FormaPagamento, AppConfig,
+  Negocio, Produto, RegraComissao, Vendedor, MetaVendedor, MetaCategoria, TicketMedioRegra, Orcamento, Empresa, ProximaAcao, FormaPagamento, AppConfig, OportunidadeComercial,
 } from "@/types";
 import { bootstrapLocalDatabase, saveStore } from "@/lib/localRepository";
 import { calcularPotencialCliente, calcularValorMedioHaSegmentosAtivos } from "@/utils/businessRules";
@@ -22,6 +22,7 @@ interface AppStoreCtx {
   eventos: Evento[]; setEventos: React.Dispatch<React.SetStateAction<Evento[]>>;
   prioridadesP1: PrioridadeP1Item[]; setPrioridadesP1: React.Dispatch<React.SetStateAction<PrioridadeP1Item[]>>;
   negocios: Negocio[]; setNegocios: React.Dispatch<React.SetStateAction<Negocio[]>>;
+  oportunidades: OportunidadeComercial[]; setOportunidades: React.Dispatch<React.SetStateAction<OportunidadeComercial[]>>;
   produtos: Produto[]; setProdutos: React.Dispatch<React.SetStateAction<Produto[]>>;
   regras: RegraComissao[]; setRegras: React.Dispatch<React.SetStateAction<RegraComissao[]>>;
   vendedores: Vendedor[]; setVendedores: React.Dispatch<React.SetStateAction<Vendedor[]>>;
@@ -60,6 +61,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const [eventos, setEventos] = useState<Evento[]>([]);
   const [prioridadesP1, setPrioridadesP1] = useState<PrioridadeP1Item[]>([]);
   const [negocios, setNegocios] = useState<Negocio[]>([]);
+  const [oportunidades, setOportunidades] = useState<OportunidadeComercial[]>([]);
   const [produtos, setProdutos] = useState<Produto[]>([]);
   const [regras, setRegras] = useState<RegraComissao[]>([]);
   const [vendedores, setVendedores] = useState<Vendedor[]>([]);
@@ -91,6 +93,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         setEventos(localData.eventos);
         setPrioridadesP1(localData.prioridadesP1);
         setNegocios(localData.negocios);
+        setOportunidades((localData as {oportunidades?: OportunidadeComercial[]}).oportunidades || []);
         setProdutos(localData.produtos);
         setRegras(localData.regrasComissao);
         setVendedores(localData.vendedores);
@@ -137,6 +140,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => { void persistStore("eventos", eventos); }, [eventos, persistStore]);
   useEffect(() => { void persistStore("prioridadesP1", prioridadesP1); }, [prioridadesP1, persistStore]);
   useEffect(() => { void persistStore("negocios", negocios); }, [negocios, persistStore]);
+  useEffect(() => { void persistStore("oportunidades", oportunidades as never); }, [oportunidades, persistStore]);
   useEffect(() => { void persistStore("produtos", produtos); }, [produtos, persistStore]);
   useEffect(() => { void persistStore("regrasComissao", regras); }, [regras, persistStore]);
   useEffect(() => { void persistStore("vendedores", vendedores); }, [vendedores, persistStore]);
@@ -197,7 +201,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       metasEmpresa, setMetasEmpresa, metasPessoais, setMetasPessoais,
       metasVendedor, setMetasVendedor, metasCategoria, setMetasCategoria,
       eventos, setEventos, prioridadesP1, setPrioridadesP1,
-      negocios, setNegocios, produtos, setProdutos,
+      negocios, setNegocios, oportunidades, setOportunidades, produtos, setProdutos,
       regras, setRegras, vendedores, setVendedores, ticketsMedios, setTicketsMedios, orcamentos, setOrcamentos, empresas, setEmpresas, proximasAcoes, setProximasAcoes, formasPagamento, setFormasPagamento, appConfig, setAppConfig,
       isLoading, isReady, dbError, isSaving, lastSavedAt, saveError,
       filters, setFilters,
