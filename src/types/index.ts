@@ -22,7 +22,7 @@ export const CATEGORIAS_PRODUTO_PADRAO = ["Adjuvantes", "Nutrição", "Fertiliza
 export const CATEGORIAS_PRODUTO: CategoriaProduto[] = [...CATEGORIAS_PRODUTO_PADRAO];
 
 
-export type TipoProximaAcao = "Visita" | "Ligação" | "Enviar orçamento" | "Cobrar retorno" | "Pós-venda" | "Renovação" | "Outro";
+export type TipoProximaAcao = "Visita" | "Ligação" | "WhatsApp" | "Enviar orçamento" | "Cobrar retorno" | "Pós-venda" | "Renovação" | "Outro";
 export type StatusProximaAcao = "Pendente" | "Concluída" | "Cancelada";
 
 export interface ProximaAcao {

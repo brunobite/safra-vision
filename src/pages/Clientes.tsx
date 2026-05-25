@@ -15,7 +15,7 @@ import { Cliente, ABC } from "@/types";
 import { fmtBRL, fmtNum } from "@/utils/calculations";
 import { computeClienteStatus, formatDateBR, isClienteAtrasado, sugestaoRetornoDias } from "@/lib/clientesUtils";
 import { calcularPotencialCliente, calcularValorMedioHaSegmentosAtivos } from "@/utils/businessRules";
-import { Plus, Pencil, Trash2, Eye, Search } from "lucide-react";
+import { Plus, Pencil, Trash2, Eye, Search, Filter, X, MapPin } from "lucide-react";
 import { toast } from "sonner";
 
 const ALL = "__all__";
@@ -31,6 +31,7 @@ export default function Clientes() {
   const [busca, setBusca] = useState("");
   const [fAbc, setFAbc] = useState(""); const [fPri, setFPri] = useState(""); const [fRota, setFRota] = useState(""); const [fStatus, setFStatus] = useState(""); const [fCidade, setFCidade] = useState(""); const [fAtrasado, setFAtrasado] = useState("");
   const [fVendedor, setFVendedor] = useState(""); const [fGeo, setFGeo] = useState(""); const [fProximaAcao, setFProximaAcao] = useState(""); const [fIncompletos, setFIncompletos] = useState("");
+  const [filtrosOpen, setFiltrosOpen] = useState(false);
   const [open, setOpen] = useState(false);
   const [edit, setEdit] = useState<Cliente | null>(null);
   const [form, setForm] = useState<Omit<Cliente, "id">>(empty);
@@ -111,34 +112,7 @@ export default function Clientes() {
             <Search className="absolute left-2 top-[30px] h-3.5 w-3.5 text-muted-foreground" />
             <Input className="pl-7" placeholder="Nome do cliente..." value={busca} onChange={e => setBusca(e.target.value)} />
           </div>
-          <div><Label className="text-xs">ABC</Label>
-            <Select value={fAbc || ALL} onValueChange={v => setFAbc(v === ALL ? "" : v)}><SelectTrigger className="w-28"><SelectValue placeholder="Todos" /></SelectTrigger>
-              <SelectContent><SelectItem value={ALL}>Todos</SelectItem>{["A","B","C"].map(v => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent></Select>
-          </div>
-          <div><Label className="text-xs">Prioridade</Label>
-            <Select value={fPri || ALL} onValueChange={v => setFPri(v === ALL ? "" : v)}><SelectTrigger className="w-32"><SelectValue placeholder="Todas" /></SelectTrigger>
-              <SelectContent><SelectItem value={ALL}>Todas</SelectItem>{["P1","P2","P3"].map(v => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent></Select>
-          </div>
-          <div><Label className="text-xs">Rota</Label>
-            <Select value={fRota || ALL} onValueChange={v => setFRota(v === ALL ? "" : v)}><SelectTrigger className="w-40"><SelectValue placeholder="Todas" /></SelectTrigger>
-              <SelectContent><SelectItem value={ALL}>Todas</SelectItem>{ROTAS_NOMES.map(v => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent></Select>
-          </div>
-          <div><Label className="text-xs">Status</Label>
-            <Select value={fStatus || ALL} onValueChange={v => setFStatus(v === ALL ? "" : v)}><SelectTrigger className="w-36"><SelectValue placeholder="Todos" /></SelectTrigger>
-              <SelectContent><SelectItem value={ALL}>Todos</SelectItem>{statuses.map(v => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent></Select>
-          </div>
-          <div><Label className="text-xs">Vendedor</Label>
-            <Select value={fVendedor || ALL} onValueChange={v => setFVendedor(v === ALL ? "" : v)}><SelectTrigger className="w-40"><SelectValue placeholder="Todos" /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todos</SelectItem>{vendedores.filter(v=>v.ativo).map(v => <SelectItem key={v.id} value={v.nome}>{v.nome}</SelectItem>)}</SelectContent></Select>
-          </div>
-          <div><Label className="text-xs">Geo</Label>
-            <Select value={fGeo || ALL} onValueChange={v => setFGeo(v === ALL ? "" : v)}><SelectTrigger className="w-32"><SelectValue placeholder="Todos" /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todos</SelectItem><SelectItem value="com">Com geo</SelectItem><SelectItem value="sem">Sem geo</SelectItem></SelectContent></Select>
-          </div>
-          <div><Label className="text-xs">Próxima ação</Label>
-            <Select value={fProximaAcao || ALL} onValueChange={v => setFProximaAcao(v === ALL ? "" : v)}><SelectTrigger className="w-36"><SelectValue placeholder="Todos" /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todos</SelectItem><SelectItem value="com">Com ação</SelectItem><SelectItem value="sem">Sem ação</SelectItem></SelectContent></Select>
-          </div>
-          <div><Label className="text-xs">Incompletos</Label>
-            <Select value={fIncompletos || ALL} onValueChange={v => setFIncompletos(v === ALL ? "" : v)}><SelectTrigger className="w-36"><SelectValue placeholder="Todos" /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todos</SelectItem><SelectItem value="sim">Incompletos</SelectItem><SelectItem value="nao">Completos</SelectItem></SelectContent></Select>
-          </div>
+          <Button variant="outline" onClick={() => setFiltrosOpen(true)}><Filter className="mr-2 h-4 w-4" />Filtros</Button>
           <Button onClick={openNew}><Plus className="mr-1 h-4 w-4" /> Novo cliente</Button>
         </div>
         <div className="mt-3 flex gap-4 text-sm">
@@ -161,7 +135,25 @@ export default function Clientes() {
         </div>
       </Card>
 
-      <Card className="overflow-x-auto p-0">
+      <div className="grid gap-3 md:hidden">
+        {lista.map((c) => (
+          <Card key={c.id} className="p-3">
+            <div className="mb-2 flex items-start justify-between gap-2"><div><p className="font-semibold">{c.nome}</p><p className="text-xs text-muted-foreground">{c.localidade || c.endereco || "Localidade não informada"}</p></div><Badge variant="outline">{c.statusAtual}</Badge></div>
+            <div className="grid grid-cols-2 gap-1 text-xs">
+              <span><b>Cidade:</b> {c.cidade || "—"}</span><span><b>Vendedor:</b> {c.vendedor || "—"}</span>
+              <span><b>Rota:</b> {c.rota || "—"}</span><span><b>ABC/Pri:</b> {c.abc}/{c.prioridade}</span>
+              <span><b>Área:</b> {fmtNum(c.areaHa)} ha</span><span><b>Próx. ação:</b> {proximaAcaoPendente(c.id) ? "Sim" : "Não"}</span>
+              <span className="col-span-2"><b>Geo:</b> {c.latitude && c.longitude ? <span className="inline-flex items-center gap-1"><MapPin className="h-3 w-3" />Com geolocalização</span> : "Sem geolocalização"}</span>
+            </div>
+            <div className="mt-3 flex justify-end gap-1">
+              <Button size="icon" variant="ghost" onClick={() => setView(c)}><Eye className="h-3.5 w-3.5" /></Button>
+              <Button size="icon" variant="ghost" onClick={() => openEdit(c)}><Pencil className="h-3.5 w-3.5" /></Button>
+            </div>
+          </Card>
+        ))}
+      </div>
+
+      <Card className="hidden overflow-x-auto p-0 md:block">
         <Table>
           <TableHeader><TableRow>
             <TableHead>Cliente</TableHead><TableHead>ABC</TableHead>
@@ -196,6 +188,28 @@ export default function Clientes() {
           </TableBody>
         </Table>
       </Card>
+
+      <Dialog open={filtrosOpen} onOpenChange={setFiltrosOpen}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader><DialogTitle>Filtros de clientes</DialogTitle></DialogHeader>
+          <div className="grid gap-3 md:grid-cols-3">
+            <div><Label className="text-xs">ABC</Label><Select value={fAbc || ALL} onValueChange={v => setFAbc(v === ALL ? "" : v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todos</SelectItem>{["A","B","C"].map(v => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent></Select></div>
+            <div><Label className="text-xs">Prioridade</Label><Select value={fPri || ALL} onValueChange={v => setFPri(v === ALL ? "" : v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todas</SelectItem>{["P1","P2","P3"].map(v => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent></Select></div>
+            <div><Label className="text-xs">Rota</Label><Select value={fRota || ALL} onValueChange={v => setFRota(v === ALL ? "" : v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todas</SelectItem>{ROTAS_NOMES.map(v => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent></Select></div>
+            <div><Label className="text-xs">Cidade</Label><Select value={fCidade || ALL} onValueChange={v => setFCidade(v === ALL ? "" : v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todas</SelectItem>{cidades.map(v => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent></Select></div>
+            <div><Label className="text-xs">Status</Label><Select value={fStatus || ALL} onValueChange={v => setFStatus(v === ALL ? "" : v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todos</SelectItem>{statuses.map(v => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent></Select></div>
+            <div><Label className="text-xs">Vendedor</Label><Select value={fVendedor || ALL} onValueChange={v => setFVendedor(v === ALL ? "" : v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todos</SelectItem>{vendedores.filter(v=>v.ativo).map(v => <SelectItem key={v.id} value={v.nome}>{v.nome}</SelectItem>)}</SelectContent></Select></div>
+            <div><Label className="text-xs">Com/Sem geolocalização</Label><Select value={fGeo || ALL} onValueChange={v => setFGeo(v === ALL ? "" : v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todos</SelectItem><SelectItem value="com">Com geo</SelectItem><SelectItem value="sem">Sem geo</SelectItem></SelectContent></Select></div>
+            <div><Label className="text-xs">Com/Sem próxima ação</Label><Select value={fProximaAcao || ALL} onValueChange={v => setFProximaAcao(v === ALL ? "" : v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todos</SelectItem><SelectItem value="com">Com ação</SelectItem><SelectItem value="sem">Sem ação</SelectItem></SelectContent></Select></div>
+            <div><Label className="text-xs">Dados incompletos</Label><Select value={fIncompletos || ALL} onValueChange={v => setFIncompletos(v === ALL ? "" : v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todos</SelectItem><SelectItem value="sim">Incompletos</SelectItem><SelectItem value="nao">Completos</SelectItem></SelectContent></Select></div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setFAbc(""); setFPri(""); setFRota(""); setFStatus(""); setFCidade(""); setFAtrasado(""); setFVendedor(""); setFGeo(""); setFProximaAcao(""); setFIncompletos(""); }}><X className="mr-2 h-4 w-4" />Limpar filtros</Button>
+            <Button variant="outline" onClick={() => setFiltrosOpen(false)}>Fechar</Button>
+            <Button onClick={() => setFiltrosOpen(false)}>Aplicar filtros</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-2xl">
