@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { GlobalFilters } from "@/components/GlobalFilters";
 import { KpiCard } from "@/components/dashboard/KpiCard";
 import { useAppStore } from "@/store/AppStore";
@@ -16,6 +17,7 @@ import {
 export default function Dashboard() {
   const { clientes, metasEmpresa, metasPessoais, filtered, lancamentos, negocios, regras, orcamentos, proximasAcoes, appConfig, clienteById, ticketsMedios } = useAppStore();
   const [acaoFiltro, setAcaoFiltro] = useState<"hoje"|"semana"|"mes"|"atrasadas"|"todas">("hoje");
+  const nav = useNavigate();
 
   const metaPessoalTotal = metasPessoais.reduce((s, m) => s + m.metaFaturamento, 0);
   const kpis = useMemo(
@@ -135,8 +137,8 @@ export default function Dashboard() {
       <Card className="p-4">
         <h2 className="mb-3 text-sm font-semibold text-foreground">Bloco executivo da carteira</h2>
         <div className="grid gap-2 text-xs md:grid-cols-2">
-          <div><b>Top clientes por potencial:</b> {executivos.topPotencial.map((c) => `${c.nome} (${fmtBRL(c.potencialTotal || 0)})`).join(", ") || "—"}</div>
-          <div><b>Clientes críticos sem ação:</b> {executivos.semAcao.slice(0,8).map((c) => c.nome).join(", ") || "—"}</div>
+          <div><b>Top clientes por potencial:</b> {executivos.topPotencial.length ? executivos.topPotencial.map((c) => <button key={c.id} className="mr-2 text-primary hover:underline" onClick={() => nav(`/clientes/${c.id}`)}>{c.nome} ({fmtBRL(c.potencialTotal || 0)})</button>) : "—"}</div>
+          <div><b>Clientes críticos sem ação:</b> {executivos.semAcao.slice(0,8).length ? executivos.semAcao.slice(0,8).map((c) => <button key={c.id} className="mr-2 text-primary hover:underline" onClick={() => nav(`/clientes/${c.id}`)}>{c.nome}</button>) : "—"}</div>
           <div><b>Rotas críticas:</b> {executivos.rotaCritica.map(([r,q]) => `${r} (${q})`).join(", ") || "—"}</div>
           <div><b>Clientes sem visita planejada:</b> {fmtNum(executivos.semVisitaPlanejada)}</div>
           <div><b>Visitas da semana:</b> {fmtNum(executivos.visitasSemana.length)} | <b>Visitas atrasadas:</b> {fmtNum(executivos.visitasAtrasadas.length)}</div>

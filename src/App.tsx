@@ -22,6 +22,7 @@ const Produtos = lazy(() => import("./pages/Produtos"));
 const PrecosEstoque = lazy(() => import("./pages/PrecosEstoque"));
 const Orcamentos = lazy(() => import("./pages/Orcamentos"));
 const ProximasAcoes = lazy(() => import("./pages/ProximasAcoes"));
+const ClienteFicha360 = lazy(() => import("./pages/ClienteFicha360"));
 
 const queryClient = new QueryClient();
 
@@ -44,6 +45,7 @@ const App = () => (
                 <Route path="/metas" element={<Metas />} />
                 <Route path="/relatorios" element={<Relatorios />} />
                 <Route path="/clientes" element={<Clientes />} />
+                <Route path="/clientes/:id" element={<ClienteFicha360 />} />
                 <Route path="/rotas" element={<Rotas />} />
                 <Route path="/prioridades" element={<PrioridadesP1 />} />
                 <Route path="/eventos" element={<Eventos />} />

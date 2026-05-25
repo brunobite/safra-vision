@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useAppStore } from "@/store/AppStore";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -27,6 +28,7 @@ export default function ProximasAcoes() {
   const [buscaCliente, setBuscaCliente] = useState("");
   const [fStatus, setFStatus] = useState("__all__");
   const [fGrupo, setFGrupo] = useState<"responsavel"|"vendedor">("responsavel");
+  const nav = useNavigate();
   const hoje = new Date().toISOString().slice(0, 10);
   const semanaFim = new Date();
   semanaFim.setDate(semanaFim.getDate() + 7);
@@ -115,7 +117,7 @@ export default function ProximasAcoes() {
   <Card className="p-4">
   <div className="mb-3 flex gap-3"><div className="w-60"><Label>Filtro status</Label><Select value={fStatus} onValueChange={setFStatus}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="__all__">Todos</SelectItem>{STATUSES.map(s=><SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent></Select></div><div className="w-60"><Label>Agrupar por</Label><Select value={fGrupo} onValueChange={(v:"responsavel"|"vendedor")=>setFGrupo(v)}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="responsavel">Responsável</SelectItem><SelectItem value="vendedor">Vendedor</SelectItem></SelectContent></Select></div></div>
   <div className="space-y-4">{Object.entries(porGrupo).map(([g, items])=><div key={g}><h3 className="mb-2 font-semibold">{g} <span className="text-muted-foreground">({items.length})</span></h3><div className="space-y-2">{items.map((a)=><div key={a.id} className="rounded-xl border bg-card p-3 text-sm">
-    <div className="mb-2 flex flex-wrap items-center justify-between gap-2"><b>{clienteById(a.clienteId || "")?.nome || "Sem cliente"}</b><Badge variant={a.data < hoje && a.status === "Pendente" ? "destructive" : "outline"}>{a.status}</Badge></div>
+    <div className="mb-2 flex flex-wrap items-center justify-between gap-2"><button className="font-semibold text-primary hover:underline" onClick={() => a.clienteId && nav(`/clientes/${a.clienteId}`)}>{clienteById(a.clienteId || "")?.nome || "Sem cliente"}</button><Badge variant={a.data < hoje && a.status === "Pendente" ? "destructive" : "outline"}>{a.status}</Badge></div>
     <div className="grid gap-1 text-muted-foreground md:grid-cols-2"><span><b className="text-foreground">Data:</b> {a.data}</span><span><b className="text-foreground">Tipo:</b> {a.tipo}</span><span><b className="text-foreground">Responsável:</b> {a.responsavel || "—"}</span><span><b className="text-foreground">Objetivo:</b> {a.objetivo || "—"}</span><span><b className="text-foreground">Descrição:</b> {a.descricao}</span><span><b className="text-foreground">Observações:</b> {a.observacoes || "—"}</span>
     <span><b className="text-foreground">Rota:</b> {clienteById(a.clienteId || "")?.rota || "—"}</span><span><b className="text-foreground">Cidade:</b> {clienteById(a.clienteId || "")?.cidade || "—"}</span><span><b className="text-foreground">ABC/Prioridade:</b> {(clienteById(a.clienteId || "")?.abc || "-") + "/" + (clienteById(a.clienteId || "")?.prioridade || "-")}</span><span><b className="text-foreground">Geo:</b> {clienteById(a.clienteId || "")?.latitude && clienteById(a.clienteId || "")?.longitude ? "Com geolocalização" : "Sem geolocalização"}</span></div>
     <div className="mt-3 flex flex-wrap gap-2"><Select value={a.status} onValueChange={(v: StatusProximaAcao)=>setProximasAcoes(prev=>prev.map(x=>x.id===a.id?{...x,status:v,updatedAt:new Date().toISOString()}:x))}><SelectTrigger className="w-full md:w-44"><SelectValue/></SelectTrigger><SelectContent>{STATUSES.map(s=><SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent></Select>
