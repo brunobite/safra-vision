@@ -30,7 +30,9 @@ const [showNovaAcao, setShowNovaAcao] = useState(false);
 const [novaAcao, setNovaAcao] = useState({ data: new Date().toISOString().slice(0, 10), responsavel: "", descricao: "", objetivo: "" });
 const [form, setForm] = useState<Orcamento>({ id: "", codigo: `ORC-${Date.now()}`, clienteId: "", empresaId: empresaPadrao, vendedor: "", data: new Date().toISOString().slice(0, 10), validade: validade7(new Date().toISOString().slice(0, 10)), status: "Rascunho", areaAplicacaoHa: 0, itens: [], subtotal: 0, descontoTotal: 0, valorTotal: 0, custoPorHectare: 0, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), prazoPagamento: "", formaPagamento: formaPagamentoPadrao });
 const isLegacy = Boolean(edit?.id && !edit?.oportunidadeId);
-const oportunidadesAbertasCliente = oportunidades.filter(o => o.clienteId === form.clienteId && o.etapa !== "Ganha" && o.etapa !== "Perdida");
+const oportunidadesAbertasCliente = oportunidades.filter(
+  (o) => o.clienteId === form.clienteId && !["Ganha", "Perdida", "Cancelada"].includes(o.etapa)
+);
 const statusOptions = Array.from(new Set([...(isLegacy ? STATUS_LEGADO : STATUS_NOVO), form.status]));
 const segmentoOptions = useMemo(
   () => Array.from(new Set([...SEGMENTOS_BASE, ...produtos.map((p) => p.categoria).filter(Boolean)])).sort((a, b) => a.localeCompare(b)),

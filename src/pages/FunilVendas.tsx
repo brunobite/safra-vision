@@ -45,7 +45,7 @@ export default function FunilVendas() {
   const [lossOpen, setLossOpen] = useState<OportunidadeComercial | null>(null);
   const [motivo, setMotivo] = useState<MotivoPerdaOportunidade>("Preço");
 
-  const list = filtered.oportunidades;
+  const list = filtered.oportunidades ?? oportunidades ?? [];
   const metrics = useMemo(() => {
     const abertos = list.filter((o) => !["Ganha", "Perdida", "Cancelada"].includes(o.etapa));
     const ganhos = list.filter((o) => o.etapa === "Ganha");

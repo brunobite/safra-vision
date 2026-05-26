@@ -39,7 +39,7 @@ interface AppStoreCtx {
   isReady: boolean;
   dbError: string | null;
   filters: Filters; setFilters: React.Dispatch<React.SetStateAction<Filters>>;
-  filtered: { lancamentos: Lancamento[]; negocios: Negocio[] };
+  filtered: { lancamentos: Lancamento[]; negocios: Negocio[]; oportunidades: OportunidadeComercial[] };
   clienteById: (id: string) => Cliente | undefined;
   produtoById: (id: string) => Produto | undefined;
 }
@@ -195,6 +195,20 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     return true;
   }), [negocios, filters, cMap]);
 
+  const filteredOportunidades = useMemo(() => oportunidades.filter(o => {
+    const c = cMap.get(o.clienteId);
+    const dt = o.updatedAt || o.createdAt;
+    if (filters.dataInicial && dt < filters.dataInicial) return false;
+    if (filters.dataFinal && dt > filters.dataFinal) return false;
+    if (filters.mes && dt.slice(0, 7) !== filters.mes) return false;
+    if (filters.abc && c?.abc !== filters.abc) return false;
+    if (filters.prioridade && c?.prioridade !== filters.prioridade) return false;
+    if (filters.rota && c?.rota !== filters.rota) return false;
+    if (filters.status && o.etapa !== filters.status) return false;
+    if (filters.vendedor && o.responsavel !== filters.vendedor) return false;
+    return true;
+  }), [oportunidades, filters, cMap]);
+
   return (
     <Ctx.Provider value={{
       clientes, setClientes, lancamentos, setLancamentos,
@@ -205,7 +219,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       regras, setRegras, vendedores, setVendedores, ticketsMedios, setTicketsMedios, orcamentos, setOrcamentos, empresas, setEmpresas, proximasAcoes, setProximasAcoes, formasPagamento, setFormasPagamento, appConfig, setAppConfig,
       isLoading, isReady, dbError, isSaving, lastSavedAt, saveError,
       filters, setFilters,
-      filtered: { lancamentos: filteredLancs, negocios: filteredNegs },
+      filtered: { lancamentos: filteredLancs, negocios: filteredNegs, oportunidades: filteredOportunidades },
       clienteById: (id) => cMap.get(id),
       produtoById: (id) => pMap.get(id),
     }}>
