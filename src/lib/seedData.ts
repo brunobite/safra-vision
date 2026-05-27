@@ -29,6 +29,7 @@ export const seedData = {
   proximasAcoes: [],
   formasPagamento: [],
   importLogs: [],
+  prazosPagamento: [],
   appConfig: [{ id: "main", taxaAcertoCarteira: 12 }],
 };
 

@@ -1,5 +1,5 @@
 export const DB_NAME = "safra-2627-operacional";
-export const DB_VERSION = 8;
+export const DB_VERSION = 9;
 
 export const STORE_NAMES = [
   "clientes",
@@ -24,6 +24,7 @@ export const STORE_NAMES = [
   "proximasAcoes",
   "formasPagamento",
   "importLogs",
+  "prazosPagamento",
 ] as const;
 
 export type StoreName = (typeof STORE_NAMES)[number];

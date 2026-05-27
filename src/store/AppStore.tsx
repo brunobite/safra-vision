@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, ReactNode } from "react";
 import {
   Cliente, Lancamento, MetaEmpresa, MetaPessoal, Evento, PrioridadeP1Item,
-  Negocio, Produto, RegraComissao, Vendedor, MetaVendedor, MetaCategoria, TicketMedioRegra, Orcamento, Empresa, ProximaAcao, FormaPagamento, AppConfig, OportunidadeComercial,
+  Negocio, Produto, RegraComissao, Vendedor, MetaVendedor, MetaCategoria, TicketMedioRegra, Orcamento, Empresa, ProximaAcao, FormaPagamento, PrazoPagamento, AppConfig, OportunidadeComercial,
 } from "@/types";
 import { bootstrapLocalDatabase, saveStore } from "@/lib/localRepository";
 import { calcularPotencialCliente, calcularValorMedioHaSegmentosAtivos } from "@/utils/businessRules";
@@ -31,6 +31,7 @@ interface AppStoreCtx {
   empresas: Empresa[]; setEmpresas: React.Dispatch<React.SetStateAction<Empresa[]>>;
   proximasAcoes: ProximaAcao[]; setProximasAcoes: React.Dispatch<React.SetStateAction<ProximaAcao[]>>;
   formasPagamento: FormaPagamento[]; setFormasPagamento: React.Dispatch<React.SetStateAction<FormaPagamento[]>>;
+  prazosPagamento: PrazoPagamento[]; setPrazosPagamento: React.Dispatch<React.SetStateAction<PrazoPagamento[]>>;
   appConfig: AppConfig; setAppConfig: React.Dispatch<React.SetStateAction<AppConfig>>;
   isLoading: boolean;
   isSaving: boolean;
@@ -70,6 +71,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const [empresas, setEmpresas] = useState<Empresa[]>([]);
   const [proximasAcoes, setProximasAcoes] = useState<ProximaAcao[]>([]);
   const [formasPagamento, setFormasPagamento] = useState<FormaPagamento[]>([]);
+  const [prazosPagamento, setPrazosPagamento] = useState<PrazoPagamento[]>([]);
   const [appConfig, setAppConfig] = useState<AppConfig>({ id: "main", percentualAcertoEsperado: 12 });
   const [filters, setFilters] = useState<Filters>(defaultFilters);
   const [isLoading, setIsLoading] = useState(true);
@@ -102,6 +104,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         setEmpresas((localData as {empresas?: Empresa[]}).empresas || []);
         setProximasAcoes((localData as {proximasAcoes?: ProximaAcao[]}).proximasAcoes || []);
         setFormasPagamento((localData as {formasPagamento?: FormaPagamento[]}).formasPagamento || []);
+        setPrazosPagamento((localData as {prazosPagamento?: PrazoPagamento[]}).prazosPagamento || []);
         setAppConfig((localData as {appConfig?: AppConfig[]}).appConfig?.[0] || { id: "main", percentualAcertoEsperado: 12 });
       } catch (error) {
         console.error(error);
@@ -149,6 +152,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => { void persistStore("empresas", empresas as never); }, [empresas, persistStore]);
   useEffect(() => { void persistStore("proximasAcoes", proximasAcoes as never); }, [proximasAcoes, persistStore]);
   useEffect(() => { void persistStore("formasPagamento", formasPagamento as never); }, [formasPagamento, persistStore]);
+  useEffect(() => { void persistStore("prazosPagamento", prazosPagamento as never); }, [prazosPagamento, persistStore]);
   useEffect(() => { void persistStore("appConfig", [appConfig] as never); }, [appConfig, persistStore]);
   useEffect(() => {
     const valorMedio = calcularValorMedioHaSegmentosAtivos(ticketsMedios);
@@ -216,7 +220,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       metasVendedor, setMetasVendedor, metasCategoria, setMetasCategoria,
       eventos, setEventos, prioridadesP1, setPrioridadesP1,
       negocios, setNegocios, oportunidades, setOportunidades, produtos, setProdutos,
-      regras, setRegras, vendedores, setVendedores, ticketsMedios, setTicketsMedios, orcamentos, setOrcamentos, empresas, setEmpresas, proximasAcoes, setProximasAcoes, formasPagamento, setFormasPagamento, appConfig, setAppConfig,
+      regras, setRegras, vendedores, setVendedores, ticketsMedios, setTicketsMedios, orcamentos, setOrcamentos, empresas, setEmpresas, proximasAcoes, setProximasAcoes, formasPagamento, setFormasPagamento, prazosPagamento, setPrazosPagamento, appConfig, setAppConfig,
       isLoading, isReady, dbError, isSaving, lastSavedAt, saveError,
       filters, setFilters,
       filtered: { lancamentos: filteredLancs, negocios: filteredNegs, oportunidades: filteredOportunidades },
