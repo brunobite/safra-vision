@@ -351,6 +351,12 @@ export interface OrcamentoItem {
 }
 
 export interface Orcamento {
+  versao?: number;
+  orcamentoOrigemId?: string;
+  substituiOrcamentoId?: string;
+  motivoRevisao?: string;
+  canalEnvio?: "WhatsApp" | "E-mail" | "Presencial" | "Ligação" | "Outro";
+  dataEnvio?: string;
   empresaId?: string;
   id: string;
   codigo: string;

@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { useAppStore } from "@/store/AppStore";
 import { fmtBRL, fmtNum } from "@/utils/calculations";
 import { formatDateBR } from "@/lib/clientesUtils";
+import { gerarPdfOrcamento } from "@/lib/orcamentoPdf";
 
 interface TimelineItem {
   id: string;
@@ -19,7 +20,7 @@ interface TimelineItem {
 export default function ClienteFicha360() {
   const nav = useNavigate();
   const { id } = useParams();
-  const { clienteById, lancamentos, proximasAcoes, orcamentos, negocios } = useAppStore();
+  const { clienteById, lancamentos, proximasAcoes, orcamentos, negocios, empresas, oportunidades } = useAppStore();
   const cliente = clienteById(id || "");
 
   const visitas = useMemo(() => lancamentos.filter((l) => l.clienteId === id && l.tipo === "Visita"), [lancamentos, id]);
@@ -33,6 +34,9 @@ export default function ClienteFicha360() {
     return Math.max(lancado, ganho);
   }, [id, lancamentos, negocios]);
 
+
+
+  const orcamentosCliente = useMemo(() => orcamentos.filter((o) => o.clienteId === id).sort((a,b)=> (b.data || "").localeCompare(a.data || "")), [orcamentos, id]);
   const timeline = useMemo<TimelineItem[]>(() => {
     const itens: TimelineItem[] = [];
     proximasAcoes.filter((a) => a.clienteId === id).forEach((a) => itens.push({ id: `a-${a.id}`, data: a.data, tipo: "Próxima ação", titulo: `${a.tipo}: ${a.descricao}`, detalhe: a.objetivo, status: a.status }));
@@ -90,6 +94,23 @@ export default function ClienteFicha360() {
         <Button size="sm" variant="outline" onClick={() => nav(`/lancamentos?clienteId=${cliente.id}&tipo=Ligação`)}>Registrar ligação</Button>
         <Button size="sm" variant="outline" onClick={() => nav(`/orcamentos?clienteId=${cliente.id}`)}>Criar orçamento</Button>
         <Button size="sm" variant="outline" onClick={() => nav(`/clientes?edit=${cliente.id}`)}>Editar cliente</Button>
+      </div>
+    </Card>
+
+
+
+    <Card className="p-4">
+      <h2 className="mb-3 text-sm font-semibold">Orçamentos e versões</h2>
+      <div className="space-y-2">
+        {orcamentosCliente.map((o) => <div key={o.id} className="rounded border p-2 text-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2"><b>{o.codigo} v{o.versao || 1}</b><Badge variant="outline">{o.status}</Badge></div>
+          <div className="text-muted-foreground">Oportunidade: {o.oportunidadeId || "Sem vínculo"} · Envio: {o.dataEnvio || "-"} · Validade: {o.validade || "-"}</div>
+          <div>Valor total: <b>{fmtBRL(o.valorTotal)}</b></div>
+          <div className="mt-2 flex gap-2">
+            <Button size="sm" variant="outline" onClick={() => nav(`/orcamentos?edit=${o.id}`)}>Abrir orçamento</Button>
+            <Button size="sm" onClick={() => gerarPdfOrcamento(o, cliente, empresas.find((e) => e.id === o.empresaId), oportunidades.find((op) => op.id === o.oportunidadeId))}>PDF</Button>
+          </div>
+        </div>)}
       </div>
     </Card>
 
