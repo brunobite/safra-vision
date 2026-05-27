@@ -1,8 +1,8 @@
 import { Cliente, ClienteCulturaArea, Lancamento, Negocio, Orcamento, ProximaAcao } from "@/types";
-import { formatDateBR } from "@/utils/dateUtils";
 
 export const CULTURAS_SUGERIDAS = ["Soja", "Arroz", "Milho", "Trigo", "Pastagem", "Aveia", "Outra"];
 
+export { formatDateBR } from "@/utils/dateUtils";
 
 export function parseFrequenciaDias(freq?: string) {
   const num = Number((freq || "").match(/\d+/)?.[0] || 0);
