@@ -56,6 +56,8 @@ export default function ClienteFicha360() {
   const orcAprovados = orcamentos.filter((o) => o.clienteId === id && o.status === "Aprovado").length;
   const orcPerdidos = orcamentos.filter((o) => o.clienteId === id && ["Recusado", "Vencido", "Reprovado", "Cancelado"].includes(o.status)).length;
   const negociosGanhos = negocios.filter((n) => n.clienteId === id && n.status === "Fechado ganho").length;
+  const oppGanhas = oportunidades.filter((o) => o.clienteId === id && o.etapa === "Ganha");
+  const oppPerdidas = oportunidades.filter((o) => o.clienteId === id && o.etapa === "Perdida");
 
   return <div className="space-y-4">
     <Card className="p-4">
@@ -111,6 +113,28 @@ export default function ClienteFicha360() {
             <Button size="sm" onClick={() => gerarPdfOrcamento(o, cliente, empresas.find((e) => e.id === o.empresaId), oportunidades.find((op) => op.id === o.oportunidadeId))}>PDF</Button>
           </div>
         </div>)}
+      </div>
+    </Card>
+
+
+    <Card className="p-4">
+      <h2 className="mb-3 text-sm font-semibold">Fechamento comercial</h2>
+      <div className="grid gap-2 text-sm md:grid-cols-2">
+        <div>Oportunidades ganhas: <b>{oppGanhas.length}</b></div><div>Oportunidades perdidas: <b>{oppPerdidas.length}</b></div>
+      </div>
+      <div className="mt-2 space-y-2 text-xs">
+        {[...oppGanhas,...oppPerdidas].sort((a,b)=>(b.dataFechamento||"").localeCompare(a.dataFechamento||"")).map((o)=>{
+          const neg = negocios.find((n)=>n.oportunidadeId===o.id);
+          const orc = orcamentos.find((x)=>x.id===neg?.orcamentoId || x.oportunidadeId===o.id);
+          const pos = proximasAcoes.find((a)=>a.oportunidadeId===o.id && ["Pendente","Em andamento"].includes(a.status));
+          return <div key={o.id} className="rounded border p-2">
+            <div><b>{o.etapa}</b> • {formatDateBR(o.dataFechamento)} • Valor: {fmtBRL(o.valorFinal||o.valorEstimado||0)}</div>
+            <div>Negócio: {neg ? `${neg.id} (${fmtBRL(neg.valorFechado||neg.valorPotencial||0)})` : "Não gerado"}</div>
+            <div>Orçamento vinculado: {orc?.codigo || "Sem vínculo"}</div>
+            <div>Motivo da perda: {o.motivoPerda || "—"}</div>
+            <div>Próxima ação pós-venda: {pos ? `${pos.tipo} em ${formatDateBR(pos.data)}` : "—"}</div>
+          </div>;
+        })}
       </div>
     </Card>
 
