@@ -10,7 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAppStore } from "@/store/AppStore";
-import { BaseMode, ImportLog, RegraComissao, AplicarSobre, FaixaComissao, CATEGORIAS_PRODUTO_PADRAO, Empresa, FormaPagamento } from "@/types";
+import { BaseMode, ImportLog, RegraComissao, AplicarSobre, FaixaComissao, CATEGORIAS_PRODUTO_PADRAO, Empresa, FormaPagamento, PrazoPagamento } from "@/types";
 import { Plus, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { getLocalDbStats, LocalDbStats, replaceLocalDatabase, resetLocalDatabase, saveStore } from "@/lib/localRepository";
@@ -35,7 +35,7 @@ const defaultEmpresa: Empresa = { id: "", nomeFantasia: "", razaoSocial: "", cnp
 export default function Configuracoes() {
   const {
     regras, setRegras, vendedores, setVendedores, ticketsMedios, setTicketsMedios, dbError, isSaving, lastSavedAt, saveError,
-    clientes, lancamentos, negocios, produtos, metasEmpresa, metasPessoais, eventos, metasVendedor, metasCategoria, prioridadesP1, orcamentos, setOrcamentos, empresas, setEmpresas, formasPagamento, setFormasPagamento,
+    clientes, lancamentos, negocios, produtos, metasEmpresa, metasPessoais, eventos, metasVendedor, metasCategoria, prioridadesP1, orcamentos, setOrcamentos, empresas, setEmpresas, formasPagamento, setFormasPagamento, prazosPagamento, setPrazosPagamento,
     setClientes, setLancamentos, setNegocios, setProdutos, setMetasEmpresa, setMetasPessoais, setEventos, setMetasVendedor, setMetasCategoria, setPrioridadesP1, appConfig, setAppConfig,
   } = useAppStore();
   const [open, setOpen] = useState(false);
@@ -73,7 +73,7 @@ export default function Configuracoes() {
 
   const exportPayload = {
     clientes, vendedores, lancamentos, negocios, produtos, metasEmpresa, metasPessoais, regrasComissao: regras, eventos,
-    configuracoes: ticketsMedios, metasVendedor, metasCategoria, prioridadesP1, orcamentos, empresas, formasPagamento,
+    configuracoes: ticketsMedios, metasVendedor, metasCategoria, prioridadesP1, orcamentos, empresas, formasPagamento, prazosPagamento,
   };
 
   const handleRestoreFile = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -101,6 +101,7 @@ export default function Configuracoes() {
       setOrcamentos((restored.orcamentos ?? []) as never[]);
       setEmpresas((restored.empresas ?? []) as never[]);
       setFormasPagamento((restored.formasPagamento ?? []) as never[]);
+      setPrazosPagamento((restored.prazosPagamento ?? []) as never[]);
 
       toast.success("Backup restaurado com sucesso.");
       void loadStats();
@@ -267,6 +268,15 @@ export default function Configuracoes() {
             <Button onClick={() => { const nomeEl = document.getElementById("nova-forma") as HTMLInputElement | null; const nome = nomeEl?.value.trim() || ""; if (!nome) return; setFormasPagamento(prev => [...prev, { id: `fp${Date.now()}`, nome, ativo: true, padrao: prev.length===0 } as FormaPagamento]); if (nomeEl) nomeEl.value = ""; }}>Adicionar</Button>
           </div>
           {formasPagamento.map((fp) => <div key={fp.id} className="flex items-center justify-between gap-2 text-sm border rounded p-2"><Input value={fp.nome} onChange={e=>setFormasPagamento(prev=>prev.map(x=>x.id===fp.id?{...x,nome:e.target.value}:x))} /><div className="flex gap-1"><Button size="sm" variant="outline" onClick={()=>setFormasPagamento(prev=>prev.map(x=>({...x,padrao:x.id===fp.id})))}>Padrão</Button><Button size="sm" variant="outline" onClick={()=>setFormasPagamento(prev=>prev.map(x=>x.id===fp.id?{...x,ativo:!x.ativo}:x))}>{fp.ativo?"Inativar":"Ativar"}</Button><Button size="sm" variant="destructive" onClick={()=>{if(window.confirm("Excluir forma de pagamento?"))setFormasPagamento(prev=>prev.filter(x=>x.id!==fp.id));}}>Excluir</Button></div></div>)}
+        <div className="rounded border p-3 space-y-2">
+          <div className="text-sm font-semibold">Prazos de pagamento</div>
+          <div className="grid gap-2 md:grid-cols-3">
+            <Input id="novo-prazo" placeholder="Novo prazo" />
+            <Button onClick={() => { const nomeEl = document.getElementById("novo-prazo") as HTMLInputElement | null; const nome = nomeEl?.value.trim() || ""; if (!nome) return; setPrazosPagamento(prev => [...prev, { id: `pp${Date.now()}`, nome, ativo: true, padrao: prev.length===0 } as PrazoPagamento]); if (nomeEl) nomeEl.value = ""; }}>Adicionar</Button>
+          </div>
+          {prazosPagamento.map((pp) => <div key={pp.id} className="flex items-center justify-between gap-2 text-sm border rounded p-2"><Input value={pp.nome} onChange={e=>setPrazosPagamento(prev=>prev.map(x=>x.id===pp.id?{...x,nome:e.target.value}:x))} /><div className="flex gap-1"><Button size="sm" variant="outline" onClick={()=>setPrazosPagamento(prev=>prev.map(x=>({...x,padrao:x.id===pp.id})))}>Padrão</Button><Button size="sm" variant="outline" onClick={()=>setPrazosPagamento(prev=>prev.map(x=>x.id===pp.id?{...x,ativo:!x.ativo}:x))}>{pp.ativo?"Inativar":"Ativar"}</Button><Button size="sm" variant="destructive" onClick={()=>{if(window.confirm("Excluir prazo de pagamento?"))setPrazosPagamento(prev=>prev.filter(x=>x.id!==pp.id));}}>Excluir</Button></div></div>)}
+        </div>
+
         </div>
       </Card></TabsContent>
 

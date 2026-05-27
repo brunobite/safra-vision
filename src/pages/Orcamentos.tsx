@@ -22,16 +22,22 @@ const validade7 = (base: string) => new Date(new Date(base).getTime() + 7 * 8640
 const novoItem = (idx: number, areaHa = 0): OrcamentoItem => ({ id: `i${Date.now()}-${idx}`, produtoId: "", produtoNome: "", categoria: "", unidadeProduto: "LT", dosePorHa: 0, unidadeDose: "L/ha", areaHa, quantidadeTotal: 0, precoUnitario: 0, valorTotalItem: 0, custoPorHaItem: 0 });
 
 export default function Orcamentos() {
-  const { orcamentos, setOrcamentos, clientes, produtos, empresas, oportunidades, formasPagamento, proximasAcoes, setProximasAcoes, setOportunidades } = useAppStore();
+  const { orcamentos, setOrcamentos, clientes, produtos, empresas, oportunidades, vendedores, formasPagamento, prazosPagamento, proximasAcoes, setProximasAcoes, setOportunidades } = useAppStore();
   const [params] = useSearchParams();
+  const vendedoresAtivos = vendedores.filter((v) => v.ativo);
+  const formasPagamentoAtivas = formasPagamento.filter((f) => f.ativo);
+  const prazosPagamentoAtivos = prazosPagamento.filter((p) => p.ativo);
+  const formasPagamentoFallback = ["Boleto", "Pix", "Dinheiro", "Cartão", "Safra", "Barter", "Outro"];
+  const prazosPagamentoFallback = ["À vista", "7 dias", "14 dias", "21 dias", "28 dias", "30 dias", "45 dias", "60 dias", "Safra", "Barter", "Outro"];
   const empresaPadrao = empresas.find((e) => e.padrao && e.ativa)?.id || empresas.find((e) => e.ativa)?.id || "";
-  const formaPagamentoPadrao = formasPagamento.find((f) => f.padrao && f.ativo)?.nome || formasPagamento.find((f) => f.ativo)?.nome || "";
+  const formaPagamentoPadrao = formasPagamentoAtivas.find((f) => f.padrao)?.nome || formasPagamentoAtivas[0]?.nome || formasPagamentoFallback[0];
+  const prazoPagamentoPadrao = prazosPagamentoAtivos.find((p) => p.padrao)?.nome || prazosPagamentoAtivos[0]?.nome || prazosPagamentoFallback[0];
   const now = new Date().toISOString();
 
   const [open, setOpen] = useState(false);
   const [edit, setEdit] = useState<Orcamento | null>(null);
   const [motivoRevisao, setMotivoRevisao] = useState("");
-  const [form, setForm] = useState<Orcamento>({ id: "", codigo: `ORC-${Date.now()}`, versao: 1, clienteId: "", empresaId: empresaPadrao, vendedor: "", data: now.slice(0, 10), validade: validade7(now.slice(0, 10)), status: "Rascunho", areaAplicacaoHa: 0, itens: [], subtotal: 0, descontoTotal: 0, valorTotal: 0, custoPorHectare: 0, createdAt: now, updatedAt: now, prazoPagamento: "", formaPagamento: formaPagamentoPadrao });
+  const [form, setForm] = useState<Orcamento>({ id: "", codigo: `ORC-${Date.now()}`, versao: 1, clienteId: "", empresaId: empresaPadrao, vendedor: "", data: now.slice(0, 10), validade: validade7(now.slice(0, 10)), status: "Rascunho", areaAplicacaoHa: 0, itens: [], subtotal: 0, descontoTotal: 0, valorTotal: 0, custoPorHectare: 0, createdAt: now, updatedAt: now, prazoPagamento: prazoPagamentoPadrao, formaPagamento: formaPagamentoPadrao });
 
   const isLegacy = Boolean(edit?.id && !edit?.oportunidadeId);
   const oportunidadesAbertasCliente = oportunidades.filter((o) => o.clienteId === form.clienteId && !["Ganha", "Perdida", "Cancelada"].includes(o.etapa));
@@ -51,7 +57,7 @@ export default function Orcamentos() {
     const current = new Date().toISOString();
     setEdit(null);
     setMotivoRevisao("");
-    setForm({ id: "", codigo: `ORC-${Date.now()}`, versao: 1, clienteId: "", empresaId: empresaPadrao, vendedor: "", data: current.slice(0, 10), validade: validade7(current.slice(0, 10)), status: "Rascunho", areaAplicacaoHa: 0, itens: [], subtotal: 0, descontoTotal: 0, valorTotal: 0, custoPorHectare: 0, createdAt: current, updatedAt: current, prazoPagamento: "", formaPagamento: formaPagamentoPadrao });
+    setForm({ id: "", codigo: `ORC-${Date.now()}`, versao: 1, clienteId: "", empresaId: empresaPadrao, vendedor: "", data: current.slice(0, 10), validade: validade7(current.slice(0, 10)), status: "Rascunho", areaAplicacaoHa: 0, itens: [], subtotal: 0, descontoTotal: 0, valorTotal: 0, custoPorHectare: 0, createdAt: current, updatedAt: current, prazoPagamento: prazoPagamentoPadrao, formaPagamento: formaPagamentoPadrao });
     setOpen(true);
   };
 
@@ -124,7 +130,7 @@ export default function Orcamentos() {
         <div><Label>Cliente</Label><Select value={form.clienteId} onValueChange={(v) => setForm({ ...form, clienteId: v, oportunidadeId: undefined })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{clientes.map((c) => <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>)}</SelectContent></Select></div>
         <div><Label>Oportunidade vinculada</Label><Select value={form.oportunidadeId || (isLegacy ? "legacy" : "")} onValueChange={(v) => setForm({ ...form, oportunidadeId: v === "legacy" ? undefined : v })}><SelectTrigger><SelectValue placeholder="Obrigatório para novo orçamento" /></SelectTrigger><SelectContent>{isLegacy && <SelectItem value="legacy">Legado/sem vínculo</SelectItem>}{oportunidadesAbertasCliente.map((o) => <SelectItem key={o.id} value={o.id}>{o.etapa} · {o.necessidade || o.id}</SelectItem>)}</SelectContent></Select></div>
         <div><Label>Empresa</Label><Select value={form.empresaId} onValueChange={(v) => setForm({ ...form, empresaId: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{empresas.filter((e) => e.ativa).map((e) => <SelectItem key={e.id} value={e.id}>{e.nomeFantasia}</SelectItem>)}</SelectContent></Select></div>
-        <div><Label>Vendedor/Responsável</Label><Input value={form.responsavel || form.vendedor || ""} onChange={(e) => setForm({ ...form, responsavel: e.target.value, vendedor: e.target.value })} /></div>
+        <div><Label>Vendedor/Responsável</Label><Select value={form.responsavel || form.vendedor || ""} onValueChange={(v) => setForm({ ...form, responsavel: v, vendedor: v })}><SelectTrigger><SelectValue placeholder="Selecione o vendedor" /></SelectTrigger><SelectContent>{vendedoresAtivos.length ? vendedoresAtivos.map((v) => <SelectItem key={v.id} value={v.nome}>{v.nome}</SelectItem>) : <SelectItem value="Sem vendedor cadastrado">Sem vendedor cadastrado</SelectItem>}</SelectContent></Select></div>
         <div><Label>Data</Label><Input type="date" value={form.data} onChange={(e) => setForm({ ...form, data: e.target.value })} /></div>
         <div><Label>Validade</Label><Input type="date" value={form.validade || ""} onChange={(e) => setForm({ ...form, validade: e.target.value })} /></div>
         <div><Label>Status</Label><Select value={form.status} onValueChange={(v: OrcamentoStatus) => setForm({ ...form, status: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{statusOptions.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent></Select></div>
@@ -137,7 +143,7 @@ export default function Orcamentos() {
           <div><Label>Dose/ha</Label><Input type="number" value={it.dosePorHa} onChange={(e) => { const itens = [...form.itens]; itens[idx] = { ...it, dosePorHa: +e.target.value }; setForm(recalc({ ...form, itens })); }} /></div>
           <div><Label>Unid. dose</Label><Select value={it.unidadeDose} onValueChange={(v: UnidadeDose) => { const itens = [...form.itens]; itens[idx] = { ...it, unidadeDose: v }; setForm(recalc({ ...form, itens })); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{DOSE_UNIDADES.map((u) => <SelectItem key={u} value={u}>{u}</SelectItem>)}</SelectContent></Select></div>
           <div><Label>Área</Label><Input type="number" value={it.areaHa} onChange={(e) => { const itens = [...form.itens]; itens[idx] = { ...it, areaHa: +e.target.value }; setForm(recalc({ ...form, itens })); }} /></div>
-          <div><Label>Resumo técnico/comercial</Label><Input value={calc.resumo} disabled /></div>
+          <div><Label>Qtd. calculada</Label><Input value={`${calc.quantidadeComercial.toLocaleString("pt-BR", { maximumFractionDigits: 3 })} ${p?.unidade || it.unidadeProduto}`} disabled /></div>
           <div><Label>Unid. comercial</Label><Input value={p?.unidade || it.unidadeProduto} disabled /></div>
           <div><Label>Valor unit.</Label><Input type="number" value={it.precoUnitario} onChange={(e) => { const itens = [...form.itens]; itens[idx] = { ...it, precoUnitario: +e.target.value }; setForm(recalc({ ...form, itens })); }} /></div>
           <div><Label>Subtotal item</Label><Input value={fmtBRL(total)} disabled /></div>
@@ -148,8 +154,8 @@ export default function Orcamentos() {
       </Card>
 
       <Card className="p-3"><h3 className="font-semibold">Condições comerciais</h3><div className="grid gap-2 md:grid-cols-4">
-        <div><Label>Forma de pagamento</Label><Input value={form.formaPagamento || formaPagamentoPadrao} onChange={(e) => setForm({ ...form, formaPagamento: e.target.value })} /></div>
-        <div><Label>Prazo pagamento</Label><Input value={form.prazoPagamento || ""} onChange={(e) => setForm({ ...form, prazoPagamento: e.target.value })} /></div>
+        <div><Label>Forma de pagamento</Label><Select value={form.formaPagamento || formaPagamentoPadrao} onValueChange={(v) => setForm({ ...form, formaPagamento: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{(formasPagamentoAtivas.length ? formasPagamentoAtivas.map((f) => f.nome) : formasPagamentoFallback).map((nome) => <SelectItem key={nome} value={nome}>{nome}</SelectItem>)}</SelectContent></Select></div>
+        <div><Label>Prazo pagamento</Label><Select value={form.prazoPagamento || prazoPagamentoPadrao} onValueChange={(v) => setForm({ ...form, prazoPagamento: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{(prazosPagamentoAtivos.length ? prazosPagamentoAtivos.map((p) => p.nome) : prazosPagamentoFallback).map((nome) => <SelectItem key={nome} value={nome}>{nome}</SelectItem>)}</SelectContent></Select></div>
         <div><Label>Desconto total</Label><Input type="number" value={form.descontoTotal || 0} onChange={(e) => setForm(recalc({ ...form, descontoTotal: +e.target.value }))} /></div>
         <div><Label>Canal de envio</Label><Select value={form.canalEnvio || ""} onValueChange={(v) => setForm({ ...form, canalEnvio: v })}><SelectTrigger><SelectValue placeholder="Opcional" /></SelectTrigger><SelectContent>{CANAIS_ENVIO.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent></Select></div>
         <div><Label>Data envio</Label><Input type="date" value={form.dataEnvio || ""} onChange={(e) => setForm({ ...form, dataEnvio: e.target.value })} /></div>

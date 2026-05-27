@@ -56,6 +56,7 @@ export interface ProximaAcao {
 }
 
 export interface Vendedor { id: string; nome: string; telefone?: string; email?: string; ativo: boolean; }
+export interface PrazoPagamento { id: string; nome: string; ativo: boolean; padrao: boolean; }
 
 export interface ClienteCulturaArea {
   id: string;
