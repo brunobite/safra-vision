@@ -102,7 +102,7 @@ export default function Lancamentos() {
     const id = editId || `l${Date.now()}`;
     const agora = new Date();
     const hoje = agora.toISOString().slice(0, 10);
-    let negocioId = form.negocioId;
+    const negocioId = form.negocioId;
     let oportunidadeId = form.oportunidadeId;
     const itensCalculados: OrcamentoItem[] = form.oppProdutos.filter(p => p.produtoId).map((p, idx) => {
       const prod = produtos.find(pp => pp.id === p.produtoId)!;
