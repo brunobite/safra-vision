@@ -2,16 +2,62 @@ import { OrcamentoItem, Produto, UnidadeDose } from "@/types";
 
 export const DOSE_UNIDADES: UnidadeDose[] = ["L/ha", "mL/ha", "kg/ha", "g/ha", "ton/ha", "un/ha"];
 
+const BASE_VOLUME_LT: Record<Produto["unidade"], number> = { LT: 1, GAL: 5, BD: 20, KG: 0, TON: 0 };
+
+const round = (value: number, digits = 6) => Number(value.toFixed(digits));
+
 export function calcularQuantidadeComercial(unidadeProduto: Produto["unidade"], dose: number, unidadeDose: UnidadeDose, area: number) {
-  const doseTotal = (dose || 0) * (area || 0);
-  if (unidadeProduto === "TON" && unidadeDose === "kg/ha") return { quantidadeComercial: doseTotal / 1000, resumo: `${doseTotal.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} kg / ${(doseTotal / 1000).toLocaleString("pt-BR", { maximumFractionDigits: 2 })} TON` };
-  if (unidadeProduto === "LT" && unidadeDose === "mL/ha") return { quantidadeComercial: doseTotal / 1000, resumo: `${doseTotal.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} mL / ${(doseTotal / 1000).toLocaleString("pt-BR", { maximumFractionDigits: 2 })} LT` };
-  if (unidadeProduto === "KG" && unidadeDose === "g/ha") return { quantidadeComercial: doseTotal / 1000, resumo: `${doseTotal.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} g / ${(doseTotal / 1000).toLocaleString("pt-BR", { maximumFractionDigits: 2 })} KG` };
-  return { quantidadeComercial: doseTotal, resumo: `${doseTotal.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} ${unidadeProduto}` };
+  const doseSafe = dose || 0;
+  const areaSafe = area || 0;
+  const doseLHa = unidadeDose === "mL/ha" ? doseSafe / 1000 : unidadeDose === "L/ha" ? doseSafe : 0;
+  const doseKgHa = unidadeDose === "g/ha" ? doseSafe / 1000 : unidadeDose === "kg/ha" ? doseSafe : unidadeDose === "ton/ha" ? doseSafe * 1000 : 0;
+
+  if (["LT", "GAL", "BD"].includes(unidadeProduto)) {
+    const litrosNecessarios = doseLHa * areaSafe;
+    if (unidadeProduto === "LT") {
+      const quantidadeComercial = round(litrosNecessarios);
+      return { quantidadeComercial, necessidadeTecnica: round(litrosNecessarios), volumeComercial: quantidadeComercial, unidadeBase: "L", precoBaseDivisor: 1, resumo: `${quantidadeComercial.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} L necessários` };
+    }
+    const porVasilhame = BASE_VOLUME_LT[unidadeProduto];
+    const quantidadeComercial = Math.ceil(Math.max(0, litrosNecessarios) / porVasilhame);
+    const volumeComercial = quantidadeComercial * porVasilhame;
+    return { quantidadeComercial, necessidadeTecnica: round(litrosNecessarios), volumeComercial, unidadeBase: "L", precoBaseDivisor: porVasilhame, resumo: `${round(litrosNecessarios).toLocaleString("pt-BR", { maximumFractionDigits: 2 })} L necessários → ${quantidadeComercial} ${unidadeProduto} (${volumeComercial.toLocaleString("pt-BR")} L comerciais)` };
+  }
+
+  if (["KG", "TON"].includes(unidadeProduto)) {
+    const kgNecessarios = doseKgHa * areaSafe;
+    if (unidadeProduto === "KG") {
+      const quantidadeComercial = round(kgNecessarios);
+      return { quantidadeComercial, necessidadeTecnica: round(kgNecessarios), volumeComercial: quantidadeComercial, unidadeBase: "kg", precoBaseDivisor: 1, resumo: `${quantidadeComercial.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} kg necessários` };
+    }
+    const quantidadeComercial = round(kgNecessarios / 1000);
+    return { quantidadeComercial, necessidadeTecnica: round(kgNecessarios), volumeComercial: round(quantidadeComercial * 1000), unidadeBase: "kg", precoBaseDivisor: 1000, resumo: `${round(kgNecessarios).toLocaleString("pt-BR", { maximumFractionDigits: 2 })} kg necessários → ${quantidadeComercial.toLocaleString("pt-BR", { maximumFractionDigits: 3 })} TON` };
+  }
+
+  const doseTotal = doseSafe * areaSafe;
+  return { quantidadeComercial: round(doseTotal), necessidadeTecnica: round(doseTotal), volumeComercial: round(doseTotal), unidadeBase: "un", precoBaseDivisor: 1, resumo: `${round(doseTotal).toLocaleString("pt-BR", { maximumFractionDigits: 2 })} ${unidadeProduto}` };
 }
 
 export function recalcularItem(base: OrcamentoItem, produto: Produto): OrcamentoItem {
   const calc = calcularQuantidadeComercial(produto.unidade, base.dosePorHa, base.unidadeDose, base.areaHa);
-  const valorTotalItem = calc.quantidadeComercial * (base.precoUnitario || 0);
-  return { ...base, produtoNome: produto.nome, categoria: produto.categoria, unidadeProduto: produto.unidade, quantidadeTotal: calc.quantidadeComercial, valorTotalItem, custoPorHaItem: base.areaHa > 0 ? valorTotalItem / base.areaHa : 0, observacoes: `Resumo: ${calc.resumo}` };
+  const precoUnitario = base.precoUnitario || 0;
+  const valorTotalItem = round(calc.quantidadeComercial * precoUnitario, 2);
+  const doseBaseHa = calc.unidadeBase === "L"
+    ? (base.unidadeDose === "mL/ha" ? base.dosePorHa / 1000 : base.unidadeDose === "L/ha" ? base.dosePorHa : 0)
+    : calc.unidadeBase === "kg"
+      ? (base.unidadeDose === "g/ha" ? base.dosePorHa / 1000 : base.unidadeDose === "kg/ha" ? base.dosePorHa : base.unidadeDose === "ton/ha" ? base.dosePorHa * 1000 : 0)
+      : base.dosePorHa;
+  const precoBase = calc.precoBaseDivisor > 0 ? precoUnitario / calc.precoBaseDivisor : precoUnitario;
+  const custoPorHaItem = round(precoBase * doseBaseHa, 2);
+
+  return {
+    ...base,
+    produtoNome: produto.nome,
+    categoria: produto.categoria,
+    unidadeProduto: produto.unidade,
+    quantidadeTotal: calc.quantidadeComercial,
+    valorTotalItem,
+    custoPorHaItem,
+    observacoes: `Resumo: ${calc.resumo}`,
+  };
 }

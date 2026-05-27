@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useAppStore } from "@/store/AppStore";
 import { fmtBRL, fmtNum } from "@/utils/calculations";
-import { formatDateBR } from "@/lib/clientesUtils";
+import { formatDateBR } from "@/utils/dateUtils";
 import { gerarPdfOrcamento } from "@/lib/orcamentoPdf";
 
 interface TimelineItem {
@@ -104,7 +104,7 @@ export default function ClienteFicha360() {
       <div className="space-y-2">
         {orcamentosCliente.map((o) => <div key={o.id} className="rounded border p-2 text-sm">
           <div className="flex flex-wrap items-center justify-between gap-2"><b>{o.codigo} v{o.versao || 1}</b><Badge variant="outline">{o.status}</Badge></div>
-          <div className="text-muted-foreground">Oportunidade: {o.oportunidadeId || "Sem vínculo"} · Envio: {o.dataEnvio || "-"} · Validade: {o.validade || "-"}</div>
+          <div className="text-muted-foreground">Oportunidade: {o.oportunidadeId || "Sem vínculo"} · Envio: {formatDateBR(o.dataEnvio)} · Validade: {formatDateBR(o.validade)}</div>
           <div>Valor total: <b>{fmtBRL(o.valorTotal)}</b></div>
           <div className="mt-2 flex gap-2">
             <Button size="sm" variant="outline" onClick={() => nav(`/orcamentos?edit=${o.id}`)}>Abrir orçamento</Button>
