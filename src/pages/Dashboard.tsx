@@ -86,6 +86,19 @@ export default function Dashboard() {
   }, [clientes, proximasAcoes, lancamentos, hoje]);
 
 
+  const fechamentoComercial = useMemo(() => {
+    const abertas = filtered.oportunidades.filter((o) => !["Ganha", "Perdida", "Cancelada"].includes(o.etapa));
+    const ganhas = filtered.oportunidades.filter((o) => o.etapa === "Ganha");
+    const perdidas = filtered.oportunidades.filter((o) => o.etapa === "Perdida");
+    const taxaConversao = (ganhas.length + perdidas.length) ? ganhas.length / (ganhas.length + perdidas.length) : 0;
+    const valorGanho = ganhas.reduce((s, o) => s + (o.valorFinal || o.valorEstimado || 0), 0);
+    const valorPerdido = perdidas.reduce((s, o) => s + (o.valorFinal || o.valorEstimado || 0), 0);
+    const semProximaAcao = abertas.filter((o) => !proximasAcoes.some((a) => a.oportunidadeId === o.id && ["Pendente", "Em andamento"].includes(a.status))).length;
+    const ganhasSemPos = ganhas.filter((o) => !proximasAcoes.some((a) => a.oportunidadeId === o.id && ["Entrega","Acompanhamento técnico","Conferir aplicação","Visita pós-venda","Cobrança comercial futura","Pós-venda"].includes(a.tipo))).length;
+    const motivos = Object.entries(perdidas.reduce((m,o)=>{const k=o.motivoPerda||"Não informado"; m[k]=(m[k]||0)+1; return m;}, {} as Record<string,number>)).sort((a,b)=>b[1]-a[1]).slice(0,5);
+    return {abertas:abertas.length, ganhas:ganhas.length, perdidas:perdidas.length, taxaConversao, valorGanho, valorPerdido, semProximaAcao, ganhasSemPos, motivos};
+  }, [filtered.oportunidades, proximasAcoes]);
+
   const comercial = useMemo(() => {
     const abertos = orcamentos.filter(o => ["Aberto","Rascunho"].includes(o.status));
     const negociacao = orcamentos.filter(o => o.status === "Em negociação");
@@ -135,6 +148,21 @@ export default function Dashboard() {
         <div className="space-y-2">{proximasAcoes.filter(a=>{const d=a.data; if(acaoFiltro==="hoje") return d===hoje; if(acaoFiltro==="atrasadas") return a.status==="Pendente"&&d<hoje; if(acaoFiltro==="semana") return d>=hoje && d<=new Date(Date.now()+6*86400000).toISOString().slice(0,10); if(acaoFiltro==="mes") return d.slice(0,7)===hoje.slice(0,7); return true;}).map(a=>{const color=(a.status==="Pendente"&&a.data<hoje)?"bg-red-100 text-red-700":a.data===hoje?"bg-blue-100 text-blue-700":a.descricao.toLowerCase().includes("prior")?"bg-yellow-100 text-yellow-700":"bg-emerald-100 text-emerald-700"; return <div key={a.id} className="rounded border p-2 text-xs"><div className="flex justify-between"><b>{clienteById(a.clienteId||"")?.nome||"Sem cliente"}</b><span className={`rounded px-2 py-0.5 ${color}`}>{a.status}</span></div><div>{a.data} • {a.tipo} • {a.responsavel || "Sem responsável"}</div><div>{a.descricao}</div></div>;})}</div>
       </Card>
 
+
+      <Card className="p-4">
+        <h2 className="mb-3 text-sm font-semibold text-foreground">Fechamento comercial</h2>
+        <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
+          <KpiCard label="Oportunidades abertas" value={fmtNum(fechamentoComercial.abertas)} />
+          <KpiCard label="Ganhas" value={fmtNum(fechamentoComercial.ganhas)} tone="success" />
+          <KpiCard label="Perdidas" value={fmtNum(fechamentoComercial.perdidas)} tone="destructive" />
+          <KpiCard label="Taxa de conversão" value={fmtPct(fechamentoComercial.taxaConversao)} />
+          <KpiCard label="Valor ganho" value={fmtBRL(fechamentoComercial.valorGanho)} tone="success" />
+          <KpiCard label="Valor perdido" value={fmtBRL(fechamentoComercial.valorPerdido)} tone="destructive" />
+          <KpiCard label="Sem próxima ação" value={fmtNum(fechamentoComercial.semProximaAcao)} tone="warning" />
+          <KpiCard label="Ganhas sem pós-venda" value={fmtNum(fechamentoComercial.ganhasSemPos)} tone="warning" />
+        </div>
+        <div className="mt-2 text-xs"><b>Principais motivos de perda:</b> {fechamentoComercial.motivos.map(([m,q])=>`${m} (${q})`).join(', ') || '—'}</div>
+      </Card>
 
       <Card className="p-4">
         <h2 className="mb-3 text-sm font-semibold text-foreground">Bloco comercial (orçamentos)</h2>

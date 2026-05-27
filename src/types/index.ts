@@ -26,7 +26,7 @@ export const CATEGORIAS_PRODUTO_PADRAO = ["Adjuvantes", "Nutrição", "Fertiliza
 export const CATEGORIAS_PRODUTO: CategoriaProduto[] = [...CATEGORIAS_PRODUTO_PADRAO];
 
 
-export type TipoProximaAcao = "Visita" | "Ligação" | "WhatsApp" | "Reunião" | "Follow-up" | "Orçamento" | "Enviar orçamento" | "Cobrar retorno" | "Pós-venda" | "Renovação" | "Outro";
+export type TipoProximaAcao = "Visita" | "Ligação" | "WhatsApp" | "Reunião" | "Follow-up" | "Orçamento" | "Enviar orçamento" | "Cobrar retorno" | "Pós-venda" | "Entrega" | "Acompanhamento técnico" | "Conferir aplicação" | "Visita pós-venda" | "Cobrança comercial futura" | "Renovação" | "Outro";
 export type StatusProximaAcao = "Pendente" | "Em andamento" | "Realizada" | "Reagendada" | "Cancelada" | "Concluída";
 
 export interface ProximaAcao {
@@ -135,6 +135,8 @@ export interface Lancamento {
 }
 
 export interface Negocio {
+  oportunidadeId?: string;
+  orcamentoId?: string;
   id: string;
   nome?: string;
   clienteId: string;

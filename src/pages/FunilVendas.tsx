@@ -9,130 +9,39 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useAppStore } from "@/store/AppStore";
-import { EtapaOportunidade, MotivoPerdaOportunidade, OportunidadeComercial, OrigemOportunidade, CATEGORIAS_PRODUTO } from "@/types";
+import { EtapaOportunidade, MotivoPerdaOportunidade, OportunidadeComercial, OrigemOportunidade, CATEGORIAS_PRODUTO, TipoProximaAcao } from "@/types";
 import { fmtBRL, fmtNum, fmtPct } from "@/utils/calculations";
 import { GlobalFilters } from "@/components/GlobalFilters";
 import { KpiCard } from "@/components/dashboard/KpiCard";
-import { Plus, Pencil, Trash2, Trophy, X, ArrowRight } from "lucide-react";
+import { Plus, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-
 const ORIGENS: OrigemOportunidade[] = ["Visita", "Ligação", "WhatsApp", "Indicação", "Manual", "Outro"];
 const ETAPAS: EtapaOportunidade[] = ["Identificada", "Qualificação", "Necessidade definida", "Orçamento em elaboração", "Orçamento enviado", "Negociação", "Ganha", "Perdida", "Cancelada"];
 const MOTIVOS_PERDA: MotivoPerdaOportunidade[] = ["Preço", "Prazo", "Concorrente", "Condição de pagamento", "Cliente adiou decisão", "Sem interesse", "Crédito", "Produto indisponível", "Outro"];
+const POS_VENDA_TIPOS: TipoProximaAcao[] = ["Entrega", "Acompanhamento técnico", "Conferir aplicação", "Visita pós-venda", "Cobrança comercial futura", "Outro"];
 
-const empty = (): Omit<OportunidadeComercial, "id"> => ({
-  clienteId: "",
-  origem: "Visita",
-  segmento: "",
-  necessidade: "",
-  valorEstimado: 0,
-  responsavel: "Bruno",
-  etapa: "Identificada",
-  previsaoFechamento: "",
-  probabilidade: 0,
-  observacoes: "",
-  createdAt: new Date().toISOString(),
-  updatedAt: new Date().toISOString(),
-});
-
-export default function FunilVendas() {
-  const { oportunidades, setOportunidades, negocios, setNegocios, clientes, clienteById, vendedores, filtered, orcamentos } = useAppStore();
-  const nav = useNavigate();
-  const [params, setParams] = useSearchParams();
-  const [open, setOpen] = useState(false);
-  const [edit, setEdit] = useState<OportunidadeComercial | null>(null);
-  const [form, setForm] = useState<Omit<OportunidadeComercial, "id">>(empty);
-  const [lossOpen, setLossOpen] = useState<OportunidadeComercial | null>(null);
-  const [motivo, setMotivo] = useState<MotivoPerdaOportunidade>("Preço");
-
-  const list = filtered.oportunidades ?? oportunidades ?? [];
-  const metrics = useMemo(() => {
-    const abertos = list.filter((o) => !["Ganha", "Perdida", "Cancelada"].includes(o.etapa));
-    const ganhos = list.filter((o) => o.etapa === "Ganha");
-    const perdidos = list.filter((o) => o.etapa === "Perdida");
-    const valorPotAberto = abertos.reduce((s, o) => s + (o.valorEstimado || 0), 0);
-    const ponderado = abertos.reduce((s, o) => s + ((o.valorEstimado || 0) * ((o.probabilidade || 0) / 100)), 0);
-    const taxa = (ganhos.length + perdidos.length) ? ganhos.length / (ganhos.length + perdidos.length) : 0;
-    return { pipelineAberto: abertos.length, valorPotAberto, ponderado, ganhos: ganhos.length, perdidos: perdidos.length, taxa };
-  }, [list]);
-
-  const openNew = () => { setEdit(null); setForm(empty()); setOpen(true); };
-  const prefillCliente = params.get("clienteId");
-  useEffect(() => {
-    if (prefillCliente) {
-      setEdit(null);
-      setForm({ ...empty(), clienteId: prefillCliente });
-      setOpen(true);
-      setParams({});
-    }
-  }, [prefillCliente, setParams]);
-  const openEdit = (o: OportunidadeComercial) => { setEdit(o); const { id, ...rest } = o; void id; setForm(rest); setOpen(true); };
-
-  const save = () => {
-    if (!form.clienteId) return toast.error("Selecione cliente.");
-    const updated = { ...form, updatedAt: new Date().toISOString() };
-    if (edit) setOportunidades(prev => prev.map(o => o.id === edit.id ? { ...updated, id: edit.id } : o));
-    else setOportunidades(prev => [{ ...updated, id: `op${Date.now()}` }, ...prev]);
-    setOpen(false);
-    toast.success("Oportunidade salva.");
-  };
-
-  const marcarGanha = (o: OportunidadeComercial) => {
-    const valor = Number(window.prompt("Informe o valor final da oportunidade", String(o.valorFinal || o.valorEstimado || 0)) || 0);
-    if (!Number.isFinite(valor) || valor < 0) return toast.error("Valor final inválido.");
-    const hoje = new Date().toISOString();
-    setOportunidades(prev => prev.map(x => x.id === o.id ? { ...x, etapa: "Ganha", valorFinal: valor, dataFechamento: hoje.slice(0, 10), updatedAt: hoje } : x));
-    setNegocios(prev => {
-      const existente = prev.find(n => n.clienteId === o.clienteId && n.status === "Fechado ganho" && n.nome === `Oportunidade ${o.id}`);
-      if (existente) return prev.map(n => n.id === existente.id ? { ...n, valorFechado: valor, valorPotencial: valor, ultimaAtualizacao: hoje.slice(0, 10) } : n);
-      return [{ id: `n${Date.now()}`, nome: `Oportunidade ${o.id}`, clienteId: o.clienteId, vendedor: o.responsavel || "", origem: "Manual", produtos: [], categoria: o.segmento || "Outros", valorPotencial: valor, valorFechado: valor, status: "Fechado ganho", dataCriacao: hoje.slice(0, 10), ultimaAtualizacao: hoje.slice(0, 10), segmento: o.segmento, responsavel: o.responsavel }, ...prev];
-    });
-    toast.success("Oportunidade marcada como ganha e negócio gerado.");
-  };
-
-  const mudarEtapa = (o: OportunidadeComercial, etapa: EtapaOportunidade) => {
-    if (etapa === "Ganha") return marcarGanha(o);
-    if (etapa === "Perdida") { setLossOpen(o); setMotivo("Preço"); return; }
-    setOportunidades(prev => prev.map(x => x.id === o.id ? { ...x, etapa, updatedAt: new Date().toISOString() } : x));
-    toast.success(`Oportunidade movida para ${etapa}.`);
-  };
-
-  const confirmarPerda = () => {
-    if (!lossOpen) return;
-    setOportunidades(prev => prev.map(x => x.id === lossOpen.id ? { ...x, etapa: "Perdida", motivoPerda: motivo, dataFechamento: new Date().toISOString().slice(0, 10), updatedAt: new Date().toISOString() } : x));
-    toast.success("Oportunidade marcada como perdida.");
-    setLossOpen(null);
-  };
-
-  const funilOrcamentos = useMemo(() => {
-    const etapas = ["Prospecção", "Contato feito", "Orçamento enviado", "Negociação", "Aprovado", "Perdido"] as const;
-    const mapped = {
-      "Prospecção": orcamentos.filter(o => ["Rascunho", "Aberto"].includes(o.status)),
-      "Contato feito": list.filter(o => ["Identificada", "Qualificação"].includes(o.etapa)).map(o => ({ valorTotal: o.valorEstimado || 0 })),
-      "Orçamento enviado": orcamentos.filter(o => o.status === "Enviado"),
-      "Negociação": orcamentos.filter(o => o.status === "Em negociação"),
-      "Aprovado": orcamentos.filter(o => o.status === "Aprovado"),
-      "Perdido": orcamentos.filter(o => ["Recusado", "Vencido", "Reprovado", "Cancelado"].includes(o.status)),
-    } as const;
-    const rows = etapas.map((etapa) => { const arr = mapped[etapa] as Array<{ valorTotal: number }>; const total = arr.reduce((s, x) => s + (x.valorTotal || 0), 0); return { etapa, qtd: arr.length, valor: total, ticket: arr.length ? total / arr.length : 0 }; });
-    return { rows };
-  }, [orcamentos, list]);
-
-  return <div className="space-y-4"><GlobalFilters />
-    <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-6">
-      <KpiCard label="Pipeline aberto" value={fmtNum(metrics.pipelineAberto)} />
-      <KpiCard label="Valor estimado aberto" value={fmtBRL(metrics.valorPotAberto)} tone="muted" />
-      <KpiCard label="Valor ponderado" value={fmtBRL(metrics.ponderado)} tone="warning" />
-      <KpiCard label="Oportunidades ganhas" value={fmtNum(metrics.ganhos)} tone="success" />
-      <KpiCard label="Oportunidades perdidas" value={fmtNum(metrics.perdidos)} tone="destructive" />
-      <KpiCard label="Taxa de conversão" value={fmtPct(metrics.taxa)} tone={metrics.taxa >= 0.5 ? "success" : "warning"} />
-    </div>
-    <Card className="p-3"><h3 className="mb-2 text-sm font-semibold">Funil comercial de orçamentos</h3><div className="grid gap-2 md:grid-cols-3">{funilOrcamentos.rows.map(r => <div key={r.etapa} className="rounded border p-2 text-xs"><b>{r.etapa}</b><div>Qtd: {fmtNum(r.qtd)}</div><div>Valor: {fmtBRL(r.valor)}</div><div>Ticket médio: {fmtBRL(r.ticket)}</div></div>)}</div></Card>
-    <div className="flex justify-end"><Button onClick={openNew}><Plus className="mr-1 h-4 w-4" /> Nova oportunidade</Button></div>
-    <div className="grid grid-flow-col auto-cols-[280px] gap-3 overflow-x-auto pb-3">{ETAPAS.map(col => { const items = list.filter(o => o.etapa === col); return <div key={col} className="rounded-md border border-border bg-muted/30 p-2"><div className="mb-2 flex items-center justify-between px-1"><h3 className="text-sm font-semibold">{col}</h3><Badge variant="outline">{items.length}</Badge></div><div className="space-y-2">{items.map(o => { const c = clienteById(o.clienteId); return <Card key={o.id} className="p-3 text-xs"><div className="font-semibold">{c?.nome}</div><p>{o.necessidade || "Sem necessidade informada"}</p><p className="font-medium">{fmtBRL(o.valorEstimado || 0)}</p><p className="text-[10px] text-muted-foreground">👤 {o.responsavel || "-"} {o.previsaoFechamento ? `• 📅 ${o.previsaoFechamento}` : ""}</p><div className="mt-2 flex flex-wrap gap-1"><Button size="sm" variant="ghost" className="h-7 px-2 text-[10px]" onClick={() => openEdit(o)}><Pencil className="h-3 w-3" /></Button>{o.etapa !== "Ganha" && <Button size="sm" variant="ghost" className="h-7 px-2 text-[10px]" onClick={() => marcarGanha(o)} title="Ganha"><Trophy className="h-3 w-3 text-success" /></Button>}{o.etapa !== "Perdida" && <Button size="sm" variant="ghost" className="h-7 px-2 text-[10px]" onClick={() => { setLossOpen(o); setMotivo("Preço"); }} title="Perdida"><X className="h-3 w-3 text-destructive" /></Button>}<Select value={o.etapa} onValueChange={(v: EtapaOportunidade) => mudarEtapa(o, v)}><SelectTrigger className="h-7 px-2 text-[10px] w-auto"><ArrowRight className="h-3 w-3" /></SelectTrigger><SelectContent>{ETAPAS.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent></Select><Button size="sm" variant="outline" className="h-7 px-2 text-[10px]" onClick={() => nav(`/orcamentos?oportunidadeId=${o.id}`)}>Gerar orçamento</Button><Button size="sm" variant="ghost" className="h-7 px-2 text-[10px]" onClick={() => { if (!window.confirm("Esta ação não pode ser desfeita nesta versão. Deseja continuar?")) return; setOportunidades(prev => prev.filter(x => x.id !== o.id)); toast.success("Excluído."); }}><Trash2 className="h-3 w-3 text-destructive" /></Button></div></Card>; })}{items.length === 0 && <p className="px-1 py-3 text-center text-[11px] text-muted-foreground">Vazio</p>}</div></div>; })}</div>
-
-    <Dialog open={open} onOpenChange={setOpen}><DialogContent className="max-w-3xl"><DialogHeader><DialogTitle>{edit ? "Editar oportunidade" : "Nova oportunidade"}</DialogTitle></DialogHeader><div className="grid gap-3 md:grid-cols-2"><div><Label>Cliente *</Label><Select value={form.clienteId} onValueChange={v => setForm({ ...form, clienteId: v })}><SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger><SelectContent>{clientes.map(c => <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>)}</SelectContent></Select></div><div><Label>Origem</Label><Select value={form.origem} onValueChange={(v: OrigemOportunidade) => setForm({ ...form, origem: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{ORIGENS.map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}</SelectContent></Select></div><div><Label>Segmento</Label><Select value={form.segmento || ""} onValueChange={v => setForm({ ...form, segmento: v })}><SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger><SelectContent>{CATEGORIAS_PRODUTO.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent></Select></div><div><Label>Necessidade</Label><Input value={form.necessidade || ""} onChange={e => setForm({ ...form, necessidade: e.target.value })} /></div><div><Label>Valor estimado</Label><Input type="number" value={form.valorEstimado || 0} onChange={e => setForm({ ...form, valorEstimado: +e.target.value })} /></div><div><Label>Responsável</Label><Select value={form.responsavel || ""} onValueChange={v => setForm({ ...form, responsavel: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{vendedores.map(v => <SelectItem key={v.id} value={v.nome}>{v.nome}</SelectItem>)}</SelectContent></Select></div><div><Label>Etapa</Label><Select value={form.etapa} onValueChange={(v: EtapaOportunidade) => setForm({ ...form, etapa: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{ETAPAS.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent></Select></div><div><Label>Previsão de fechamento</Label><Input type="date" value={form.previsaoFechamento || ""} onChange={e => setForm({ ...form, previsaoFechamento: e.target.value })} /></div><div><Label>Probabilidade (%)</Label><Input type="number" min={0} max={100} value={form.probabilidade || 0} onChange={e => setForm({ ...form, probabilidade: +e.target.value })} /></div><div className="md:col-span-2"><Label>Observações</Label><Textarea rows={2} value={form.observacoes || ""} onChange={e => setForm({ ...form, observacoes: e.target.value })} /></div></div><DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button><Button onClick={save}>Salvar</Button></DialogFooter></DialogContent></Dialog>
-
-    <Dialog open={!!lossOpen} onOpenChange={(v) => !v && setLossOpen(null)}><DialogContent><DialogHeader><DialogTitle>Registrar motivo da perda</DialogTitle></DialogHeader><Select value={motivo} onValueChange={(v: MotivoPerdaOportunidade) => setMotivo(v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{MOTIVOS_PERDA.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select><DialogFooter><Button variant="outline" onClick={() => setLossOpen(null)}>Cancelar</Button><Button onClick={confirmarPerda}>Confirmar perda</Button></DialogFooter></DialogContent></Dialog>
-  </div>;
+export default function FunilVendas(){const { oportunidades, setOportunidades, negocios, setNegocios, clientes, clienteById, vendedores, filtered, orcamentos, formasPagamento, prazosPagamento, proximasAcoes, setProximasAcoes }=useAppStore(); const nav=useNavigate(); const [params,setParams]=useSearchParams();
+const [open,setOpen]=useState(false); const [edit,setEdit]=useState<OportunidadeComercial|null>(null); type OportunidadeForm = Omit<OportunidadeComercial, "id">;
+const [form,setForm]=useState<OportunidadeForm>({clienteId:"",origem:"Visita",etapa:"Identificada",createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()});
+const [closeTarget,setCloseTarget]=useState<OportunidadeComercial|null>(null); const [closeType,setCloseType]=useState<"Ganha"|"Perdida"|"Cancelada">("Ganha");
+type CloseForm = {data:string; orcamentoId:string; valorFinal:number; formaPagamento:string; prazoPagamento:string; responsavel:string; observacoes:string; motivoPerda:MotivoPerdaOportunidade; concorrente:string; createPos:boolean; tipoPos:TipoProximaAcao; dataPos:string; objetivoPos:string};
+const [closeForm,setCloseForm]=useState<CloseForm>({data:new Date().toISOString().slice(0,10),orcamentoId:"",valorFinal:0,formaPagamento:"",prazoPagamento:"",responsavel:"",observacoes:"",motivoPerda:"Preço",concorrente:"",createPos:false,tipoPos:"Entrega",dataPos:new Date().toISOString().slice(0,10),objetivoPos:""});
+const list=filtered.oportunidades??oportunidades;
+const metrics=useMemo(()=>{const ab=list.filter(o=>!["Ganha","Perdida","Cancelada"].includes(o.etapa)); const g=list.filter(o=>o.etapa==="Ganha"); const p=list.filter(o=>o.etapa==="Perdida"); return {ab:ab.length,g:g.length,p:p.length,taxa:(g.length+p.length)?g.length/(g.length+p.length):0,valorAberto:ab.reduce((s,o)=>s+(o.valorEstimado||0),0)};},[list]);
+useEffect(()=>{const c=params.get("clienteId"); if(c){setEdit(null); setForm({clienteId:c,origem:"Visita",etapa:"Identificada",createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()}); setOpen(true); setParams({});}},[params,setParams]);
+const save=()=>{if(!form.clienteId) return toast.error("Selecione cliente"); const payload={...form,updatedAt:new Date().toISOString()}; if(edit){setOportunidades(p=>p.map(o=>o.id===edit.id?{...payload,id:edit.id}:o));} else setOportunidades(p=>[{...payload,id:`op${Date.now()}`},...p]); setOpen(false); toast.success("Oportunidade salva");};
+const openClose=(o:OportunidadeComercial,t:"Ganha"|"Perdida"|"Cancelada")=>{setCloseTarget(o); setCloseType(t); const orc=orcamentos.find(x=>x.oportunidadeId===o.id&&x.status==="Aprovado")||orcamentos.find(x=>x.oportunidadeId===o.id); setCloseForm({data:new Date().toISOString().slice(0,10),orcamentoId:orc?.id||"",valorFinal:o.valorFinal||orc?.valorTotal||o.valorEstimado||0,formaPagamento:formasPagamento.find(f=>f.ativo&&f.padrao)?.nome||"",prazoPagamento:prazosPagamento.find(p=>p.ativo&&p.padrao)?.nome||"",responsavel:o.responsavel||"",observacoes:"",motivoPerda:"Preço",concorrente:"",createPos:false,tipoPos:"Entrega",dataPos:new Date().toISOString().slice(0,10),objetivoPos:""});};
+const confirmClose=()=>{if(!closeTarget)return; if(!closeForm.data) return toast.error("Informe data"); const now=new Date().toISOString();
+if(closeType==="Ganha"){ if(closeForm.valorFinal===undefined||closeForm.valorFinal===null||closeForm.valorFinal<0) return toast.error("Valor final inválido");
+setOportunidades(p=>p.map(o=>o.id===closeTarget.id?{...o,etapa:"Ganha",dataFechamento:closeForm.data,valorFinal:Number(closeForm.valorFinal),observacoes:[o.observacoes,closeForm.observacoes].filter(Boolean).join("\n"),updatedAt:now}:o));
+setNegocios(prev=>{const ex=prev.find(n=>n.oportunidadeId===closeTarget.id); const base={clienteId:closeTarget.clienteId,oportunidadeId:closeTarget.id,orcamentoId:closeForm.orcamentoId||undefined,vendedor:closeForm.responsavel||closeTarget.responsavel||"",origem:"Manual" as const,produtos:[],categoria:closeTarget.segmento||"Outros",valorPotencial:Number(closeForm.valorFinal),valorFechado:Number(closeForm.valorFinal),status:"Fechado ganho" as const,dataCriacao:closeForm.data,ultimaAtualizacao:closeForm.data,observacoes:closeForm.observacoes}; if(ex) return prev.map(n=>n.id===ex.id?{...n,...base}:n); return [{id:`n${Date.now()}`,...base},...prev];});
 }
+if(closeType==="Perdida"){ if(!closeForm.motivoPerda) return toast.error("Informe motivo da perda"); setOportunidades(p=>p.map(o=>o.id===closeTarget.id?{...o,etapa:"Perdida",dataFechamento:closeForm.data,motivoPerda:closeForm.motivoPerda,concorrente:closeForm.concorrente||undefined,observacoes:[o.observacoes,closeForm.observacoes].filter(Boolean).join("\n"),updatedAt:now}:o)); }
+if(closeType==="Cancelada"){ setOportunidades(p=>p.map(o=>o.id===closeTarget.id?{...o,etapa:"Cancelada",dataFechamento:closeForm.data,updatedAt:now}:o)); }
+if(closeForm.createPos){const negId=negocios.find(n=>n.oportunidadeId===closeTarget.id)?.id; setProximasAcoes(p=>[{id:`pa${Date.now()}`,clienteId:closeTarget.clienteId,oportunidadeId:closeTarget.id,negocioId:negId,descricao:closeForm.objetivoPos||`Ação de ${closeType==="Ganha"?"pós-venda":"retomada"}`,objetivo:closeForm.objetivoPos,observacoes:closeForm.observacoes,tipo:closeForm.tipoPos,data:closeForm.dataPos||closeForm.data,status:"Pendente",origem:"Avulsa",createdAt:now,updatedAt:now,responsavel:closeForm.responsavel||closeTarget.responsavel},...p]);}
+setCloseTarget(null); toast.success(`Oportunidade fechada como ${closeType}`);};
+return <div className="space-y-4"><GlobalFilters/><div className="grid grid-cols-2 gap-3 md:grid-cols-6"><KpiCard label="Abertas" value={fmtNum(metrics.ab)}/><KpiCard label="Ganhas" value={fmtNum(metrics.g)} tone="success"/><KpiCard label="Perdidas" value={fmtNum(metrics.p)} tone="destructive"/><KpiCard label="Valor aberto" value={fmtBRL(metrics.valorAberto)} tone="muted"/><KpiCard label="Conversão" value={fmtPct(metrics.taxa)} tone="warning"/></div><div className="flex justify-end"><Button onClick={()=>{setEdit(null);setOpen(true);}}><Plus className="mr-1 h-4 w-4"/>Nova oportunidade</Button></div>
+<div className="grid grid-flow-col auto-cols-[300px] gap-3 overflow-x-auto pb-3">{ETAPAS.map(col=>{const items=list.filter(o=>o.etapa===col);return <div key={col} className="rounded-md border p-2"><div className="mb-2 flex justify-between"><h3 className="text-sm font-semibold">{col}</h3><Badge variant="outline">{items.length}</Badge></div><div className="space-y-2">{items.map(o=><Card key={o.id} className="p-3 text-xs"><div className="font-semibold">{clienteById(o.clienteId)?.nome}</div><p>{fmtBRL(o.valorFinal||o.valorEstimado||0)}</p><p>{o.motivoPerda?`Motivo: ${o.motivoPerda}`:""}</p><div className="mt-2 flex flex-wrap gap-1"><Button size="sm" variant="outline" className="h-7 px-2 text-[10px]" onClick={()=>nav(`/orcamentos?oportunidadeId=${o.id}`)}>Gerar orçamento</Button><Button size="sm" variant="outline" className="h-7 px-2 text-[10px]" onClick={()=>openClose(o,"Ganha")}>Fechar ganha</Button><Button size="sm" variant="outline" className="h-7 px-2 text-[10px]" onClick={()=>openClose(o,"Perdida")}>Fechar perdida</Button><Button size="sm" variant="outline" className="h-7 px-2 text-[10px]" onClick={()=>openClose(o,"Cancelada")}>Cancelar</Button><Button size="sm" variant="outline" className="h-7 px-2 text-[10px]" onClick={()=>nav(`/proximas-acoes?clienteId=${o.clienteId}&oportunidadeId=${o.id}`)}>Criar próxima ação</Button><Button size="sm" variant="outline" className="h-7 px-2 text-[10px]" onClick={()=>nav(`/clientes/${o.clienteId}`)}>Abrir Ficha 360</Button><Button size="sm" variant="ghost" className="h-7 px-2 text-[10px]" onClick={()=>{setEdit(o);const{id,...r}=o;setForm(r);setOpen(true);}}><Pencil className="h-3 w-3"/></Button><Button size="sm" variant="ghost" className="h-7 px-2 text-[10px]" onClick={()=>setOportunidades(p=>p.filter(x=>x.id!==o.id))}><Trash2 className="h-3 w-3"/></Button></div></Card>)}</div></div>})}</div>
+<Dialog open={open} onOpenChange={setOpen}><DialogContent><DialogHeader><DialogTitle>{edit?"Editar":"Nova"} oportunidade</DialogTitle></DialogHeader><div className="grid gap-2 md:grid-cols-2"><div><Label>Cliente</Label><Select value={form.clienteId||""} onValueChange={(v)=>setForm({...form,clienteId:v})}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent>{clientes.map(c=><SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>)}</SelectContent></Select></div><div><Label>Origem</Label><Select value={form.origem||"Visita"} onValueChange={(v: OrigemOportunidade)=>setForm({...form,origem:v})}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent>{ORIGENS.map(o=><SelectItem key={o} value={o}>{o}</SelectItem>)}</SelectContent></Select></div><div><Label>Valor estimado</Label><Input type="number" value={form.valorEstimado||0} onChange={e=>setForm({...form,valorEstimado:+e.target.value})}/></div></div><DialogFooter><Button variant="outline" onClick={()=>setOpen(false)}>Cancelar</Button><Button onClick={save}>Salvar</Button></DialogFooter></DialogContent></Dialog>
+<Dialog open={!!closeTarget} onOpenChange={(v)=>!v&&setCloseTarget(null)}><DialogContent className="max-w-2xl"><DialogHeader><DialogTitle>Fechar oportunidade como {closeType}</DialogTitle></DialogHeader><div className="grid gap-2 md:grid-cols-2"><div><Label>Data</Label><Input type="date" value={closeForm.data||""} onChange={e=>setCloseForm({...closeForm,data:e.target.value})}/></div>{closeType==="Ganha"&&<><div><Label>Orçamento vinculado</Label><Select value={closeForm.orcamentoId||"none"} onValueChange={(v)=>setCloseForm({...closeForm,orcamentoId:v==='none'?'':v})}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="none">Sem orçamento</SelectItem>{orcamentos.filter(o=>o.oportunidadeId===closeTarget?.id).map(o=><SelectItem key={o.id} value={o.id}>{o.codigo} - {fmtBRL(o.valorTotal)}</SelectItem>)}</SelectContent></Select></div><div><Label>Valor final</Label><Input type="number" value={closeForm.valorFinal||0} onChange={e=>setCloseForm({...closeForm,valorFinal:+e.target.value})}/></div><div><Label>Forma pgto</Label><Input value={closeForm.formaPagamento||""} onChange={e=>setCloseForm({...closeForm,formaPagamento:e.target.value})}/></div><div><Label>Prazo pgto</Label><Input value={closeForm.prazoPagamento||""} onChange={e=>setCloseForm({...closeForm,prazoPagamento:e.target.value})}/></div><div><Label>Responsável</Label><Input value={closeForm.responsavel||""} onChange={e=>setCloseForm({...closeForm,responsavel:e.target.value})}/></div></>}{closeType==="Perdida"&&<><div><Label>Motivo da perda</Label><Select value={closeForm.motivoPerda} onValueChange={(v: MotivoPerdaOportunidade)=>setCloseForm({...closeForm,motivoPerda:v})}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent>{MOTIVOS_PERDA.map(m=><SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select></div><div><Label>Concorrente</Label><Input value={closeForm.concorrente||""} onChange={e=>setCloseForm({...closeForm,concorrente:e.target.value})}/></div></>}<div className="md:col-span-2"><Label>Observações</Label><Textarea value={closeForm.observacoes||""} onChange={e=>setCloseForm({...closeForm,observacoes:e.target.value})}/></div><div><Label>Criar próxima ação?</Label><Select value={closeForm.createPos?"sim":"nao"} onValueChange={(v)=>setCloseForm({...closeForm,createPos:v==='sim'})}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="nao">Não</SelectItem><SelectItem value="sim">Sim</SelectItem></SelectContent></Select></div>{closeForm.createPos&&<><div><Label>Tipo</Label><Select value={closeForm.tipoPos} onValueChange={(v: TipoProximaAcao)=>setCloseForm({...closeForm,tipoPos:v})}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent>{POS_VENDA_TIPOS.map(t=><SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent></Select></div><div><Label>Data ação</Label><Input type="date" value={closeForm.dataPos||""} onChange={e=>setCloseForm({...closeForm,dataPos:e.target.value})}/></div><div className="md:col-span-2"><Label>Objetivo</Label><Input value={closeForm.objetivoPos||""} onChange={e=>setCloseForm({...closeForm,objetivoPos:e.target.value})}/></div></>}</div><DialogFooter><Button variant="outline" onClick={()=>setCloseTarget(null)}>Cancelar</Button><Button onClick={confirmClose}>Confirmar fechamento</Button></DialogFooter></DialogContent></Dialog>
+</div>}
