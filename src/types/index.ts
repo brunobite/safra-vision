@@ -153,6 +153,8 @@ export interface Negocio {
   proximaAcao?: string;
   dataProximaAcao?: string;
   motivoPerda?: string;
+  formaPagamento?: string;
+  prazoPagamento?: string;
   observacoes?: string;
   itensEstimados?: OportunidadeItemEstimado[];
   segmento?: string;
