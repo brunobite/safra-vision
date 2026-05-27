@@ -11,7 +11,7 @@ import { useAppStore } from "@/store/AppStore";
 import { CategoriaProduto, CATEGORIAS_PRODUTO, EtapaOportunidade, FrenteComercial, Lancamento, OrcamentoItem, StatusFunil, StatusLancamento, TipoLancamento, TipoProximaAcao, UnidadeDose } from "@/types";
 import { GlobalFilters } from "@/components/GlobalFilters";
 import { toast } from "sonner";
-import { ArrowRight, Eraser, Eye, Pencil, Plus, Save, Search, Trash2 } from "lucide-react";
+import { ArrowRight, Eraser, Eye, Pencil, Plus, Save, Search, Trash2, X } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { fmtBRL } from "@/utils/calculations";
@@ -59,6 +59,14 @@ export default function Lancamentos() {
   const [step, setStep] = useState<1 | 2>(1);
   const nav = useNavigate();
   const [params, setParams] = useSearchParams();
+
+  const [clienteBusca, setClienteBusca] = useState("");
+  const clientesFiltrados = useMemo(() => {
+    const termo = clienteBusca.trim().toLowerCase();
+    if (!termo) return clientes.slice(0, 50);
+    return clientes.filter((c) => [c.nome, c.cidade, c.rota, c.vendedor, c.localidade, c.endereco].filter(Boolean).some((v) => String(v).toLowerCase().includes(termo))).slice(0, 50);
+  }, [clientes, clienteBusca]);
+  const clienteSelecionado = clientes.find((c) => c.id === form.clienteId);
 
   useEffect(() => {
     const clienteId = params.get("clienteId");
@@ -131,6 +139,7 @@ export default function Lancamentos() {
         etapa: mapStatusToEtapa(form.oppStatus),
         previsaoFechamento: form.oppDataProxAcao || undefined,
         observacoes: observacoes || undefined,
+        itensEstimados: itensCalculados.length ? itensCalculados : undefined,
         createdAt: oportunidades.find(o => o.id === oppId)?.createdAt || agora.toISOString(),
         updatedAt: agora.toISOString(),
       }, ...prev.filter(o => o.id !== oppId)]);
@@ -188,7 +197,7 @@ export default function Lancamentos() {
   return <div className="space-y-6"><GlobalFilters />
     <Card className="p-5 space-y-4"><div className="flex items-center justify-between"><h2 className="text-base font-semibold">Fluxo guiado: Visita → Oportunidade → Orçamento</h2><Button onClick={() => { setOpen(true); setStep(1); }}><Plus className="mr-1 h-4 w-4" />Novo lançamento</Button></div></Card>
     <Dialog open={open} onOpenChange={setOpen}><DialogContent className="max-h-[90vh] overflow-y-auto max-w-4xl"><DialogHeader><DialogTitle>{step === 1 ? "Etapa 1 — Dados da visita" : "Etapa 2 — Configurar oportunidade"}</DialogTitle></DialogHeader>
-{step === 1 && <div className="space-y-3"><div className="grid gap-3 md:grid-cols-3"><div><Label>Data *</Label><Input type="date" value={form.data} onChange={e => setForm({ ...form, data: e.target.value })} /></div><div><Label>Cliente *</Label><Select value={form.clienteId} onValueChange={v => setForm({ ...form, clienteId: v })}><SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger><SelectContent>{clientes.map(c => <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>)}</SelectContent></Select></div><div><Label>Vendedor</Label><Select value={form.vendedor} onValueChange={v => setForm({ ...form, vendedor: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{vendedores.map(v => <SelectItem key={v.id} value={v.nome}>{v.nome}</SelectItem>)}</SelectContent></Select></div></div>
+{step === 1 && <div className="space-y-3"><div className="grid gap-3 md:grid-cols-3"><div><Label>Data *</Label><Input type="date" value={form.data} onChange={e => setForm({ ...form, data: e.target.value })} /></div><div><Label>Cliente *</Label><div className="space-y-2"><div className="relative"><Input value={clienteBusca} placeholder="Buscar por nome, cidade, rota, vendedor..." onChange={e => setClienteBusca(e.target.value)} className="pr-8" />{clienteBusca && <Button type="button" variant="ghost" size="icon" className="absolute right-1 top-1 h-7 w-7" onClick={() => setClienteBusca("")}><X className="h-4 w-4" /></Button>}</div>{clienteSelecionado ? <div className="flex items-center justify-between rounded-md border bg-muted/40 px-2 py-1 text-sm"><span><b>{clienteSelecionado.nome}</b>{clienteSelecionado.cidade ? ` · ${clienteSelecionado.cidade}` : ""}</span><Button type="button" variant="ghost" size="sm" onClick={() => setForm({ ...form, clienteId: "" })}>Trocar</Button></div> : <div className="max-h-36 overflow-y-auto rounded-md border">{clientesFiltrados.map(c => <button type="button" key={c.id} className="w-full border-b px-2 py-1 text-left text-sm last:border-b-0 hover:bg-muted/50" onClick={() => setForm({ ...form, clienteId: c.id })}><div className="font-medium">{c.nome}</div><div className="text-xs text-muted-foreground">{[c.cidade, c.localidade, c.rota, c.vendedor].filter(Boolean).join(" · ")}</div></button>)}{clientesFiltrados.length===0 && <div className="px-2 py-2 text-sm text-muted-foreground">Nenhum cliente encontrado.</div>}</div>}</div></div><div><Label>Vendedor</Label><Select value={form.vendedor} onValueChange={v => setForm({ ...form, vendedor: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{vendedores.map(v => <SelectItem key={v.id} value={v.nome}>{v.nome}</SelectItem>)}</SelectContent></Select></div></div>
       <div className="grid gap-3 md:grid-cols-2"><div><Label>Frente comercial</Label><Select value={form.frente} onValueChange={(v: FrenteComercial) => setForm({ ...form, frente: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{FRENTES.map(f => <SelectItem key={f} value={f}>{f}</SelectItem>)}</SelectContent></Select></div><div><Label>Status</Label><Select value={form.status} onValueChange={(v: StatusLancamento) => setForm({ ...form, status: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{STATUSES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent></Select></div></div>
       <div><Label>O que foi realizado? *</Label><Textarea rows={2} value={form.oQueFoiRealizado} onChange={e => setForm({ ...form, oQueFoiRealizado: e.target.value })} /></div>
       <div className="grid gap-3 md:grid-cols-3"><div><Label>Próxima ação</Label><Input value={form.proximaAcao || ""} onChange={e => setForm({ ...form, proximaAcao: e.target.value })} /></div><div><Label>Tipo</Label><Select value={form.tipoProximaAcao || "Visita"} onValueChange={(v: TipoProximaAcao) => setForm({ ...form, tipoProximaAcao: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{PROX_TIPOS.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent></Select></div><div><Label>Data da próxima ação</Label><Input type="date" value={form.dataProximaAcao || ""} onChange={e => setForm({ ...form, dataProximaAcao: e.target.value })} /></div></div>
