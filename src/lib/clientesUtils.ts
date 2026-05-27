@@ -1,13 +1,8 @@
 import { Cliente, ClienteCulturaArea, Lancamento, Negocio, Orcamento, ProximaAcao } from "@/types";
+import { formatDateBR } from "@/utils/dateUtils";
 
 export const CULTURAS_SUGERIDAS = ["Soja", "Arroz", "Milho", "Trigo", "Pastagem", "Aveia", "Outra"];
 
-export function formatDateBR(value?: string) {
-  if (!value) return "—";
-  const date = new Date(`${value}T00:00:00`);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleDateString("pt-BR");
-}
 
 export function parseFrequenciaDias(freq?: string) {
   const num = Number((freq || "").match(/\d+/)?.[0] || 0);

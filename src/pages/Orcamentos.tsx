@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import { useSearchParams } from "react-router-dom";
 import { calcularQuantidadeComercial, DOSE_UNIDADES, recalcularItem } from "@/lib/orcamentoUtils";
 import { gerarPdfOrcamento } from "@/lib/orcamentoPdf";
+import { formatDateBR } from "@/utils/dateUtils";
 
 const STATUS_OFICIAIS: OrcamentoStatus[] = ["Rascunho", "Enviado", "Em revisão", "Reenviado", "Aprovado", "Perdido", "Expirado", "Cancelado"];
 const STATUS_LEGADO: OrcamentoStatus[] = ["Aberto", "Em negociação", "Recusado", "Vencido", "Reprovado"];
@@ -105,8 +106,8 @@ export default function Orcamentos() {
     {orcamentos.map((o) => <Card key={o.id} className="p-3">
       <div className="flex flex-col gap-2 md:flex-row md:items-center">
         <div className="flex-1 text-sm"><div className="font-semibold">{o.codigo} v{o.versao || 1} · {clientes.find((c) => c.id === o.clienteId)?.nome || "Sem cliente"}</div>
-          <div className="text-muted-foreground">Status: {o.status} · Validade: {o.validade || "-"} · Vendedor: {o.vendedor || "-"}</div>
-          <div className="text-muted-foreground">Oportunidade: {o.oportunidadeId || "Legado/sem vínculo"} · Envio: {o.canalEnvio || "-"} {o.dataEnvio ? `em ${o.dataEnvio}` : ""}</div></div>
+          <div className="text-muted-foreground">Status: {o.status} · Validade: {formatDateBR(o.validade)} · Vendedor: {o.vendedor || "-"}</div>
+          <div className="text-muted-foreground">Oportunidade: {o.oportunidadeId || "Legado/sem vínculo"} · Envio: {o.canalEnvio || "-"} {o.dataEnvio ? `em ${formatDateBR(o.dataEnvio)}` : ""}</div></div>
         <div className="text-sm font-semibold">{fmtBRL(o.valorTotal)}</div>
         <div className="flex flex-wrap gap-2">
           <Button size="sm" variant="outline" onClick={() => { setEdit(o); setForm(o); setMotivoRevisao(o.motivoRevisao || ""); setOpen(true); }}>Abrir/Editar</Button>
@@ -131,16 +132,17 @@ export default function Orcamentos() {
       </div></Card>
 
       <Card className="p-3 space-y-2"><h3 className="font-semibold">Itens da proposta</h3>
-        {form.itens.map((it, idx) => { const p = produtos.find((x) => x.id === it.produtoId); const area = it.areaHa || form.areaAplicacaoHa; const calc = calcularQuantidadeComercial((p?.unidade || it.unidadeProduto), it.dosePorHa, it.unidadeDose, area); const total = calc.quantidadeComercial * it.precoUnitario; return <div key={it.id} className="grid gap-2 md:grid-cols-10">
+        {form.itens.map((it, idx) => { const p = produtos.find((x) => x.id === it.produtoId); const area = it.areaHa || form.areaAplicacaoHa; const calc = calcularQuantidadeComercial((p?.unidade || it.unidadeProduto), it.dosePorHa, it.unidadeDose, area); const total = calc.quantidadeComercial * it.precoUnitario; const precoBase = calc.precoBaseDivisor > 0 ? it.precoUnitario / calc.precoBaseDivisor : it.precoUnitario; return <div key={it.id} className="grid gap-2 md:grid-cols-10">
           <div className="md:col-span-2"><Label>Produto</Label><Select value={it.produtoId} onValueChange={(v) => { const pp = produtos.find((x) => x.id === v); const itens = [...form.itens]; itens[idx] = recalcularItem({ ...it, produtoId: v, precoUnitario: it.precoUnitario || pp?.precoLista || 0 }, pp!); setForm(recalc({ ...form, itens })); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{produtos.map((pr) => <SelectItem key={pr.id} value={pr.id}>{pr.nome}</SelectItem>)}</SelectContent></Select></div>
           <div><Label>Dose/ha</Label><Input type="number" value={it.dosePorHa} onChange={(e) => { const itens = [...form.itens]; itens[idx] = { ...it, dosePorHa: +e.target.value }; setForm(recalc({ ...form, itens })); }} /></div>
           <div><Label>Unid. dose</Label><Select value={it.unidadeDose} onValueChange={(v: UnidadeDose) => { const itens = [...form.itens]; itens[idx] = { ...it, unidadeDose: v }; setForm(recalc({ ...form, itens })); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{DOSE_UNIDADES.map((u) => <SelectItem key={u} value={u}>{u}</SelectItem>)}</SelectContent></Select></div>
           <div><Label>Área</Label><Input type="number" value={it.areaHa} onChange={(e) => { const itens = [...form.itens]; itens[idx] = { ...it, areaHa: +e.target.value }; setForm(recalc({ ...form, itens })); }} /></div>
-          <div><Label>Qtd calculada</Label><Input value={calc.resumo} disabled /></div>
+          <div><Label>Resumo técnico/comercial</Label><Input value={calc.resumo} disabled /></div>
           <div><Label>Unid. comercial</Label><Input value={p?.unidade || it.unidadeProduto} disabled /></div>
           <div><Label>Valor unit.</Label><Input type="number" value={it.precoUnitario} onChange={(e) => { const itens = [...form.itens]; itens[idx] = { ...it, precoUnitario: +e.target.value }; setForm(recalc({ ...form, itens })); }} /></div>
           <div><Label>Subtotal item</Label><Input value={fmtBRL(total)} disabled /></div>
-          <div><Label>Custo/ha</Label><Input value={`${fmtBRL(area > 0 ? total / area : 0)}/ha`} disabled /></div>
+          <div><Label>Custo técnico/ha</Label><Input value={`${fmtBRL(it.custoPorHaItem || 0)}/ha`} disabled /></div>
+          <div className="md:col-span-10 text-xs text-muted-foreground">Necessidade técnica: {calc.necessidadeTecnica.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} {calc.unidadeBase} → Quantidade comercial: {calc.quantidadeComercial.toLocaleString("pt-BR", { maximumFractionDigits: 3 })} {p?.unidade || it.unidadeProduto} (volume comercial: {calc.volumeComercial.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} {calc.unidadeBase}). Preço base: {fmtBRL(precoBase)}/{calc.unidadeBase}. Valor total: {fmtBRL(total)}. Custo técnico: {fmtBRL(it.custoPorHaItem || 0)}/ha.</div>
         </div>; })}
         <Button variant="outline" onClick={() => setForm((f) => ({ ...f, itens: [...f.itens, novoItem(f.itens.length, f.areaAplicacaoHa)] }))}>Adicionar item</Button>
       </Card>
