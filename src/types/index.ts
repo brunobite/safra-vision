@@ -40,6 +40,7 @@ export interface ProximaAcao {
   descricao: string;
   objetivo?: string;
   observacoes?: string;
+  itensEstimados?: OportunidadeItemEstimado[];
   segmento?: string;
   responsavel?: string;
   proximaAcaoId?: string;
@@ -150,6 +151,7 @@ export interface Negocio {
   dataProximaAcao?: string;
   motivoPerda?: string;
   observacoes?: string;
+  itensEstimados?: OportunidadeItemEstimado[];
   segmento?: string;
   responsavel?: string;
   proximaAcaoId?: string;
@@ -159,6 +161,21 @@ export interface Negocio {
   lancamentoId?: string;
 }
 
+
+export interface OportunidadeItemEstimado {
+  produtoId: string;
+  produtoNome?: string;
+  categoria?: string;
+  unidadeProduto?: string;
+  dosePorHa?: number;
+  unidadeDose?: UnidadeDose;
+  areaHa?: number;
+  quantidadeTotal?: number;
+  precoUnitario?: number;
+  valorTotalItem?: number;
+  custoPorHaItem?: number;
+  observacoes?: string;
+}
 
 export interface OportunidadeComercial {
   id: string;
@@ -172,6 +189,7 @@ export interface OportunidadeComercial {
   previsaoFechamento?: string;
   probabilidade?: number;
   observacoes?: string;
+  itensEstimados?: OportunidadeItemEstimado[];
   dataFechamento?: string;
   valorFinal?: number;
   motivoPerda?: MotivoPerdaOportunidade;
@@ -252,6 +270,7 @@ export interface Produto {
   ultimaAtualizacao?: string;
   ativo: boolean;
   observacoes?: string;
+  itensEstimados?: OportunidadeItemEstimado[];
   segmento?: string;
   responsavel?: string;
   proximaAcaoId?: string;
@@ -322,6 +341,7 @@ export interface OrcamentoItem {
   valorTotalItem: number;
   custoPorHaItem: number;
   observacoes?: string;
+  itensEstimados?: OportunidadeItemEstimado[];
   segmento?: string;
   responsavel?: string;
   proximaAcaoId?: string;
@@ -350,6 +370,7 @@ export interface Orcamento {
   formaPagamento?: string;
   prazoPagamento?: string;
   observacoes?: string;
+  itensEstimados?: OportunidadeItemEstimado[];
   segmento?: string;
   responsavel?: string;
   proximaAcaoId?: string;
