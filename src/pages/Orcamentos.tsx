@@ -10,7 +10,7 @@ import { Orcamento, OrcamentoItem, OrcamentoStatus, UnidadeDose } from "@/types"
 import { fmtBRL } from "@/utils/calculations";
 import { toast } from "sonner";
 import { useSearchParams } from "react-router-dom";
-import { calcularQuantidadeComercial, DOSE_UNIDADES, recalcularItem } from "@/lib/orcamentoUtils";
+import { calcularQuantidadeComercial, DOSE_UNIDADES, isOrcamentoBloqueado, recalcularItem } from "@/lib/orcamentoUtils";
 import { gerarPdfOrcamento } from "@/lib/orcamentoPdf";
 import { formatDateBR } from "@/utils/dateUtils";
 
@@ -42,6 +42,7 @@ export default function Orcamentos() {
   const isLegacy = Boolean(edit?.id && !edit?.oportunidadeId);
   const oportunidadesAbertasCliente = oportunidades.filter((o) => o.clienteId === form.clienteId && !["Ganha", "Perdida", "Cancelada"].includes(o.etapa));
   const statusOptions = Array.from(new Set([...(isLegacy ? [...STATUS_LEGADO, ...STATUS_OFICIAIS] : STATUS_OFICIAIS), form.status]));
+  const orcamentoBloqueado = isOrcamentoBloqueado(form, oportunidades);
 
   const recalc = (next: Orcamento) => {
     const itens = next.itens.map((it) => {
@@ -62,6 +63,7 @@ export default function Orcamentos() {
   };
 
   const criarNovaVersao = (origem: Orcamento) => {
+    if (isOrcamentoBloqueado(origem, oportunidades)) return toast.error("Orçamento bloqueado: oportunidade já fechada.");
     const irmas = orcamentos.filter((o) => (o.orcamentoOrigemId || o.id) === (origem.orcamentoOrigemId || origem.id));
     const proximaVersao = Math.max(...irmas.map((i) => i.versao || 1), origem.versao || 1) + 1;
     const current = new Date().toISOString();
@@ -72,6 +74,7 @@ export default function Orcamentos() {
   };
 
   const save = () => {
+    if (orcamentoBloqueado) return toast.error("Orçamento bloqueado: oportunidade já fechada. Para nova negociação, crie uma nova oportunidade.");
     const payload = recalc({ ...form, motivoRevisao: motivoRevisao || form.motivoRevisao, updatedAt: new Date().toISOString() });
     if (!payload.clienteId) return toast.error("Cliente obrigatório");
     if (!isLegacy && !payload.oportunidadeId) return toast.error("Oportunidade obrigatória para novo orçamento");
@@ -98,6 +101,17 @@ export default function Orcamentos() {
   };
 
   useEffect(() => {
+    const editId = params.get("edit");
+    if (editId) {
+      const orcamento = orcamentos.find((x) => x.id === editId);
+      if (!orcamento) return;
+      setEdit(orcamento);
+      setForm(orcamento);
+      setMotivoRevisao(orcamento.motivoRevisao || "");
+      setOpen(true);
+      return;
+    }
+
     const oportunidadeId = params.get("oportunidadeId");
     if (!oportunidadeId) return;
     const op = oportunidades.find((x) => x.id === oportunidadeId);
@@ -106,7 +120,7 @@ export default function Orcamentos() {
     setEdit(null);
     setForm((f) => recalc({ ...f, clienteId: op.clienteId, oportunidadeId: op.id, responsavel: op.responsavel || f.responsavel || "", vendedor: op.responsavel || f.vendedor || "", segmento: op.segmento || f.segmento || "", areaAplicacaoHa: itens.length ? Math.max(...itens.map((i) => i.areaHa || 0), 0) : 0, itens }));
     setOpen(true);
-  }, [params, oportunidades]);
+  }, [params, oportunidades, orcamentos]);
 
   return <div className="space-y-3"><Button onClick={novoOrcamento}>Novo orçamento</Button>
     {orcamentos.map((o) => <Card key={o.id} className="p-3">
@@ -116,19 +130,21 @@ export default function Orcamentos() {
           <div className="text-muted-foreground">Oportunidade: {o.oportunidadeId || "Legado/sem vínculo"} · Envio: {o.canalEnvio || "-"} {o.dataEnvio ? `em ${formatDateBR(o.dataEnvio)}` : ""}</div></div>
         <div className="text-sm font-semibold">{fmtBRL(o.valorTotal)}</div>
         <div className="flex flex-wrap gap-2">
-          <Button size="sm" variant="outline" onClick={() => { setEdit(o); setForm(o); setMotivoRevisao(o.motivoRevisao || ""); setOpen(true); }}>Abrir/Editar</Button>
+          <Button size="sm" variant="outline" onClick={() => { setEdit(o); setForm(o); setMotivoRevisao(o.motivoRevisao || ""); setOpen(true); }}>{isOrcamentoBloqueado(o, oportunidades) ? "Ver orçamento" : "Abrir/Editar"}</Button>
           <Button size="sm" variant="outline" onClick={() => gerarPdfOrcamento(o, clientes.find((c) => c.id === o.clienteId), empresas.find((e) => e.id === o.empresaId), oportunidades.find((op) => op.id === o.oportunidadeId))}>PDF</Button>
-          <Button size="sm" onClick={() => criarNovaVersao(o)}>Criar nova versão</Button>
+          <Button size="sm" onClick={() => criarNovaVersao(o)} disabled={isOrcamentoBloqueado(o, oportunidades)}>Criar nova versão</Button>
         </div>
       </div>
     </Card>)}
 
     <Dialog open={open} onOpenChange={setOpen}><DialogContent className="max-h-[90vh] overflow-y-auto max-w-6xl"><DialogHeader><DialogTitle>{edit ? "Editar" : "Novo"} orçamento</DialogTitle></DialogHeader>
+      {orcamentoBloqueado && <Card className="border-amber-500 bg-amber-50 p-3 text-amber-900">Orçamento bloqueado: oportunidade já fechada. Para nova negociação, crie uma nova oportunidade.</Card>}
+      <fieldset disabled={orcamentoBloqueado} className="space-y-2">
       <Card className="p-3 space-y-2"><h3 className="font-semibold">Dados da proposta</h3><div className="grid gap-2 md:grid-cols-5">
-        <div><Label>Código</Label><Input value={form.codigo} onChange={(e) => setForm({ ...form, codigo: e.target.value })} /></div>
+        <div><Label>Código</Label><Input value={form.codigo} onChange={(e) => setForm({ ...form, codigo: e.target.value })} disabled={orcamentoBloqueado} /></div>
         <div><Label>Versão</Label><Input value={form.versao || 1} disabled /></div>
-        <div><Label>Cliente</Label><Select value={form.clienteId} onValueChange={(v) => setForm({ ...form, clienteId: v, oportunidadeId: undefined })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{clientes.map((c) => <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>)}</SelectContent></Select></div>
-        <div><Label>Oportunidade vinculada</Label><Select value={form.oportunidadeId || (isLegacy ? "legacy" : "")} onValueChange={(v) => setForm({ ...form, oportunidadeId: v === "legacy" ? undefined : v })}><SelectTrigger><SelectValue placeholder="Obrigatório para novo orçamento" /></SelectTrigger><SelectContent>{isLegacy && <SelectItem value="legacy">Legado/sem vínculo</SelectItem>}{oportunidadesAbertasCliente.map((o) => <SelectItem key={o.id} value={o.id}>{o.etapa} · {o.necessidade || o.id}</SelectItem>)}</SelectContent></Select></div>
+        <div><Label>Cliente</Label><Select value={form.clienteId} onValueChange={(v) => setForm({ ...form, clienteId: v, oportunidadeId: undefined })} disabled={orcamentoBloqueado}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{clientes.map((c) => <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>)}</SelectContent></Select></div>
+        <div><Label>Oportunidade vinculada</Label><Select value={form.oportunidadeId || (isLegacy ? "legacy" : "")} onValueChange={(v) => setForm({ ...form, oportunidadeId: v === "legacy" ? undefined : v })} disabled={orcamentoBloqueado}><SelectTrigger><SelectValue placeholder="Obrigatório para novo orçamento" /></SelectTrigger><SelectContent>{isLegacy && <SelectItem value="legacy">Legado/sem vínculo</SelectItem>}{oportunidadesAbertasCliente.map((o) => <SelectItem key={o.id} value={o.id}>{o.etapa} · {o.necessidade || o.id}</SelectItem>)}</SelectContent></Select></div>
         <div><Label>Empresa</Label><Select value={form.empresaId} onValueChange={(v) => setForm({ ...form, empresaId: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{empresas.filter((e) => e.ativa).map((e) => <SelectItem key={e.id} value={e.id}>{e.nomeFantasia}</SelectItem>)}</SelectContent></Select></div>
         <div><Label>Vendedor/Responsável</Label><Select value={form.responsavel || form.vendedor || ""} onValueChange={(v) => setForm({ ...form, responsavel: v, vendedor: v })}><SelectTrigger><SelectValue placeholder="Selecione o vendedor" /></SelectTrigger><SelectContent>{vendedoresAtivos.length ? vendedoresAtivos.map((v) => <SelectItem key={v.id} value={v.nome}>{v.nome}</SelectItem>) : <SelectItem value="Sem vendedor cadastrado">Sem vendedor cadastrado</SelectItem>}</SelectContent></Select></div>
         <div><Label>Data</Label><Input type="date" value={form.data} onChange={(e) => setForm({ ...form, data: e.target.value })} /></div>
@@ -164,7 +180,8 @@ export default function Orcamentos() {
 
       <Card className="p-3"><h3 className="font-semibold">Totais</h3><div className="grid gap-2 md:grid-cols-4 text-sm"><div>Subtotal: <b>{fmtBRL(form.subtotal)}</b></div><div>Desconto: <b>{fmtBRL(form.descontoTotal || 0)}</b></div><div>Valor total: <b>{fmtBRL(form.valorTotal)}</b></div><div>Custo médio/ha: <b>{fmtBRL(form.custoPorHectare)}/ha</b></div></div></Card>
 
-      <DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button><Button onClick={save}>Salvar</Button></DialogFooter>
+      </fieldset>
+      <DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button><Button onClick={save} disabled={orcamentoBloqueado}>Salvar</Button></DialogFooter>
     </DialogContent></Dialog>
   </div>;
 }

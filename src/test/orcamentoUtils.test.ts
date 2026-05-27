@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { calcularQuantidadeComercial, recalcularItem } from "@/lib/orcamentoUtils";
-import { OrcamentoItem, Produto } from "@/types";
+import { calcularQuantidadeComercial, getOrcamentoAtualDaOportunidade, isOrcamentoBloqueado, recalcularItem } from "@/lib/orcamentoUtils";
+import { Orcamento, OrcamentoItem, OportunidadeComercial, Produto } from "@/types";
 
 const baseItem: OrcamentoItem = {
   id: "1", produtoId: "p1", produtoNome: "", categoria: "", unidadeProduto: "LT", dosePorHa: 0, unidadeDose: "L/ha", areaHa: 0,
@@ -50,5 +50,31 @@ describe("orcamentoUtils vasilhame", () => {
     expect(calc.quantidadeComercial).toBe(1);
     const item = recalcularItem({ ...baseItem, dosePorHa: 30, unidadeDose: "mL/ha", areaHa: 120, precoUnitario: 590 }, mkProduto("GAL"));
     expect(item.custoPorHaItem).toBe(3.54);
+  });
+});
+
+describe("orcamento atual e bloqueio", () => {
+  type OrcamentoPick = Pick<Orcamento, "id" | "oportunidadeId" | "status" | "dataEnvio" | "versao" | "updatedAt" | "createdAt">;
+
+  it("prioriza enviado/reenviado/aprovado por dataEnvio", () => {
+    const atual = getOrcamentoAtualDaOportunidade("op1", [
+      { id: "a", oportunidadeId: "op1", status: "Rascunho", versao: 3, updatedAt: "2026-05-01", createdAt: "2026-05-01" },
+      { id: "b", oportunidadeId: "op1", status: "Enviado", dataEnvio: "2026-05-10", versao: 1, updatedAt: "2026-05-10", createdAt: "2026-05-10" },
+      { id: "c", oportunidadeId: "op1", status: "Reenviado", dataEnvio: "2026-05-15", versao: 2, updatedAt: "2026-05-15", createdAt: "2026-05-15" },
+    ] as OrcamentoPick[]);
+    expect(atual?.id).toBe("c");
+  });
+
+  it("usa rascunho mais recente por versão quando não há enviados", () => {
+    const atual = getOrcamentoAtualDaOportunidade("op1", [
+      { id: "a", oportunidadeId: "op1", status: "Rascunho", versao: 1, updatedAt: "2026-05-01", createdAt: "2026-05-01" },
+      { id: "b", oportunidadeId: "op1", status: "Rascunho", versao: 3, updatedAt: "2026-05-02", createdAt: "2026-05-02" },
+    ] as OrcamentoPick[]);
+    expect(atual?.id).toBe("b");
+  });
+
+  it("bloqueia orçamento vinculado a oportunidade fechada", () => {
+    expect(isOrcamentoBloqueado({ oportunidadeId: "op1" }, [{ id: "op1", etapa: "Ganha" } as Pick<OportunidadeComercial, "id" | "etapa">])).toBe(true);
+    expect(isOrcamentoBloqueado({ oportunidadeId: "op2" }, [{ id: "op2", etapa: "Negociação" } as Pick<OportunidadeComercial, "id" | "etapa">])).toBe(false);
   });
 });

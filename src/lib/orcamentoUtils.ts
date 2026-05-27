@@ -61,3 +61,37 @@ export function recalcularItem(base: OrcamentoItem, produto: Produto): Orcamento
     observacoes: `Resumo: ${calc.resumo}`,
   };
 }
+
+
+const statusComerciaisAtuais = new Set(["Enviado", "Reenviado", "Aprovado"]);
+const toTs = (value?: string) => (value ? new Date(value).getTime() : 0);
+
+export function getOrcamentoAtualDaOportunidade(oportunidadeId: string, orcamentos: { oportunidadeId?: string; status: string; dataEnvio?: string; versao?: number; updatedAt: string; createdAt: string; }[]) {
+  const vinculados = orcamentos.filter((o) => o.oportunidadeId === oportunidadeId);
+  if (!vinculados.length) return null;
+
+  const comerciais = vinculados.filter((o) => statusComerciaisAtuais.has(o.status));
+  if (comerciais.length) {
+    return [...comerciais].sort((a, b) => {
+      const byEnvio = toTs(b.dataEnvio) - toTs(a.dataEnvio);
+      if (byEnvio !== 0) return byEnvio;
+      const byVersao = (b.versao || 0) - (a.versao || 0);
+      if (byVersao !== 0) return byVersao;
+      return toTs(b.updatedAt) - toTs(a.updatedAt);
+    })[0];
+  }
+
+  return [...vinculados].sort((a, b) => {
+    const byVersao = (b.versao || 0) - (a.versao || 0);
+    if (byVersao !== 0) return byVersao;
+    const byUpdated = toTs(b.updatedAt) - toTs(a.updatedAt);
+    if (byUpdated !== 0) return byUpdated;
+    return toTs(b.createdAt) - toTs(a.createdAt);
+  })[0];
+}
+
+export function isOrcamentoBloqueado(orcamento: { oportunidadeId?: string }, oportunidades: { id: string; etapa: string }[]) {
+  if (!orcamento.oportunidadeId) return false;
+  const oportunidade = oportunidades.find((o) => o.id === orcamento.oportunidadeId);
+  return !!oportunidade && ["Ganha", "Perdida", "Cancelada"].includes(oportunidade.etapa);
+}
