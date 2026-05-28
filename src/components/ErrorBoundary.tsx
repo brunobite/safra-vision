@@ -10,6 +10,18 @@ interface State {
   error: Error | null;
 }
 
+const OFFLINE_CHUNK_MESSAGES = [
+  "Failed to fetch dynamically imported module",
+  "Importing a module script failed",
+  "ChunkLoadError",
+];
+
+function isOfflineChunkError(error: Error | null) {
+  if (!error) return false;
+  const details = `${error.name} ${error.message}`;
+  return OFFLINE_CHUNK_MESSAGES.some((message) => details.includes(message));
+}
+
 export default class ErrorBoundary extends Component<Props, State> {
   state: State = { hasError: false, error: null };
 
@@ -36,7 +48,9 @@ export default class ErrorBoundary extends Component<Props, State> {
         <div className="w-full max-w-xl space-y-3 rounded-md border border-border bg-card p-6">
           <h1 className="text-lg font-semibold">Erro ao carregar esta tela</h1>
           <p className="text-sm text-muted-foreground">
-            O aplicativo encontrou um erro nesta operação. Seus dados locais não foram apagados. Tente voltar ao Dashboard ou atualizar a página.
+            {isOfflineChunkError(this.state.error)
+              ? "Esta tela ainda não está disponível offline. Conecte-se uma vez à internet para atualizar o cache."
+              : "O aplicativo encontrou um erro nesta operação. Seus dados locais não foram apagados. Tente voltar ao Dashboard ou atualizar a página."}
           </p>
           <div className="flex gap-2">
             <Button type="button" variant="outline" onClick={this.goToDashboard}>Voltar ao Dashboard</Button>
