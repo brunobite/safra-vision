@@ -16,6 +16,12 @@ npm run lint
 npm run typecheck
 ```
 
+## Auth (Sprint 17B hotfix)
+
+- `VITE_ADMIN_EMAILS` aceita lista de e-mails (separados por vírgula) para bootstrap inicial no fluxo de cadastro.
+- Mesmo com bootstrap no cliente, a proteção real de segurança está no banco (RLS/policies em `public.profiles`).
+- Se não usar `VITE_ADMIN_EMAILS`, promova o primeiro admin manualmente no Supabase (definindo `role='admin'` e `status='active'`).
+
 ## Observação sobre ambiente com proxy
 
 Se `npm install` retornar `E403 Forbidden` para pacotes públicos (por exemplo em `https://registry.npmjs.org/`), valide se há proxy corporativo/CI interceptando chamadas HTTP(S). Nesse cenário, o problema pode ser de política/rede do ambiente e não do repositório.

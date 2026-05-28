@@ -20,6 +20,12 @@ type AuthContextValue = {
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
+const adminEmails = new Set(
+  (import.meta.env.VITE_ADMIN_EMAILS ?? "")
+    .split(",")
+    .map((email: string) => email.trim().toLowerCase())
+    .filter(Boolean),
+);
 
 export function AuthStoreProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -100,8 +106,17 @@ export function AuthStoreProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
+    const normalizedEmail = email.trim().toLowerCase();
+    const shouldBootstrapAsAdmin = adminEmails.has(normalizedEmail);
+
     setError(null);
-    const { error: signUpError } = await supabase.auth.signUp({ email, password });
+    const { error: signUpError } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: shouldBootstrapAsAdmin ? { requested_role: "admin" } : {},
+      },
+    });
     if (signUpError) {
       setError(signUpError.message);
       return;
