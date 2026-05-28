@@ -18,19 +18,22 @@
     <script>
       (function () {
         const basePath = "/safra-vision/";
+        const loginPath = `${basePath}login`;
         const query = window.location.search;
+        const hash = window.location.hash;
+
         if (query.startsWith("?/")) {
-          const decoded = query
-            .slice(2)
-            .replace(/~and~/g, "&");
-          const newPath = `${window.location.pathname}${decoded ? decoded : ""}${window.location.hash}`;
+          const decoded = query.slice(2);
+          const newPath = `${window.location.pathname}${decoded}${hash}`;
           window.history.replaceState(null, "", newPath);
         }
 
-        const hasSupabaseHash = window.location.hash.includes("access_token=") || window.location.hash.includes("refresh_token=");
-        const normalizedPath = window.location.pathname.endsWith("/") ? window.location.pathname : `${window.location.pathname}/`;
-        if (hasSupabaseHash && normalizedPath === basePath) {
-          window.location.replace(`${basePath}login${window.location.hash}`);
+        const authHashParams = ["access_token=", "refresh_token=", "type=", "expires_at="];
+        const hasSupabaseHash = authHashParams.some((param) => window.location.hash.includes(param));
+        const isBasePath = window.location.pathname === basePath || window.location.pathname === basePath.slice(0, -1);
+
+        if (hasSupabaseHash && isBasePath) {
+          window.history.replaceState(null, "", `${loginPath}${window.location.hash}`);
         }
       })();
     </script>

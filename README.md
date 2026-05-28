@@ -22,6 +22,28 @@ npm run typecheck
 - Mesmo com bootstrap no cliente, a proteção real de segurança está no banco (RLS/policies em `public.profiles`).
 - Se não usar `VITE_ADMIN_EMAILS`, promova o primeiro admin manualmente no Supabase (definindo `role='admin'` e `status='active'`).
 
+
+## Deploy em produção no GitHub Pages com Supabase
+
+O app publicado em produção deve ser acessado por:
+
+- `https://brunobite.github.io/safra-vision/`
+
+No GitHub Actions/GitHub Pages, o build Vite precisa receber as variáveis do repositório, sem valores reais hardcoded no código:
+
+- `VITE_SUPABASE_URL` em **Settings → Secrets and variables → Actions → Variables**
+- `VITE_ADMIN_EMAILS` em **Settings → Secrets and variables → Actions → Variables**
+- `VITE_SUPABASE_ANON_KEY` em **Settings → Secrets and variables → Actions → Secrets**
+
+No Supabase, configure em **Authentication → URL Configuration**:
+
+- **Site URL:** `https://brunobite.github.io/safra-vision/`
+- **Redirect URLs:**
+  - `https://brunobite.github.io/safra-vision/**`
+  - `https://brunobite.github.io/safra-vision/login`
+
+O Codespace deve ser tratado apenas como ambiente de desenvolvimento e validação técnica. O uso real em produção deve ocorrer pelo GitHub Pages publicado, com as URLs acima liberadas no Supabase.
+
 ## Observação sobre ambiente com proxy
 
 Se `npm install` retornar `E403 Forbidden` para pacotes públicos (por exemplo em `https://registry.npmjs.org/`), valide se há proxy corporativo/CI interceptando chamadas HTTP(S). Nesse cenário, o problema pode ser de política/rede do ambiente e não do repositório.
