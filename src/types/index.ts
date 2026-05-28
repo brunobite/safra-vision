@@ -106,9 +106,25 @@ export interface Cliente {
   ultimaVisita?: string;
 }
 
+export interface SyncSummaryMeta {
+  total: number;
+  success: number;
+  error: number;
+  byStore: Partial<Record<string, { total: number; success: number; error: number }>>;
+  errors?: Array<{ id: string; store: string; message: string }>;
+}
+
+export interface LocalSyncMeta {
+  lastUploadAt: string | null;
+  lastDownloadAt: string | null;
+  lastSyncSummary?: SyncSummaryMeta;
+  deviceLabel?: string;
+}
+
 export interface AppConfig {
   id: string;
   percentualAcertoEsperado: number;
+  syncMeta?: LocalSyncMeta;
 }
 
 export interface Lancamento {

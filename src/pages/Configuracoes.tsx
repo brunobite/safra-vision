@@ -8,8 +8,10 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAppStore } from "@/store/AppStore";
+import { useAuth } from "@/store/AuthStore";
 import { BaseMode, ImportLog, RegraComissao, AplicarSobre, FaixaComissao, CATEGORIAS_PRODUTO_PADRAO, Empresa, FormaPagamento, PrazoPagamento } from "@/types";
 import { Plus, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -21,6 +23,8 @@ import { downloadBackupJson, parseBackupPayload } from "@/lib/backupService";
 import { applyImport, buildImportPreview, IMPORT_TEMPLATES, ImportMode, ImportPreview, parseCsv } from "@/lib/importService";
 import { saveAsTextFile } from "@/lib/fileDownload";
 import { openAppDb, promisifyRequest } from "@/lib/db";
+import { isSupabaseConfigured } from "@/lib/supabase";
+import { compareLocalAndRemote, getRemoteSyncMeta, runFirstUploadSync, type LocalRemoteComparison, type SyncSummary } from "@/lib/supabaseSync";
 import * as XLSX from "xlsx";
 
 const APLICAR: { v: AplicarSobre; label: string }[] = [
@@ -36,8 +40,9 @@ export default function Configuracoes() {
   const {
     regras, setRegras, vendedores, setVendedores, ticketsMedios, setTicketsMedios, dbError, isSaving, lastSavedAt, saveError,
     clientes, lancamentos, negocios, produtos, metasEmpresa, metasPessoais, eventos, metasVendedor, metasCategoria, prioridadesP1, orcamentos, setOrcamentos, empresas, setEmpresas, formasPagamento, setFormasPagamento, prazosPagamento, setPrazosPagamento,
-    setClientes, setLancamentos, setNegocios, setProdutos, setMetasEmpresa, setMetasPessoais, setEventos, setMetasVendedor, setMetasCategoria, setPrioridadesP1, appConfig, setAppConfig,
+    setClientes, setLancamentos, setNegocios, setProdutos, setMetasEmpresa, setMetasPessoais, setEventos, setMetasVendedor, setMetasCategoria, setPrioridadesP1, appConfig, setAppConfig, pendingSyncCount, refreshPendingSyncCount,
   } = useAppStore();
+  const { user, session, accessStatus, role } = useAuth();
   const [open, setOpen] = useState(false);
   const [edit, setEdit] = useState<RegraComissao | null>(null);
   const [form, setForm] = useState<Omit<RegraComissao, "id">>(emptyRegra);
@@ -53,9 +58,70 @@ export default function Configuracoes() {
   const [baseMode, setBaseMode] = useState<BaseMode>((localStorage.getItem("baseMode") as BaseMode) || "teste");
   const [importLogs, setImportLogs] = useState<ImportLog[]>([]);
   const [lastBackupAt, setLastBackupAt] = useState<string>("");
+  const [syncSummary, setSyncSummary] = useState<SyncSummary | null>(null);
+  const [syncComparison, setSyncComparison] = useState<LocalRemoteComparison | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [isComparingSync, setIsComparingSync] = useState(false);
+  const [confirmUploadOpen, setConfirmUploadOpen] = useState(false);
   const [dadosEmpresa, setDadosEmpresa] = useState<Empresa>(defaultEmpresa);
   const categoriasTicket = [...new Set([...CATEGORIAS_PRODUTO_PADRAO, ...ticketsMedios.map((t) => t.categoria)])];
   const isCategoriaPadrao = (categoria: string) => CATEGORIAS_PRODUTO_PADRAO.includes(categoria as (typeof CATEGORIAS_PRODUTO_PADRAO)[number]);
+
+
+  const syncContext = { session, accessStatus };
+  const lastSyncAt = appConfig.syncMeta?.lastUploadAt || appConfig.syncMeta?.lastDownloadAt || "";
+
+  const refreshCloudSyncMeta = async () => {
+    try {
+      const meta = await getRemoteSyncMeta(syncContext);
+      if (meta) setAppConfig((current) => ({ ...current, syncMeta: meta }));
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
+  const handleCompareCloud = async () => {
+    setIsComparingSync(true);
+    setSyncError(null);
+    try {
+      const result = await compareLocalAndRemote(syncContext);
+      setSyncComparison(result);
+      toast.success("Comparação local x nuvem concluída.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Erro desconhecido ao comparar local x nuvem.";
+      setSyncError(message);
+      toast.error(message);
+    } finally {
+      setIsComparingSync(false);
+    }
+  };
+
+  const executeUploadSync = async () => {
+    setIsSyncing(true);
+    setSyncError(null);
+    try {
+      const { summary, meta } = await runFirstUploadSync(syncContext);
+      setSyncSummary(summary);
+      if (meta) setAppConfig((current) => ({ ...current, syncMeta: meta }));
+      await refreshPendingSyncCount();
+      toast.success(`Sync concluído: ${summary.success} enviados, ${summary.error} erros.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Erro desconhecido ao enviar pendências.";
+      setSyncError(message);
+      toast.error(message);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const handleUploadClick = () => {
+    if (!lastSyncAt) {
+      setConfirmUploadOpen(true);
+      return;
+    }
+    void executeUploadSync();
+  };
 
 
   const loadStats = async () => {
@@ -232,6 +298,7 @@ export default function Configuracoes() {
         <TabsTrigger value="tickets">Regras comerciais</TabsTrigger>
         <TabsTrigger value="dados-empresa">Empresas</TabsTrigger>
         <TabsTrigger value="banco-local">Banco local</TabsTrigger>
+        <TabsTrigger value="sync-cloud">Sincronização em nuvem</TabsTrigger>
       </TabsList>
 
       <TabsContent value="comissao" className="space-y-3">{/* unchanged table */}
@@ -338,7 +405,62 @@ export default function Configuracoes() {
           </Card>
         </Card>
       </TabsContent>
+
+      <TabsContent value="sync-cloud" className="space-y-3">
+        <Card className="p-4 space-y-4">
+          <div>
+            <h2 className="text-lg font-semibold">Sincronização em nuvem</h2>
+            <p className="text-sm text-muted-foreground">Sincronização manual e controlada entre IndexedDB local e Supabase. Nenhum dado local será apagado.</p>
+          </div>
+          <div className="grid gap-3 md:grid-cols-3">
+            <div className="rounded-md border p-3 text-sm"><div className="text-muted-foreground">Supabase configurado</div><div className="font-medium">{isSupabaseConfigured ? "Sim" : "Não"}</div></div>
+            <div className="rounded-md border p-3 text-sm"><div className="text-muted-foreground">Usuário autenticado</div><div className="font-medium">{user?.email || "Não autenticado"}</div></div>
+            <div className="rounded-md border p-3 text-sm"><div className="text-muted-foreground">Role / status</div><div className="font-medium">{role} / {accessStatus}</div></div>
+            <div className="rounded-md border p-3 text-sm"><div className="text-muted-foreground">Pendências locais</div><div className="font-medium">{pendingSyncCount}</div></div>
+            <div className="rounded-md border p-3 text-sm md:col-span-2"><div className="text-muted-foreground">Último sync</div><div className="font-medium">{lastSyncAt ? new Date(lastSyncAt).toLocaleString("pt-BR") : "não registrado"}</div></div>
+          </div>
+          {syncError && <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{syncError}</div>}
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={handleCompareCloud} disabled={isComparingSync || isSyncing}>{isComparingSync ? "Comparando..." : "Comparar local x nuvem"}</Button>
+            <Button onClick={handleUploadClick} disabled={isSyncing || isComparingSync}>{isSyncing ? "Enviando..." : "Enviar pendências para nuvem"}</Button>
+            <Button variant="secondary" onClick={() => { void refreshPendingSyncCount(); void refreshCloudSyncMeta(); }}>Atualizar contagem de pendências</Button>
+          </div>
+        </Card>
+
+        {syncSummary && <Card className="p-4 space-y-3">
+          <h3 className="font-semibold">Resumo do envio</h3>
+          <div className="grid gap-2 md:grid-cols-3 text-sm">
+            <div><b>Total:</b> {syncSummary.total}</div><div><b>Sucesso:</b> {syncSummary.success}</div><div><b>Erros:</b> {syncSummary.error}</div>
+          </div>
+          <div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Store</TableHead><TableHead>Total</TableHead><TableHead>Sucesso</TableHead><TableHead>Erro</TableHead></TableRow></TableHeader><TableBody>{Object.entries(syncSummary.byStore).map(([store, item]) => <TableRow key={store}><TableCell>{store}</TableCell><TableCell>{item?.total ?? 0}</TableCell><TableCell>{item?.success ?? 0}</TableCell><TableCell>{item?.error ?? 0}</TableCell></TableRow>)}</TableBody></Table></div>
+          {syncSummary.errors.length > 0 && <div className="text-sm text-destructive">{syncSummary.errors.map((error) => <div key={error.id}>{error.store}: {error.message}</div>)}</div>}
+        </Card>}
+
+        {syncComparison && <Card className="p-4 space-y-3">
+          <h3 className="font-semibold">Comparação local x nuvem</h3>
+          <div className="text-xs text-muted-foreground">Gerado em {new Date(syncComparison.generatedAt).toLocaleString("pt-BR")}</div>
+          <div className="grid gap-2 md:grid-cols-6 text-sm">
+            <div><b>Local:</b> {syncComparison.totals.localCount}</div><div><b>Nuvem:</b> {syncComparison.totals.remoteCount}</div><div><b>Só local:</b> {syncComparison.totals.onlyLocal}</div><div><b>Só nuvem:</b> {syncComparison.totals.onlyRemote}</div><div><b>Nos dois:</b> {syncComparison.totals.inBoth}</div><div><b>Remotos excluídos:</b> {syncComparison.totals.remoteDeleted}</div>
+          </div>
+          <div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Store</TableHead><TableHead>Tabela</TableHead><TableHead>Local</TableHead><TableHead>Nuvem</TableHead><TableHead>Só local</TableHead><TableHead>Só nuvem</TableHead><TableHead>Nos dois</TableHead><TableHead>Excluídos</TableHead></TableRow></TableHeader><TableBody>{syncComparison.stores.map((row) => <TableRow key={row.store}><TableCell>{row.store}</TableCell><TableCell>{row.table}</TableCell><TableCell>{row.localCount}</TableCell><TableCell>{row.remoteCount}</TableCell><TableCell>{row.onlyLocal}</TableCell><TableCell>{row.onlyRemote}</TableCell><TableCell>{row.inBoth}</TableCell><TableCell>{row.remoteDeleted}</TableCell></TableRow>)}</TableBody></Table></div>
+        </Card>}
+      </TabsContent>
+
     </Tabs>
+
+
+    <AlertDialog open={confirmUploadOpen} onOpenChange={setConfirmUploadOpen}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Confirmar primeiro envio para nuvem</AlertDialogTitle>
+          <AlertDialogDescription>Esta ação enviará os dados locais deste dispositivo para a nuvem do usuário autenticado. Nenhum dado local será apagado. Deseja continuar?</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancelar</AlertDialogCancel>
+          <AlertDialogAction onClick={() => { setConfirmUploadOpen(false); void executeUploadSync(); }}>Confirmar envio</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
 
     <Dialog open={open} onOpenChange={setOpen}><DialogContent className="max-w-2xl"><DialogHeader><DialogTitle>{edit ? "Editar regra" : "Nova regra de comissão"}</DialogTitle></DialogHeader><div className="grid gap-3 md:grid-cols-2"><div className="md:col-span-2"><Label>Nome da regra</Label><Input value={form.nome} onChange={e => setForm({ ...form, nome: e.target.value })} /></div><div><Label>Tipo</Label><Select value={form.tipo} onValueChange={(v: "fixa" | "escalonada") => setForm({ ...form, tipo: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="fixa">Fixa</SelectItem><SelectItem value="escalonada">Escalonada</SelectItem></SelectContent></Select></div><div><Label>Aplicar sobre</Label><Select value={form.aplicarSobre} onValueChange={(v: AplicarSobre) => setForm({ ...form, aplicarSobre: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{APLICAR.map(a => <SelectItem key={a.v} value={a.v}>{a.label}</SelectItem>)}</SelectContent></Select></div>{form.tipo === "fixa" && (<div><Label>Percentual (%)</Label><Input type="number" step="0.1" value={form.percentual || 0} onChange={e => setForm({ ...form, percentual: +e.target.value })} /></div>)}<div className="flex items-end gap-2"><Switch checked={form.ativo} onCheckedChange={v => setForm({ ...form, ativo: v })} /><Label>Ativo</Label></div></div>{form.tipo === "escalonada" && <div className="mt-3 rounded-md border border-border p-3"><div className="mb-2 flex items-center justify-between"><Label className="text-sm font-semibold">Faixas escalonadas</Label><Button size="sm" variant="outline" onClick={addFaixa}><Plus className="mr-1 h-3 w-3" /> Faixa</Button></div><div className="space-y-2">{(form.faixas || []).map((f, i) => <div key={i} className="grid grid-cols-4 gap-2"><Input type="number" placeholder="Mín %" value={f.min} onChange={e => updFaixa(i, "min", +e.target.value)} /><Input type="number" placeholder="Máx %" value={f.max} onChange={e => updFaixa(i, "max", +e.target.value)} /><Input type="number" step="0.1" placeholder="% comissão" value={f.percentual} onChange={e => updFaixa(i, "percentual", +e.target.value)} /><Button size="icon" variant="ghost" onClick={() => rmFaixa(i)}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button></div>)}</div></div>}<DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button><Button onClick={save}>Salvar</Button></DialogFooter></DialogContent></Dialog>
   
