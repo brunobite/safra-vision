@@ -5,6 +5,7 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppStoreProvider } from "@/store/AppStore";
+import { AuthStoreProvider } from "@/store/AuthStore";
 import AppLayout from "@/components/layout/AppLayout";
 import { preloadOfflineRoutes } from "@/lib/preloadOfflineRoutes";
 
@@ -24,6 +25,7 @@ const PrecosEstoque = lazy(() => import("./pages/PrecosEstoque"));
 const Orcamentos = lazy(() => import("./pages/Orcamentos"));
 const ProximasAcoes = lazy(() => import("./pages/ProximasAcoes"));
 const ClienteFicha360 = lazy(() => import("./pages/ClienteFicha360"));
+const Login = lazy(() => import("./pages/Login"));
 
 const queryClient = new QueryClient();
 
@@ -45,6 +47,7 @@ const App = () => {
     <TooltipProvider>
       <Toaster />
       <Sonner />
+      <AuthStoreProvider>
       <AppStoreProvider>
         <BrowserRouter basename={import.meta.env.BASE_URL}>
           <Suspense fallback={<div className="sr-only">Carregando página</div>}>
@@ -66,11 +69,13 @@ const App = () => {
                 <Route path="/proximas-acoes" element={<ProximasAcoes />} />
                 <Route path="/configuracoes" element={<Configuracoes />} />
               </Route>
+              <Route path="/login" element={<Login />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </Suspense>
         </BrowserRouter>
       </AppStoreProvider>
+      </AuthStoreProvider>
     </TooltipProvider>
   </QueryClientProvider>
   );
