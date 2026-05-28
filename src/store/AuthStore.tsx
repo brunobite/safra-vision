@@ -16,6 +16,7 @@ type AuthContextValue = {
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
+  refreshAccess: () => Promise<void>;
   clearError: () => void;
 };
 
@@ -115,6 +116,7 @@ export function AuthStoreProvider({ children }: { children: React.ReactNode }) {
       password,
       options: {
         data: shouldBootstrapAsAdmin ? { requested_role: "admin" } : {},
+        emailRedirectTo: `${window.location.origin}${import.meta.env.BASE_URL}login`,
       },
     });
     if (signUpError) {
@@ -127,9 +129,19 @@ export function AuthStoreProvider({ children }: { children: React.ReactNode }) {
 
   const signOut = useCallback(async () => {
     if (!supabase) return;
+
     const { error: signOutError } = await supabase.auth.signOut();
-    if (signOutError) setError(signOutError.message);
+
+    setUser(null);
+    setSession(null);
+    setAccessStatus("pending");
+    setRole("user");
+    setError(signOutError ? signOutError.message : null);
   }, []);
+
+  const refreshAccess = useCallback(async () => {
+    await refreshProfile(user);
+  }, [refreshProfile, user]);
 
   const value = useMemo<AuthContextValue>(() => ({
     user,
@@ -142,8 +154,9 @@ export function AuthStoreProvider({ children }: { children: React.ReactNode }) {
     signIn,
     signUp,
     signOut,
+    refreshAccess,
     clearError: () => setError(null),
-  }), [user, session, loading, error, accessStatus, role, isLocalMode, signIn, signUp, signOut]);
+  }), [user, session, loading, error, accessStatus, role, isLocalMode, signIn, signUp, signOut, refreshAccess]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

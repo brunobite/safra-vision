@@ -17,6 +17,7 @@
     <meta name="twitter:image" content="https://lovable.dev/opengraph-image-p98pqg.png" />
     <script>
       (function () {
+        const basePath = "/safra-vision/";
         const query = window.location.search;
         if (query.startsWith("?/")) {
           const decoded = query
@@ -24,6 +25,12 @@
             .replace(/~and~/g, "&");
           const newPath = `${window.location.pathname}${decoded ? decoded : ""}${window.location.hash}`;
           window.history.replaceState(null, "", newPath);
+        }
+
+        const hasSupabaseHash = window.location.hash.includes("access_token=") || window.location.hash.includes("refresh_token=");
+        const normalizedPath = window.location.pathname.endsWith("/") ? window.location.pathname : `${window.location.pathname}/`;
+        if (hasSupabaseHash && normalizedPath === basePath) {
+          window.location.replace(`${basePath}login${window.location.hash}`);
         }
       })();
     </script>

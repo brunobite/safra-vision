@@ -45,3 +45,8 @@ O script:
 3. Suporta dry-run.
 4. Zera somente entidades operacionais.
 5. Preserva usuários/config/auth/permissões (quando presentes no payload).
+
+## Acesso via subpath `/safra-vision/`
+
+- A URL recomendada é com barra final: `/safra-vision/`.
+- Em hosts sem fallback SPA no nível do servidor (ex.: alguns previews de Codespaces), `/safra-vision` sem barra pode retornar 404 antes de carregar o app.

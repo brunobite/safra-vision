@@ -6,7 +6,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useAuth } from "@/store/AuthStore";
 
 export default function Login() {
-  const { user, loading, error, accessStatus, role, isLocalMode, signIn, signUp, signOut, clearError } = useAuth();
+  const { user, loading, error, accessStatus, role, isLocalMode, signIn, signUp, signOut, refreshAccess, clearError } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
@@ -55,7 +55,10 @@ export default function Login() {
             <Button disabled={loading} onClick={() => signIn(email, password)}>Entrar</Button>
             <Button variant="secondary" disabled={loading} onClick={() => signUp(email, password)}>Criar conta</Button>
             {user && (
-              <Button variant="outline" disabled={loading} onClick={() => signOut()}>Sair</Button>
+              <>
+                <Button variant="outline" disabled={loading} onClick={() => refreshAccess()}>Atualizar status</Button>
+                <Button variant="outline" disabled={loading} onClick={() => signOut()}>Sair</Button>
+              </>
             )}
           </div>
         </CardContent>
