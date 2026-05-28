@@ -4,6 +4,7 @@ import {
   Negocio, Produto, RegraComissao, Vendedor, MetaVendedor, MetaCategoria, TicketMedioRegra, Orcamento, Empresa, ProximaAcao, FormaPagamento, PrazoPagamento, AppConfig, OportunidadeComercial,
 } from "@/types";
 import { bootstrapLocalDatabase, saveStore } from "@/lib/localRepository";
+import { enqueueSyncItem, getPendingSyncItems, shouldTrackSyncStore } from "@/lib/syncQueue";
 import { calcularPotencialCliente, calcularValorMedioHaSegmentosAtivos } from "@/utils/businessRules";
 
 interface Filters {
@@ -37,6 +38,7 @@ interface AppStoreCtx {
   isSaving: boolean;
   lastSavedAt: string | null;
   saveError: string | null;
+  pendingSyncCount: number;
   isReady: boolean;
   dbError: string | null;
   filters: Filters; setFilters: React.Dispatch<React.SetStateAction<Filters>>;
@@ -80,7 +82,18 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const [isSaving, setIsSaving] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [pendingSyncCount, setPendingSyncCount] = useState(0);
   const hasHydratedRef = useRef(false);
+
+
+  const refreshPendingSyncCount = useCallback(async () => {
+    try {
+      const pending = await getPendingSyncItems();
+      setPendingSyncCount(pending.length);
+    } catch (error) {
+      console.error(error);
+    }
+  }, []);
 
   useEffect(() => {
     const init = async () => {
@@ -106,6 +119,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         setFormasPagamento((localData as {formasPagamento?: FormaPagamento[]}).formasPagamento || []);
         setPrazosPagamento((localData as {prazosPagamento?: PrazoPagamento[]}).prazosPagamento || []);
         setAppConfig((localData as {appConfig?: AppConfig[]}).appConfig?.[0] || { id: "main", percentualAcertoEsperado: 12 });
+        await refreshPendingSyncCount();
       } catch (error) {
         console.error(error);
         setDbError("Não foi possível acessar o banco local deste navegador. Os dados podem não ser salvos até o problema ser resolvido.");
@@ -117,7 +131,8 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     };
 
     void init();
-  }, []);
+  }, [refreshPendingSyncCount]);
+
 
   const persistStore = useCallback(async <T extends { id: string }>(store: Parameters<typeof saveStore<T>>[0], data: T[]) => {
     if (!isReady || !hasHydratedRef.current || dbError) return;
@@ -125,14 +140,18 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     setSaveError(null);
     try {
       await saveStore(store, data);
+      if (shouldTrackSyncStore(store)) {
+        await Promise.all(data.map((item) => enqueueSyncItem({ store, entityId: item.id, operation: "upsert", payload: item })));
+      }
       setLastSavedAt(new Date().toISOString());
+      await refreshPendingSyncCount();
     } catch (error) {
       console.error(error);
       setSaveError("Erro ao salvar dados locais.");
     } finally {
       setIsSaving(false);
     }
-  }, [dbError, isReady]);
+  }, [dbError, isReady, refreshPendingSyncCount]);
 
   useEffect(() => { void persistStore("clientes", clientes); }, [clientes, persistStore]);
   useEffect(() => { void persistStore("lancamentos", lancamentos); }, [lancamentos, persistStore]);
@@ -221,7 +240,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       eventos, setEventos, prioridadesP1, setPrioridadesP1,
       negocios, setNegocios, oportunidades, setOportunidades, produtos, setProdutos,
       regras, setRegras, vendedores, setVendedores, ticketsMedios, setTicketsMedios, orcamentos, setOrcamentos, empresas, setEmpresas, proximasAcoes, setProximasAcoes, formasPagamento, setFormasPagamento, prazosPagamento, setPrazosPagamento, appConfig, setAppConfig,
-      isLoading, isReady, dbError, isSaving, lastSavedAt, saveError,
+      isLoading, isReady, dbError, isSaving, lastSavedAt, saveError, pendingSyncCount,
       filters, setFilters,
       filtered: { lancamentos: filteredLancs, negocios: filteredNegs, oportunidades: filteredOportunidades },
       clienteById: (id) => cMap.get(id),

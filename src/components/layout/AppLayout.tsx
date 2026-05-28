@@ -7,6 +7,8 @@ import {
 } from "@/components/ui/sidebar";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { useAppStore } from "@/store/AppStore";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 
 const items = [
   { group: "Visão geral", title: "Dashboard", url: "/", icon: LayoutDashboard },
@@ -68,6 +70,11 @@ function AppSidebar() {
 
 export default function AppLayout() {
   const [open, setOpen] = useState(false);
+  const isOnline = useOnlineStatus();
+  const { isSaving, lastSavedAt, pendingSyncCount } = useAppStore();
+
+  const statusText = isOnline ? "Online" : "Offline — trabalhando com dados locais";
+  const saveText = isSaving ? "Salvando localmente..." : lastSavedAt ? "Dados salvos localmente" : "";
   return (
     <SidebarProvider>
       <div className="flex min-h-screen w-full bg-background">
@@ -78,6 +85,11 @@ export default function AppLayout() {
             <div className="flex flex-col leading-tight">
               <h1 className="text-sm font-semibold text-foreground">Safra 26/27 — Controle Operacional</h1>
               <span className="text-[11px] text-muted-foreground">Gestão comercial agrícola</span>
+            </div>
+            <div className="ml-auto text-right text-[11px] leading-tight">
+              <div className={isOnline ? "text-emerald-600" : "text-amber-600"}>{statusText}</div>
+              {saveText && <div className="text-muted-foreground">{saveText}</div>}
+              {pendingSyncCount > 0 && <div className="text-amber-700">Há alterações pendentes de sincronização ({pendingSyncCount})</div>}
             </div>
           </header>
           <main className="flex-1 p-4 md:p-6">
