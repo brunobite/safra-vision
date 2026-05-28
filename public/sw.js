@@ -1,16 +1,18 @@
-const CACHE_NAME = 'safra-vision-pwa-v3';
+const CACHE_VERSION = 'v4';
+const APP_SHELL_CACHE = `safra-vision-app-shell-${CACHE_VERSION}`;
+const RUNTIME_CACHE = `safra-vision-runtime-${CACHE_VERSION}`;
 const BASE_URL = self.registration.scope;
 const APP_SHELL = [
   `${BASE_URL}`,
   `${BASE_URL}index.html`,
   `${BASE_URL}manifest.webmanifest`,
   `${BASE_URL}favicon.ico`,
-  `${BASE_URL}placeholder.svg`
+  `${BASE_URL}placeholder.svg`,
 ];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME)
+    caches.open(APP_SHELL_CACHE)
       .then((cache) => cache.addAll(APP_SHELL))
       .then(() => self.skipWaiting())
   );
@@ -18,49 +20,51 @@ self.addEventListener('install', (event) => {
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys()
-      .then((keys) =>
-        Promise.all(
-          keys
-            .filter((key) => key !== CACHE_NAME)
-            .map((key) => caches.delete(key))
-        )
-      )
-      .then(() => self.clients.claim())
+    caches.keys().then((keys) =>
+      Promise.all(keys.filter((k) => ![APP_SHELL_CACHE, RUNTIME_CACHE].includes(k)).map((k) => caches.delete(k)))
+    ).then(() => self.clients.claim())
   );
 });
 
-self.addEventListener('fetch', (event) => {
-  const request = event.request;
-
-  if (request.method !== 'GET') {
-    return;
+async function networkFirstNavigate(request) {
+  try {
+    const response = await fetch(request);
+    const cache = await caches.open(RUNTIME_CACHE);
+    cache.put(request, response.clone());
+    return response;
+  } catch {
+    return (await caches.match(request)) || (await caches.match(`${BASE_URL}index.html`));
   }
+}
+
+async function staleWhileRevalidate(request) {
+  const cached = await caches.match(request);
+  const networkPromise = fetch(request).then(async (response) => {
+    if (response.ok) {
+      const cache = await caches.open(RUNTIME_CACHE);
+      cache.put(request, response.clone());
+    }
+    return response;
+  }).catch(() => undefined);
+
+  return cached || networkPromise || fetch(request);
+}
+
+self.addEventListener('fetch', (event) => {
+  const { request } = event;
+  if (request.method !== 'GET') return;
 
   if (request.mode === 'navigate') {
-    event.respondWith(
-      fetch(request)
-        .then((networkResponse) => {
-          const responseClone = networkResponse.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(request, responseClone));
-          return networkResponse;
-        })
-        .catch(async () => {
-          const cachedNavigation = await caches.match(request);
-          if (cachedNavigation) {
-            return cachedNavigation;
-          }
-
-          return caches.match(`${BASE_URL}index.html`);
-        })
-    );
-
+    event.respondWith(networkFirstNavigate(request));
     return;
   }
 
-  event.respondWith(
-    caches.match(request).then((cachedResponse) => {
-      return cachedResponse || fetch(request);
-    })
-  );
+  const url = new URL(request.url);
+  const sameOrigin = url.origin === self.location.origin;
+  if (sameOrigin && (url.pathname.includes('/assets/') || url.pathname.endsWith('.js') || url.pathname.endsWith('.css'))) {
+    event.respondWith(staleWhileRevalidate(request));
+    return;
+  }
+
+  event.respondWith(caches.match(request).then((cached) => cached || fetch(request)));
 });
