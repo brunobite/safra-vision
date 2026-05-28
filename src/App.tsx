@@ -1,4 +1,4 @@
-import { Suspense, lazy } from "react";
+import { Suspense, lazy, useEffect } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
@@ -6,6 +6,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppStoreProvider } from "@/store/AppStore";
 import AppLayout from "@/components/layout/AppLayout";
+import { preloadOfflineRoutes } from "@/lib/preloadOfflineRoutes";
 
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const Lancamentos = lazy(() => import("./pages/Lancamentos"));
@@ -26,7 +27,20 @@ const ClienteFicha360 = lazy(() => import("./pages/ClienteFicha360"));
 
 const queryClient = new QueryClient();
 
-const App = () => (
+const App = () => {
+  useEffect(() => {
+    if (!navigator.onLine) return;
+
+    const preloadTimer = window.setTimeout(() => {
+      preloadOfflineRoutes().catch((error) => {
+        console.warn("[offline-preload] Erro inesperado no pré-carregamento de rotas:", error);
+      });
+    }, 1500);
+
+    return () => window.clearTimeout(preloadTimer);
+  }, []);
+
+  return (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
       <Toaster />
@@ -59,6 +73,7 @@ const App = () => (
       </AppStoreProvider>
     </TooltipProvider>
   </QueryClientProvider>
-);
+  );
+};
 
 export default App;
