@@ -98,6 +98,10 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const hasHydratedRef = useRef(false);
   const lastPersistedAppConfigRef = useRef<string>(JSON.stringify({ id: "main", percentualAcertoEsperado: 12 }));
   const autoSyncTimerRef = useRef<number | null>(null);
+  const autoSyncWatchdogIntervalRef = useRef<number | null>(null);
+  const pendingSyncCountRef = useRef(pendingSyncCount);
+  const syncStatusRef = useRef(syncStatus);
+  const isReadyRef = useRef(isReady);
   const authLoadingRetryCountRef = useRef(0);
   const authLoadingRef = useRef(authLoading);
   const scheduleAutoSyncRef = useRef<(delayMs: number) => void>(() => undefined);
@@ -107,13 +111,28 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     if (!authLoading) authLoadingRetryCountRef.current = 0;
   }, [authLoading]);
 
+  useEffect(() => {
+    pendingSyncCountRef.current = pendingSyncCount;
+  }, [pendingSyncCount]);
+
+  useEffect(() => {
+    syncStatusRef.current = syncStatus;
+  }, [syncStatus]);
+
+  useEffect(() => {
+    isReadyRef.current = isReady;
+  }, [isReady]);
+
 
   const refreshPendingSyncCount = useCallback(async () => {
     try {
       const pending = await getPendingSyncItems();
+      pendingSyncCountRef.current = pending.length;
       setPendingSyncCount(pending.length);
+      return pending.length;
     } catch (error) {
       console.error(error);
+      return pendingSyncCountRef.current;
     }
   }, []);
 
@@ -297,9 +316,14 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   }, [firstUploadConfirmed]);
 
   const scheduleAutoSync = useCallback((delayMs: number) => {
+    if (syncStatusRef.current === "syncing") return;
     if (autoSyncTimerRef.current) window.clearTimeout(autoSyncTimerRef.current);
     autoSyncTimerRef.current = window.setTimeout(() => {
       autoSyncTimerRef.current = null;
+      if (!isReadyRef.current) return;
+      if (typeof navigator !== "undefined" && !navigator.onLine) return;
+      if (syncStatusRef.current === "syncing") return;
+
       if (authLoadingRef.current) {
         setSyncStatus("pending");
         setSyncError("Aguardando sessão Supabase...");
@@ -314,7 +338,11 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
 
       authLoadingRetryCountRef.current = 0;
       void (async () => {
-        await refreshPendingSyncCount();
+        const freshPendingCount = await refreshPendingSyncCount();
+        if (freshPendingCount <= 0) return;
+        if (typeof navigator !== "undefined" && !navigator.onLine) return;
+        if (syncStatusRef.current === "syncing") return;
+
         setSyncStatus("syncing");
         setSyncError(null);
 
@@ -354,18 +382,51 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   }, [authLoading, isReady, pendingSyncCount, scheduleAutoSync]);
 
   useEffect(() => {
-    const handleOnline = () => {
+    const triggerAutoSync = () => {
       void refreshPendingSyncCount();
+      if (syncStatusRef.current === "syncing") return;
       setSyncStatus("pending");
       setSyncError("Aguardando sessão Supabase...");
       scheduleAutoSync(1_000);
     };
-    window.addEventListener("online", handleOnline);
-    return () => window.removeEventListener("online", handleOnline);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") triggerAutoSync();
+    };
+
+    window.addEventListener("online", triggerAutoSync);
+    window.addEventListener("focus", triggerAutoSync);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener("online", triggerAutoSync);
+      window.removeEventListener("focus", triggerAutoSync);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
   }, [refreshPendingSyncCount, scheduleAutoSync]);
+
+  useEffect(() => {
+    if (!isReady || pendingSyncCount <= 0 || syncStatus === "syncing" || (typeof navigator !== "undefined" && !navigator.onLine)) {
+      if (autoSyncWatchdogIntervalRef.current) {
+        window.clearInterval(autoSyncWatchdogIntervalRef.current);
+        autoSyncWatchdogIntervalRef.current = null;
+      }
+      return;
+    }
+
+    if (!autoSyncWatchdogIntervalRef.current) {
+      autoSyncWatchdogIntervalRef.current = window.setInterval(() => {
+        if (!isReadyRef.current || pendingSyncCountRef.current <= 0 || syncStatusRef.current === "syncing") return;
+        if (typeof navigator !== "undefined" && !navigator.onLine) return;
+        scheduleAutoSyncRef.current(1_000);
+      }, 30_000);
+    }
+
+    return undefined;
+  }, [isReady, pendingSyncCount, syncStatus]);
 
   useEffect(() => () => {
     if (autoSyncTimerRef.current) window.clearTimeout(autoSyncTimerRef.current);
+    if (autoSyncWatchdogIntervalRef.current) window.clearInterval(autoSyncWatchdogIntervalRef.current);
   }, []);
 
   useEffect(() => {
