@@ -42,7 +42,7 @@ export default function Configuracoes() {
     clientes, lancamentos, negocios, produtos, metasEmpresa, metasPessoais, eventos, metasVendedor, metasCategoria, prioridadesP1, orcamentos, setOrcamentos, empresas, setEmpresas, formasPagamento, setFormasPagamento, prazosPagamento, setPrazosPagamento,
     setClientes, setLancamentos, setNegocios, setProdutos, setMetasEmpresa, setMetasPessoais, setEventos, setMetasVendedor, setMetasCategoria, setPrioridadesP1, appConfig, setAppConfig, pendingSyncCount, refreshPendingSyncCount,
   } = useAppStore();
-  const { user, session, accessStatus, role } = useAuth();
+  const { user, session, accessStatus, role, refreshAccess, loading: authLoading, error: authError } = useAuth();
   const [open, setOpen] = useState(false);
   const [edit, setEdit] = useState<RegraComissao | null>(null);
   const [form, setForm] = useState<Omit<RegraComissao, "id">>(emptyRegra);
@@ -64,6 +64,8 @@ export default function Configuracoes() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [isComparingSync, setIsComparingSync] = useState(false);
   const [confirmUploadOpen, setConfirmUploadOpen] = useState(false);
+  const [isRefreshingSyncStatus, setIsRefreshingSyncStatus] = useState(false);
+  const [activeTab, setActiveTab] = useState("comissao");
   const [dadosEmpresa, setDadosEmpresa] = useState<Empresa>(defaultEmpresa);
   const categoriasTicket = [...new Set([...CATEGORIAS_PRODUTO_PADRAO, ...ticketsMedios.map((t) => t.categoria)])];
   const isCategoriaPadrao = (categoria: string) => CATEGORIAS_PRODUTO_PADRAO.includes(categoria as (typeof CATEGORIAS_PRODUTO_PADRAO)[number]);
@@ -71,13 +73,36 @@ export default function Configuracoes() {
 
   const syncContext = { session, accessStatus };
   const lastSyncAt = appConfig.syncMeta?.lastUploadAt || appConfig.syncMeta?.lastDownloadAt || "";
+  const shouldWarnAboutStaleAccess = Boolean(user && session && accessStatus === "pending");
 
-  const refreshCloudSyncMeta = async () => {
+  const refreshCloudSyncMeta = async (context = syncContext) => {
     try {
-      const meta = await getRemoteSyncMeta(syncContext);
+      const meta = await getRemoteSyncMeta(context);
       if (meta) setAppConfig((current) => ({ ...current, syncMeta: meta }));
     } catch (error) {
       console.error(error);
+    }
+  };
+
+  const getFreshSyncContext = async () => {
+    const profile = await refreshAccess();
+    return { session, accessStatus: profile.accessStatus };
+  };
+
+  const handleRefreshSyncPanel = async () => {
+    setIsRefreshingSyncStatus(true);
+    setSyncError(null);
+    try {
+      const freshSyncContext = await getFreshSyncContext();
+      await refreshPendingSyncCount();
+      if (freshSyncContext.accessStatus === "active") await refreshCloudSyncMeta(freshSyncContext);
+      toast.success("Status e pendências atualizados.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Erro desconhecido ao atualizar status e pendências.";
+      setSyncError(message);
+      toast.error(message);
+    } finally {
+      setIsRefreshingSyncStatus(false);
     }
   };
 
@@ -85,7 +110,8 @@ export default function Configuracoes() {
     setIsComparingSync(true);
     setSyncError(null);
     try {
-      const result = await compareLocalAndRemote(syncContext);
+      const freshSyncContext = await getFreshSyncContext();
+      const result = await compareLocalAndRemote(freshSyncContext);
       setSyncComparison(result);
       toast.success("Comparação local x nuvem concluída.");
     } catch (error) {
@@ -101,7 +127,8 @@ export default function Configuracoes() {
     setIsSyncing(true);
     setSyncError(null);
     try {
-      const { summary, meta } = await runFirstUploadSync(syncContext);
+      const freshSyncContext = await getFreshSyncContext();
+      const { summary, meta } = await runFirstUploadSync(freshSyncContext);
       setSyncSummary(summary);
       if (meta) setAppConfig((current) => ({ ...current, syncMeta: meta }));
       await refreshPendingSyncCount();
@@ -136,6 +163,11 @@ export default function Configuracoes() {
       db.close();
     })();
   }, []);
+
+  useEffect(() => {
+    if (activeTab !== "sync-cloud" || !user || !session) return;
+    void refreshAccess();
+  }, [activeTab, user?.id, session?.access_token, refreshAccess]);
 
   const exportPayload = {
     clientes, vendedores, lancamentos, negocios, produtos, metasEmpresa, metasPessoais, regrasComissao: regras, eventos,
@@ -291,7 +323,7 @@ export default function Configuracoes() {
       </div>
     </Card>
     {dbError && <Card className="border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{dbError}</Card>}
-    <Tabs defaultValue="comissao">
+    <Tabs value={activeTab} onValueChange={setActiveTab}>
       <TabsList>
         <TabsTrigger value="comissao">Regras de comissão</TabsTrigger>
         <TabsTrigger value="vendedores">Vendedores</TabsTrigger>
@@ -419,11 +451,14 @@ export default function Configuracoes() {
             <div className="rounded-md border p-3 text-sm"><div className="text-muted-foreground">Pendências locais</div><div className="font-medium">{pendingSyncCount}</div></div>
             <div className="rounded-md border p-3 text-sm md:col-span-2"><div className="text-muted-foreground">Último sync</div><div className="font-medium">{lastSyncAt ? new Date(lastSyncAt).toLocaleString("pt-BR") : "não registrado"}</div></div>
           </div>
+          {shouldWarnAboutStaleAccess && <div className="rounded-md border border-yellow-500/40 bg-yellow-500/10 p-3 text-sm text-yellow-800">Usuário autenticado, mas status de acesso ainda não foi atualizado. Clique em Atualizar status e pendências.</div>}
+          {authError && <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">Erro de autenticação: {authError}</div>}
           {syncError && <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{syncError}</div>}
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" onClick={handleCompareCloud} disabled={isComparingSync || isSyncing}>{isComparingSync ? "Comparando..." : "Comparar local x nuvem"}</Button>
-            <Button onClick={handleUploadClick} disabled={isSyncing || isComparingSync}>{isSyncing ? "Enviando..." : "Enviar pendências para nuvem"}</Button>
-            <Button variant="secondary" onClick={() => { void refreshPendingSyncCount(); void refreshCloudSyncMeta(); }}>Atualizar contagem de pendências</Button>
+            <Button variant="secondary" onClick={() => void handleRefreshSyncPanel()} disabled={isRefreshingSyncStatus || authLoading}>{isRefreshingSyncStatus || authLoading ? "Atualizando..." : "Atualizar status e pendências"}</Button>
+            <Button variant="outline" onClick={handleCompareCloud} disabled={isComparingSync || isSyncing || isRefreshingSyncStatus}>{isComparingSync ? "Comparando..." : "Comparar local x nuvem"}</Button>
+            <Button onClick={handleUploadClick} disabled={isSyncing || isComparingSync || isRefreshingSyncStatus}>{isSyncing ? "Enviando..." : "Enviar pendências para nuvem"}</Button>
+            <Button variant="outline" onClick={() => { void refreshPendingSyncCount(); void refreshCloudSyncMeta(); }}>Atualizar contagem de pendências</Button>
           </div>
         </Card>
 

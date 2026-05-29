@@ -4,6 +4,7 @@ import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 
 type AccessStatus = "pending" | "active" | "blocked" | "inactive";
 type UserRole = "admin" | "user";
+type AccessProfile = { accessStatus: AccessStatus; role: UserRole };
 
 type AuthContextValue = {
   user: User | null;
@@ -16,7 +17,7 @@ type AuthContextValue = {
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
-  refreshAccess: () => Promise<void>;
+  refreshAccess: () => Promise<AccessProfile>;
   clearError: () => void;
 };
 
@@ -38,11 +39,13 @@ export function AuthStoreProvider({ children }: { children: React.ReactNode }) {
 
   const isLocalMode = !isSupabaseConfigured;
 
-  const refreshProfile = useCallback(async (currentUser: User | null) => {
+  const refreshProfile = useCallback(async (currentUser: User | null): Promise<AccessProfile> => {
+    const fallbackProfile: AccessProfile = { accessStatus: "pending", role: "user" };
+
     if (!supabase || !currentUser) {
-      setAccessStatus("pending");
-      setRole("user");
-      return;
+      setAccessStatus(fallbackProfile.accessStatus);
+      setRole(fallbackProfile.role);
+      return fallbackProfile;
     }
 
     const { data, error: profileError } = await supabase
@@ -53,11 +56,19 @@ export function AuthStoreProvider({ children }: { children: React.ReactNode }) {
 
     if (profileError) {
       setError(profileError.message);
-      return;
+      setAccessStatus(fallbackProfile.accessStatus);
+      setRole(fallbackProfile.role);
+      return fallbackProfile;
     }
 
-    setAccessStatus((data?.status as AccessStatus) ?? "pending");
-    setRole((data?.role as UserRole) ?? "user");
+    const nextProfile: AccessProfile = {
+      accessStatus: (data?.status as AccessStatus) ?? fallbackProfile.accessStatus,
+      role: (data?.role as UserRole) ?? fallbackProfile.role,
+    };
+
+    setAccessStatus(nextProfile.accessStatus);
+    setRole(nextProfile.role);
+    return nextProfile;
   }, []);
 
   useEffect(() => {
@@ -140,7 +151,7 @@ export function AuthStoreProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const refreshAccess = useCallback(async () => {
-    await refreshProfile(user);
+    return refreshProfile(user);
   }, [refreshProfile, user]);
 
   const value = useMemo<AuthContextValue>(() => ({
