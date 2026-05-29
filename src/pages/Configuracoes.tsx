@@ -35,6 +35,18 @@ const APLICAR: { v: AplicarSobre; label: string }[] = [
 const emptyRegra: Omit<RegraComissao, "id"> = { nome: "", tipo: "fixa", percentual: 1, aplicarSobre: "negocio_fechado", ativo: true, faixas: [{ min: 80, max: 89, percentual: 0.5 }] };
 
 const defaultEmpresa: Empresa = { id: "", nomeFantasia: "", razaoSocial: "", cnpj: "", inscricaoEstadual: "", endereco: "", cidadeUf: "", telefone: "", email: "", consultorPadrao: "", observacoesComerciaisPadrao: "", ativa: true, padrao: false, logoDataUrl: "" };
+const SYNC_PANEL_TIMEOUT_MS = 8000;
+type SyncQueryStatus = "parado" | "atualizando" | "erro" | "sucesso";
+
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timeoutId = window.setTimeout(() => reject(new Error(message)), ms);
+    promise
+      .then(resolve)
+      .catch(reject)
+      .finally(() => window.clearTimeout(timeoutId));
+  });
+}
 
 export default function Configuracoes() {
   const {
@@ -64,6 +76,7 @@ export default function Configuracoes() {
   const [isComparingSync, setIsComparingSync] = useState(false);
   const [confirmUploadOpen, setConfirmUploadOpen] = useState(false);
   const [isRefreshingSyncStatus, setIsRefreshingSyncStatus] = useState(false);
+  const [syncQueryStatus, setSyncQueryStatus] = useState<SyncQueryStatus>("parado");
   const [activeTab, setActiveTab] = useState("comissao");
   const [dadosEmpresa, setDadosEmpresa] = useState<Empresa>(defaultEmpresa);
   const categoriasTicket = [...new Set([...CATEGORIAS_PRODUTO_PADRAO, ...ticketsMedios.map((t) => t.categoria)])];
@@ -79,6 +92,12 @@ export default function Configuracoes() {
   const [cloudAuthError, setCloudAuthError] = useState<string | null>(null);
   const lastSyncAt = appConfig.syncMeta?.lastUploadAt || appConfig.syncMeta?.lastDownloadAt || "";
   const shouldWarnAboutStaleAccess = Boolean(cloudSessionExists && cloudAccessStatus !== "active");
+  const canCompareCloud = Boolean(
+    cloudSessionExists
+      && cloudAccessStatus === "active"
+      && (cloudRole === "admin" || cloudRole === "user"),
+  );
+  const lastSyncPanelError = cloudAuthError || syncError;
 
   const updateCloudAccessPanel = (context: FreshSupabaseAccessContext) => {
     setCloudUserEmail(context.email);
@@ -103,22 +122,34 @@ export default function Configuracoes() {
   };
 
   const refreshCloudSyncMeta = async (context: { session: FreshSupabaseAccessContext["session"]; accessStatus: "active" }) => {
-    const meta = await getRemoteSyncMeta(context);
+    const meta = await withTimeout(
+      getRemoteSyncMeta(context),
+      SYNC_PANEL_TIMEOUT_MS,
+      "Tempo excedido ao buscar metadados de sincronização Supabase.",
+    );
     if (meta) setAppConfig((current) => ({ ...current, syncMeta: meta }));
   };
 
   const handleRefreshSyncPanel = async () => {
     setIsRefreshingSyncStatus(true);
+    setSyncQueryStatus("atualizando");
     setSyncError(null);
     try {
       const freshAccessContext = await getFreshSyncContext();
-      await refreshPendingSyncCount();
+      await withTimeout(
+        refreshPendingSyncCount(),
+        SYNC_PANEL_TIMEOUT_MS,
+        "Tempo excedido ao atualizar pendências locais.",
+      );
       if (freshAccessContext.error) throw new Error(freshAccessContext.error);
       if (freshAccessContext.accessStatus === "active") await refreshCloudSyncMeta({ session: freshAccessContext.session, accessStatus: freshAccessContext.accessStatus });
+      setSyncQueryStatus("sucesso");
       toast.success("Status e pendências atualizados.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Erro desconhecido ao atualizar status e pendências.";
       setSyncError(message);
+      setCloudAuthError((current) => current ?? message);
+      setSyncQueryStatus("erro");
       toast.error(message);
     } finally {
       setIsRefreshingSyncStatus(false);
@@ -475,18 +506,20 @@ export default function Configuracoes() {
           <div className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground">
             <div className="grid gap-2 md:grid-cols-2">
               <div><span className="font-medium text-foreground">Sessão Supabase:</span> {cloudSessionExists ? "Sim" : "Não"}</div>
+              <div><span className="font-medium text-foreground">Status da consulta:</span> {syncQueryStatus}</div>
               <div><span className="font-medium text-foreground">Email atual:</span> {cloudUserEmail || "—"}</div>
               <div><span className="font-medium text-foreground">User ID:</span> {cloudUserId || "—"}</div>
               <div><span className="font-medium text-foreground">Role/status do banco:</span> {cloudRole || "—"} / {cloudAccessStatus || "—"}</div>
-              <div><span className="font-medium text-foreground">Última atualização do status:</span> {cloudLastRefreshAt ? new Date(cloudLastRefreshAt).toLocaleString("pt-BR") : "—"}</div>
-              {cloudAuthError && <div className="text-destructive md:col-span-2"><span className="font-medium">Erro auth:</span> {cloudAuthError}</div>}
+              <div><span className="font-medium text-foreground">Última tentativa de atualização:</span> {cloudLastRefreshAt ? new Date(cloudLastRefreshAt).toLocaleString("pt-BR") : "—"}</div>
+              <div className="md:col-span-2"><span className="font-medium text-foreground">Último erro:</span> {lastSyncPanelError || "—"}</div>
+              {!cloudSessionExists && <div className="text-destructive md:col-span-2">Usuário não autenticado. Volte para Login e entre novamente.</div>}
             </div>
           </div>
           {shouldWarnAboutStaleAccess && <div className="rounded-md border border-yellow-500/40 bg-yellow-500/10 p-3 text-sm text-yellow-800">Usuário ainda não aprovado para sincronização.</div>}
           {syncError && <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{syncError}</div>}
           <div className="flex flex-wrap gap-2">
             <Button variant="secondary" onClick={() => void handleRefreshSyncPanel()} disabled={isRefreshingSyncStatus}>{isRefreshingSyncStatus ? "Atualizando..." : "Atualizar status e pendências"}</Button>
-            <Button variant="outline" onClick={handleCompareCloud} disabled={isComparingSync || isSyncing || isRefreshingSyncStatus}>{isComparingSync ? "Comparando..." : "Comparar local x nuvem"}</Button>
+            <Button variant="outline" onClick={handleCompareCloud} disabled={!canCompareCloud || isComparingSync || isSyncing || isRefreshingSyncStatus}>{isComparingSync ? "Comparando..." : "Comparar local x nuvem"}</Button>
             <Button onClick={handleUploadClick} disabled={isSyncing || isComparingSync || isRefreshingSyncStatus}>{isSyncing ? "Enviando..." : "Enviar pendências para nuvem"}</Button>
             <Button variant="outline" onClick={() => void handleRefreshSyncPanel()} disabled={isRefreshingSyncStatus}>{isRefreshingSyncStatus ? "Atualizando..." : "Atualizar contagem de pendências"}</Button>
           </div>
