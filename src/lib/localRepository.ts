@@ -180,3 +180,14 @@ export async function replaceLocalDatabase(payload: Partial<AppPersistedData>) {
     await writeDbMeta(db, { seeded: true, versaoSchema: DB_VERSION });
   });
 }
+
+export async function deleteLocalItemsById(store: StoreName, ids: string[]) {
+  if (ids.length === 0) return;
+  return withDb(async (db) => {
+    const tx = db.transaction(store, "readwrite");
+    const os = tx.objectStore(store);
+    ids.forEach((id) => os.delete(id));
+    await waitForTransaction(tx);
+    await writeDbMeta(db, {});
+  });
+}
