@@ -75,12 +75,24 @@ export default function AppLayout() {
 
   const statusText = isOnline ? "Online" : "Offline — trabalhando com dados locais";
   const saveText = isSaving ? "Salvando localmente..." : lastSavedAt ? "Dados salvos localmente" : "";
+  const syncBlockReason = (() => {
+    if (!syncError) return "";
+    if (syncError.includes("Aguardando sessão")) return "aguardando sessão";
+    if (syncError.includes("indisponível") || syncError.includes("não autenticado")) return "sessão indisponível";
+    if (syncError.includes("Tempo excedido")) return "tempo excedido";
+    if (syncError.includes("não aprovado")) return "usuário não aprovado";
+    if (syncError.includes("Cooldown")) return "nova tentativa em instantes";
+    return syncError;
+  })();
   const syncText = (() => {
-    if (!isOnline) return pendingSyncCount > 0 ? `Pendências: ${pendingSyncCount}` : "";
+    const pendingText = pendingSyncCount > 0
+      ? `Pendências: ${pendingSyncCount}${syncBlockReason ? ` — ${syncBlockReason}` : ""}`
+      : "";
+    if (!isOnline) return pendingText;
     if (syncStatus === "syncing") return "Sincronizando...";
-    if (syncStatus === "error") return "Erro de sincronização";
-    if (syncStatus === "first-upload-required") return "Primeiro envio manual necessário";
-    if (pendingSyncCount > 0) return `Pendências: ${pendingSyncCount}`;
+    if (syncStatus === "error") return pendingText || "Erro de sincronização";
+    if (syncStatus === "first-upload-required") return pendingText || "Primeiro envio manual necessário";
+    if (pendingSyncCount > 0) return pendingText;
     if (syncStatus === "synced") return "Sincronizado";
     return "";
   })();
