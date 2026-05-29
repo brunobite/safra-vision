@@ -22,6 +22,18 @@ type AuthContextValue = {
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
+
+const AUTH_TIMEOUT_MS = 8000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timeoutId = window.setTimeout(() => reject(new Error(message)), ms);
+    promise
+      .then(resolve)
+      .catch(reject)
+      .finally(() => window.clearTimeout(timeoutId));
+  });
+}
 const adminEmails = new Set(
   (import.meta.env.VITE_ADMIN_EMAILS ?? "")
     .split(",")
@@ -48,27 +60,41 @@ export function AuthStoreProvider({ children }: { children: React.ReactNode }) {
       return fallbackProfile;
     }
 
-    const { data, error: profileError } = await supabase
-      .from("profiles")
-      .select("status, role")
-      .eq("id", currentUser.id)
-      .maybeSingle();
+    try {
+      const { data, error: profileError } = await withTimeout(
+        Promise.resolve(
+          supabase
+            .from("profiles")
+            .select("status, role")
+            .eq("id", currentUser.id)
+            .maybeSingle(),
+        ),
+        AUTH_TIMEOUT_MS,
+        "Tempo excedido ao buscar profile Supabase.",
+      );
 
-    if (profileError) {
-      setError(profileError.message);
+      if (profileError) {
+        setError(profileError.message);
+        setAccessStatus(fallbackProfile.accessStatus);
+        setRole(fallbackProfile.role);
+        return fallbackProfile;
+      }
+
+      const nextProfile: AccessProfile = {
+        accessStatus: (data?.status as AccessStatus) ?? fallbackProfile.accessStatus,
+        role: (data?.role as UserRole) ?? fallbackProfile.role,
+      };
+
+      setAccessStatus(nextProfile.accessStatus);
+      setRole(nextProfile.role);
+      return nextProfile;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Erro desconhecido ao buscar profile Supabase.";
+      setError(message);
       setAccessStatus(fallbackProfile.accessStatus);
       setRole(fallbackProfile.role);
       return fallbackProfile;
     }
-
-    const nextProfile: AccessProfile = {
-      accessStatus: (data?.status as AccessStatus) ?? fallbackProfile.accessStatus,
-      role: (data?.role as UserRole) ?? fallbackProfile.role,
-    };
-
-    setAccessStatus(nextProfile.accessStatus);
-    setRole(nextProfile.role);
-    return nextProfile;
   }, []);
 
   useEffect(() => {
@@ -79,20 +105,45 @@ export function AuthStoreProvider({ children }: { children: React.ReactNode }) {
 
     let isMounted = true;
 
-    supabase.auth.getSession().then(async ({ data, error: sessionError }) => {
-      if (!isMounted) return;
-      if (sessionError) setError(sessionError.message);
-      setSession(data.session);
-      setUser(data.session?.user ?? null);
-      await refreshProfile(data.session?.user ?? null);
-      setLoading(false);
-    });
+    void (async () => {
+      try {
+        const { data, error: sessionError } = await withTimeout(
+          supabase.auth.getSession(),
+          AUTH_TIMEOUT_MS,
+          "Tempo excedido ao buscar sessão Supabase.",
+        );
+        if (!isMounted) return;
+        if (sessionError) setError(sessionError.message);
+        setSession(data.session);
+        setUser(data.session?.user ?? null);
+        await refreshProfile(data.session?.user ?? null);
+      } catch (error) {
+        if (!isMounted) return;
+        const message = error instanceof Error ? error.message : "Erro desconhecido ao buscar sessão Supabase.";
+        setError(message);
+        setSession(null);
+        setUser(null);
+        await refreshProfile(null);
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+    })();
 
     const { data: subscription } = supabase.auth.onAuthStateChange(async (_event, nextSession) => {
       if (!isMounted) return;
-      setSession(nextSession);
-      setUser(nextSession?.user ?? null);
-      await refreshProfile(nextSession?.user ?? null);
+      setLoading(true);
+      try {
+        setSession(nextSession);
+        setUser(nextSession?.user ?? null);
+        await refreshProfile(nextSession?.user ?? null);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Erro desconhecido ao atualizar sessão Supabase.";
+        setError(message);
+        setAccessStatus("pending");
+        setRole("user");
+      } finally {
+        if (isMounted) setLoading(false);
+      }
     });
 
     return () => {

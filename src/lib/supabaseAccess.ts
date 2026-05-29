@@ -14,6 +14,18 @@ export type FreshSupabaseAccessContext = {
   error: string | null;
 };
 
+const SUPABASE_ACCESS_TIMEOUT_MS = 8000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timeoutId = window.setTimeout(() => reject(new Error(message)), ms);
+    promise
+      .then(resolve)
+      .catch(reject)
+      .finally(() => window.clearTimeout(timeoutId));
+  });
+}
+
 const emptyAccessContext = (error: string): FreshSupabaseAccessContext => ({
   session: null,
   user: null,
@@ -30,7 +42,11 @@ export async function getFreshSupabaseAccessContext(): Promise<FreshSupabaseAcce
   }
 
   try {
-    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    const { data: sessionData, error: sessionError } = await withTimeout(
+      supabase.auth.getSession(),
+      SUPABASE_ACCESS_TIMEOUT_MS,
+      "Tempo excedido ao buscar sessão Supabase.",
+    );
     if (sessionError) return emptyAccessContext(sessionError.message);
 
     const session = sessionData.session;
@@ -46,11 +62,17 @@ export async function getFreshSupabaseAccessContext(): Promise<FreshSupabaseAcce
       accessStatus: null,
     } satisfies Omit<FreshSupabaseAccessContext, "error">;
 
-    const { data: profile, error: profileError } = await supabase
-      .from("profiles")
-      .select("status, role")
-      .eq("id", user.id)
-      .maybeSingle();
+    const { data: profile, error: profileError } = await withTimeout(
+      Promise.resolve(
+        supabase
+          .from("profiles")
+          .select("status, role")
+          .eq("id", user.id)
+          .maybeSingle(),
+      ),
+      SUPABASE_ACCESS_TIMEOUT_MS,
+      "Tempo excedido ao buscar profile Supabase.",
+    );
 
     if (profileError) {
       return { ...baseContext, error: profileError.message };

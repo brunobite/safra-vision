@@ -3,12 +3,32 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/store/AuthStore";
+
+const isSupabaseStorageKey = (key: string) => {
+  const normalizedKey = key.toLowerCase();
+  return normalizedKey.includes("supabase") || normalizedKey.startsWith("sb-");
+};
+
+const clearSupabaseStorageKeys = (storage: Storage) => {
+  try {
+    const keysToRemove: string[] = [];
+    for (let index = 0; index < storage.length; index += 1) {
+      const key = storage.key(index);
+      if (key && isSupabaseStorageKey(key)) keysToRemove.push(key);
+    }
+    keysToRemove.forEach((key) => storage.removeItem(key));
+  } catch {
+    storage.clear();
+  }
+};
 
 export default function Login() {
   const { user, loading, error, accessStatus, role, isLocalMode, signIn, signUp, signOut, refreshAccess, clearError } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [localClearError, setLocalClearError] = useState<string | null>(null);
 
   const statusMessage =
     accessStatus === "pending"
@@ -18,6 +38,26 @@ export default function Login() {
         : accessStatus === "active"
           ? "Nuvem preparada (sincronização real será habilitada no Sprint 17C)."
           : "Conta inativa para recursos de nuvem.";
+
+  const handleClearLocalSession = async () => {
+    setLocalClearError(null);
+    try {
+      await supabase?.auth.signOut({ scope: "local" });
+    } catch (error) {
+      console.warn("Falha ao encerrar sessão local Supabase antes da limpeza manual.", error);
+    }
+
+    try {
+      clearSupabaseStorageKeys(window.localStorage);
+      clearSupabaseStorageKeys(window.sessionStorage);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Erro desconhecido ao limpar sessão local.";
+      setLocalClearError(message);
+      return;
+    }
+
+    window.location.assign(`${window.location.origin}${import.meta.env.BASE_URL}login`);
+  };
 
   return (
     <div className="container mx-auto max-w-lg p-4">
@@ -48,6 +88,12 @@ export default function Login() {
             </Alert>
           )}
 
+          {localClearError && (
+            <Alert variant="destructive">
+              <AlertDescription>{localClearError}</AlertDescription>
+            </Alert>
+          )}
+
           <Input type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
           <Input type="password" placeholder="Senha" value={password} onChange={(e) => setPassword(e.target.value)} />
 
@@ -57,9 +103,16 @@ export default function Login() {
             {user && (
               <>
                 <Button variant="outline" disabled={loading} onClick={() => refreshAccess()}>Atualizar status</Button>
-                <Button variant="outline" disabled={loading} onClick={() => signOut()}>Sair</Button>
+                <Button variant="outline" onClick={() => signOut()}>Sair</Button>
               </>
             )}
+          </div>
+
+          <div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+            <p>Use apenas se o login estiver travado.</p>
+            <Button className="mt-2" variant="ghost" size="sm" onClick={() => void handleClearLocalSession()}>
+              Limpar sessão local
+            </Button>
           </div>
         </CardContent>
       </Card>
