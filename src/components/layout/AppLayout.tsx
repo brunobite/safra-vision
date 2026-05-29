@@ -71,10 +71,19 @@ function AppSidebar() {
 export default function AppLayout() {
   const [open, setOpen] = useState(false);
   const isOnline = useOnlineStatus();
-  const { isSaving, lastSavedAt, pendingSyncCount } = useAppStore();
+  const { isSaving, lastSavedAt, pendingSyncCount, syncStatus, syncError } = useAppStore();
 
   const statusText = isOnline ? "Online" : "Offline — trabalhando com dados locais";
   const saveText = isSaving ? "Salvando localmente..." : lastSavedAt ? "Dados salvos localmente" : "";
+  const syncText = (() => {
+    if (!isOnline) return pendingSyncCount > 0 ? `Pendências: ${pendingSyncCount}` : "";
+    if (syncStatus === "syncing") return "Sincronizando...";
+    if (syncStatus === "error") return "Erro de sincronização";
+    if (syncStatus === "first-upload-required") return "Primeiro envio manual necessário";
+    if (pendingSyncCount > 0) return `Pendências: ${pendingSyncCount}`;
+    if (syncStatus === "synced") return "Sincronizado";
+    return "";
+  })();
   return (
     <SidebarProvider>
       <div className="flex min-h-screen w-full bg-background">
@@ -89,7 +98,8 @@ export default function AppLayout() {
             <div className="ml-auto text-right text-[11px] leading-tight">
               <div className={isOnline ? "text-emerald-600" : "text-amber-600"}>{statusText}</div>
               {saveText && <div className="text-muted-foreground">{saveText}</div>}
-              {pendingSyncCount > 0 && <div className="text-amber-700">Há alterações pendentes de sincronização ({pendingSyncCount})</div>}
+              {syncText && <div className={syncStatus === "error" ? "text-destructive" : pendingSyncCount > 0 ? "text-amber-700" : "text-muted-foreground"}>{syncText}</div>}
+              {syncStatus === "error" && syncError && <div className="max-w-xs truncate text-destructive/80" title={syncError}>{syncError}</div>}
             </div>
           </header>
           <main className="flex-1 p-4 md:p-6">

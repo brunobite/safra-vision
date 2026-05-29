@@ -24,7 +24,7 @@ import { saveAsTextFile } from "@/lib/fileDownload";
 import { openAppDb, promisifyRequest } from "@/lib/db";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import { getFreshSupabaseAccessContext, type FreshSupabaseAccessContext } from "@/lib/supabaseAccess";
-import { compareLocalAndRemote, getRemoteSyncMeta, runFirstUploadSync, type LocalRemoteComparison, type SyncSummary } from "@/lib/supabaseSync";
+import { compareLocalAndRemote, getRemoteSyncMeta, type LocalRemoteComparison, type SyncSummary } from "@/lib/supabaseSync";
 import * as XLSX from "xlsx";
 
 const APLICAR: { v: AplicarSobre; label: string }[] = [
@@ -52,7 +52,7 @@ export default function Configuracoes() {
   const {
     regras, setRegras, vendedores, setVendedores, ticketsMedios, setTicketsMedios, dbError, isSaving, lastSavedAt, saveError,
     clientes, lancamentos, negocios, produtos, metasEmpresa, metasPessoais, eventos, metasVendedor, metasCategoria, prioridadesP1, orcamentos, setOrcamentos, empresas, setEmpresas, formasPagamento, setFormasPagamento, prazosPagamento, setPrazosPagamento,
-    setClientes, setLancamentos, setNegocios, setProdutos, setMetasEmpresa, setMetasPessoais, setEventos, setMetasVendedor, setMetasCategoria, setPrioridadesP1, appConfig, setAppConfig, pendingSyncCount, refreshPendingSyncCount,
+    setClientes, setLancamentos, setNegocios, setProdutos, setMetasEmpresa, setMetasPessoais, setEventos, setMetasVendedor, setMetasCategoria, setPrioridadesP1, appConfig, setAppConfig, pendingSyncCount, refreshPendingSyncCount, runManualUploadSync,
   } = useAppStore();
   const [open, setOpen] = useState(false);
   const [edit, setEdit] = useState<RegraComissao | null>(null);
@@ -179,12 +179,17 @@ export default function Configuracoes() {
     setSyncError(null);
     try {
       const freshAccessContext = await getFreshSyncContext();
-      const freshSyncContext = assertFreshActiveSyncContext(freshAccessContext);
-      const { summary, meta } = await runFirstUploadSync(freshSyncContext);
-      setSyncSummary(summary);
-      if (meta) setAppConfig((current) => ({ ...current, syncMeta: meta }));
+      assertFreshActiveSyncContext(freshAccessContext);
+      const result = await runManualUploadSync();
+      if (result.skipped) {
+        toast.message(result.message);
+        return;
+      }
+      if (!result.ok) throw new Error(result.message);
+      setSyncSummary(result.summary);
+      if (result.meta) setAppConfig((current) => ({ ...current, syncMeta: result.meta }));
       await refreshPendingSyncCount();
-      toast.success(`Sync concluído: ${summary.success} enviados, ${summary.error} erros.`);
+      toast.success(`Sync concluído: ${result.summary.success} enviados, ${result.summary.error} erros.`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Erro desconhecido ao enviar pendências.";
       setSyncError(message);
@@ -516,6 +521,7 @@ export default function Configuracoes() {
             </div>
           </div>
           {shouldWarnAboutStaleAccess && <div className="rounded-md border border-yellow-500/40 bg-yellow-500/10 p-3 text-sm text-yellow-800">Usuário ainda não aprovado para sincronização.</div>}
+          {!lastSyncAt && <div className="rounded-md border border-yellow-500/40 bg-yellow-500/10 p-3 text-sm text-yellow-800">Primeiro envio deve ser confirmado manualmente.</div>}
           {syncError && <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{syncError}</div>}
           <div className="flex flex-wrap gap-2">
             <Button variant="secondary" onClick={() => void handleRefreshSyncPanel()} disabled={isRefreshingSyncStatus}>{isRefreshingSyncStatus ? "Atualizando..." : "Atualizar status e pendências"}</Button>
