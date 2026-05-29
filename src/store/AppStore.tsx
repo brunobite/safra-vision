@@ -5,7 +5,8 @@ import {
 } from "@/types";
 import { bootstrapLocalDatabase, saveStore } from "@/lib/localRepository";
 import { enqueueSyncItem, getPendingSyncItems, shouldTrackSyncStore } from "@/lib/syncQueue";
-import { runControlledUploadSync, type AutoSyncResult } from "@/lib/autoSync";
+import { getAutoSyncCooldownRemaining, runControlledUploadSync, type AutoSyncContext, type AutoSyncResult } from "@/lib/autoSync";
+import { getFreshSupabaseAccessContext } from "@/lib/supabaseAccess";
 import { useAuth } from "@/store/AuthStore";
 import { calcularPotencialCliente, calcularValorMedioHaSegmentosAtivos } from "@/utils/businessRules";
 
@@ -97,6 +98,14 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const hasHydratedRef = useRef(false);
   const lastPersistedAppConfigRef = useRef<string>(JSON.stringify({ id: "main", percentualAcertoEsperado: 12 }));
   const autoSyncTimerRef = useRef<number | null>(null);
+  const authLoadingRetryCountRef = useRef(0);
+  const authLoadingRef = useRef(authLoading);
+  const scheduleAutoSyncRef = useRef<(delayMs: number) => void>(() => undefined);
+
+  useEffect(() => {
+    authLoadingRef.current = authLoading;
+    if (!authLoading) authLoadingRetryCountRef.current = 0;
+  }, [authLoading]);
 
 
   const refreshPendingSyncCount = useCallback(async () => {
@@ -203,9 +212,17 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
 
   const applySyncResult = useCallback(async (result: AutoSyncResult, source: "auto" | "manual") => {
     if (result.skipped) {
-      if (result.reason === "first-upload-required") setSyncStatus("first-upload-required");
-      else if (result.reason === "no-pending-items") setSyncStatus("synced");
-      else setSyncStatus(pendingSyncCount > 0 ? "pending" : "idle");
+      if (result.reason === "first-upload-required") {
+        setSyncStatus("first-upload-required");
+        setSyncError(result.message);
+      } else if (result.reason === "no-pending-items") {
+        setSyncStatus("synced");
+        setSyncError(null);
+      } else {
+        setSyncStatus(pendingSyncCount > 0 ? "pending" : "idle");
+        setSyncError(result.reason === "cooldown" ? "Cooldown de sincronização; nova tentativa em instantes." : result.message);
+      }
+      await refreshPendingSyncCount();
       return;
     }
 
@@ -237,42 +254,115 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     return result;
   }, [accessStatus, applySyncResult, session]);
 
+  const getFreshAutoSyncContext = useCallback(async (): Promise<{ context: AutoSyncContext } | { result: AutoSyncResult }> => {
+    const fresh = await getFreshSupabaseAccessContext();
+
+    if (!fresh.session?.user) {
+      if (fresh.error?.startsWith("Tempo excedido")) {
+        return { result: { ok: false, skipped: false, message: fresh.error } };
+      }
+
+      return {
+        result: {
+          ok: true,
+          skipped: true,
+          reason: "missing-session",
+          message: "Sessão Supabase indisponível. Faça login novamente.",
+        },
+      };
+    }
+
+    if (fresh.error) {
+      return { result: { ok: false, skipped: false, message: fresh.error } };
+    }
+
+    if (fresh.accessStatus !== "active") {
+      return {
+        result: {
+          ok: true,
+          skipped: true,
+          reason: "inactive-profile",
+          message: "Usuário ainda não aprovado para sincronização.",
+        },
+      };
+    }
+
+    return {
+      context: {
+        session: fresh.session,
+        accessStatus: fresh.accessStatus,
+        firstUploadConfirmed,
+      },
+    };
+  }, [firstUploadConfirmed]);
+
   const scheduleAutoSync = useCallback((delayMs: number) => {
     if (autoSyncTimerRef.current) window.clearTimeout(autoSyncTimerRef.current);
     autoSyncTimerRef.current = window.setTimeout(() => {
       autoSyncTimerRef.current = null;
-      if (authLoading) return;
+      if (authLoadingRef.current) {
+        setSyncStatus("pending");
+        setSyncError("Aguardando sessão Supabase...");
+        authLoadingRetryCountRef.current += 1;
+        if (authLoadingRetryCountRef.current <= 20) scheduleAutoSyncRef.current(3_000);
+        else {
+          setSyncStatus("error");
+          setSyncError("Tempo excedido ao aguardar sessão Supabase.");
+        }
+        return;
+      }
+
+      authLoadingRetryCountRef.current = 0;
       void (async () => {
+        await refreshPendingSyncCount();
         setSyncStatus("syncing");
         setSyncError(null);
-        const result = await runControlledUploadSync(
-          { session, accessStatus, firstUploadConfirmed },
-          { mode: "auto" },
-        );
+
+        const freshContext = await getFreshAutoSyncContext();
+        const result = "result" in freshContext
+          ? freshContext.result
+          : await runControlledUploadSync(freshContext.context, { mode: "auto" });
+
         await applySyncResult(result, "auto");
+
+        if (result.skipped && result.reason === "cooldown" && getAutoSyncCooldownRemaining() > 0) {
+          scheduleAutoSyncRef.current(getAutoSyncCooldownRemaining() + 500);
+        }
       })();
     }, delayMs);
-  }, [accessStatus, applySyncResult, authLoading, firstUploadConfirmed, session]);
+  }, [applySyncResult, getFreshAutoSyncContext, refreshPendingSyncCount]);
 
   useEffect(() => {
-    if (!isReady || authLoading) return;
+    scheduleAutoSyncRef.current = scheduleAutoSync;
+  }, [scheduleAutoSync]);
+
+  useEffect(() => {
+    if (!isReady) return;
     if (pendingSyncCount <= 0) {
+      setSyncError(null);
       setSyncStatus((current) => current === "syncing" ? current : "synced");
       return;
     }
-    if (!firstUploadConfirmed && accessStatus === "active" && session?.user) {
-      setSyncStatus("first-upload-required");
+    if (authLoading) {
+      setSyncStatus("pending");
+      setSyncError("Aguardando sessão Supabase...");
+      scheduleAutoSync(3_000);
       return;
     }
     setSyncStatus((current) => current === "syncing" ? current : "pending");
     scheduleAutoSync(10_000);
-  }, [accessStatus, authLoading, firstUploadConfirmed, isReady, pendingSyncCount, scheduleAutoSync, session?.user]);
+  }, [authLoading, isReady, pendingSyncCount, scheduleAutoSync]);
 
   useEffect(() => {
-    const handleOnline = () => scheduleAutoSync(1_000);
+    const handleOnline = () => {
+      void refreshPendingSyncCount();
+      setSyncStatus("pending");
+      setSyncError("Aguardando sessão Supabase...");
+      scheduleAutoSync(1_000);
+    };
     window.addEventListener("online", handleOnline);
     return () => window.removeEventListener("online", handleOnline);
-  }, [scheduleAutoSync]);
+  }, [refreshPendingSyncCount, scheduleAutoSync]);
 
   useEffect(() => () => {
     if (autoSyncTimerRef.current) window.clearTimeout(autoSyncTimerRef.current);
