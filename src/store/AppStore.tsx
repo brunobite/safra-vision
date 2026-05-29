@@ -5,6 +5,8 @@ import {
 } from "@/types";
 import { bootstrapLocalDatabase, saveStore } from "@/lib/localRepository";
 import { enqueueSyncItem, getPendingSyncItems, shouldTrackSyncStore } from "@/lib/syncQueue";
+import { runControlledUploadSync, type AutoSyncResult } from "@/lib/autoSync";
+import { useAuth } from "@/store/AuthStore";
 import { calcularPotencialCliente, calcularValorMedioHaSegmentosAtivos } from "@/utils/businessRules";
 
 interface Filters {
@@ -40,6 +42,10 @@ interface AppStoreCtx {
   saveError: string | null;
   pendingSyncCount: number;
   refreshPendingSyncCount: () => Promise<void>;
+  syncStatus: "idle" | "pending" | "syncing" | "synced" | "error" | "first-upload-required";
+  syncError: string | null;
+  lastAutoSyncAt: string | null;
+  runManualUploadSync: () => Promise<AutoSyncResult>;
   isReady: boolean;
   dbError: string | null;
   filters: Filters; setFilters: React.Dispatch<React.SetStateAction<Filters>>;
@@ -56,6 +62,7 @@ const defaultFilters: Filters = {
 };
 
 export function AppStoreProvider({ children }: { children: ReactNode }) {
+  const { session, accessStatus, loading: authLoading } = useAuth();
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [lancamentos, setLancamentos] = useState<Lancamento[]>([]);
   const [metasEmpresa, setMetasEmpresa] = useState<MetaEmpresa[]>([]);
@@ -84,7 +91,12 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [pendingSyncCount, setPendingSyncCount] = useState(0);
+  const [syncStatus, setSyncStatus] = useState<"idle" | "pending" | "syncing" | "synced" | "error" | "first-upload-required">("idle");
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [lastAutoSyncAt, setLastAutoSyncAt] = useState<string | null>(null);
   const hasHydratedRef = useRef(false);
+  const lastPersistedAppConfigRef = useRef<string>(JSON.stringify({ id: "main", percentualAcertoEsperado: 12 }));
+  const autoSyncTimerRef = useRef<number | null>(null);
 
 
   const refreshPendingSyncCount = useCallback(async () => {
@@ -119,7 +131,9 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         setProximasAcoes((localData as {proximasAcoes?: ProximaAcao[]}).proximasAcoes || []);
         setFormasPagamento((localData as {formasPagamento?: FormaPagamento[]}).formasPagamento || []);
         setPrazosPagamento((localData as {prazosPagamento?: PrazoPagamento[]}).prazosPagamento || []);
-        setAppConfig((localData as {appConfig?: AppConfig[]}).appConfig?.[0] || { id: "main", percentualAcertoEsperado: 12 });
+        const hydratedAppConfig = (localData as {appConfig?: AppConfig[]}).appConfig?.[0] || { id: "main", percentualAcertoEsperado: 12 };
+        setAppConfig(hydratedAppConfig);
+        lastPersistedAppConfigRef.current = JSON.stringify({ id: hydratedAppConfig.id, percentualAcertoEsperado: hydratedAppConfig.percentualAcertoEsperado });
         await refreshPendingSyncCount();
       } catch (error) {
         console.error(error);
@@ -142,7 +156,17 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     try {
       await saveStore(store, data);
       if (shouldTrackSyncStore(store)) {
-        await Promise.all(data.map((item) => enqueueSyncItem({ store, entityId: item.id, operation: "upsert", payload: item })));
+        const isOnlySyncMetaChange = store === "appConfig" && (() => {
+          const config = data[0] as AppConfig | undefined;
+          if (!config) return false;
+          const syncRelevantPayload = JSON.stringify({ id: config.id, percentualAcertoEsperado: config.percentualAcertoEsperado });
+          const unchanged = syncRelevantPayload === lastPersistedAppConfigRef.current;
+          lastPersistedAppConfigRef.current = syncRelevantPayload;
+          return unchanged;
+        })();
+        if (!isOnlySyncMetaChange) {
+          await Promise.all(data.map((item) => enqueueSyncItem({ store, entityId: item.id, operation: "upsert", payload: item })));
+        }
       }
       setLastSavedAt(new Date().toISOString());
       await refreshPendingSyncCount();
@@ -174,6 +198,86 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => { void persistStore("formasPagamento", formasPagamento as never); }, [formasPagamento, persistStore]);
   useEffect(() => { void persistStore("prazosPagamento", prazosPagamento as never); }, [prazosPagamento, persistStore]);
   useEffect(() => { void persistStore("appConfig", [appConfig] as never); }, [appConfig, persistStore]);
+
+  const firstUploadConfirmed = Boolean(appConfig.syncMeta?.lastUploadAt);
+
+  const applySyncResult = useCallback(async (result: AutoSyncResult, source: "auto" | "manual") => {
+    if (result.skipped) {
+      if (result.reason === "first-upload-required") setSyncStatus("first-upload-required");
+      else if (result.reason === "no-pending-items") setSyncStatus("synced");
+      else setSyncStatus(pendingSyncCount > 0 ? "pending" : "idle");
+      return;
+    }
+
+    if (!result.ok) {
+      setSyncStatus("error");
+      setSyncError(result.message);
+      await refreshPendingSyncCount();
+      return;
+    }
+
+    setSyncError(null);
+    setSyncStatus(result.summary.error > 0 ? "error" : "synced");
+    setLastAutoSyncAt(new Date().toISOString());
+    if (result.meta) setAppConfig((current) => ({ ...current, syncMeta: result.meta }));
+    await refreshPendingSyncCount();
+    if (source === "auto" && result.summary.error > 0) {
+      setSyncError(`${result.summary.error} item(ns) não foram sincronizados automaticamente.`);
+    }
+  }, [pendingSyncCount, refreshPendingSyncCount]);
+
+  const runManualUploadSync = useCallback(async () => {
+    setSyncStatus("syncing");
+    setSyncError(null);
+    const result = await runControlledUploadSync(
+      { session, accessStatus, firstUploadConfirmed: true },
+      { mode: "manual", bypassCooldown: true },
+    );
+    await applySyncResult(result, "manual");
+    return result;
+  }, [accessStatus, applySyncResult, session]);
+
+  const scheduleAutoSync = useCallback((delayMs: number) => {
+    if (autoSyncTimerRef.current) window.clearTimeout(autoSyncTimerRef.current);
+    autoSyncTimerRef.current = window.setTimeout(() => {
+      autoSyncTimerRef.current = null;
+      if (authLoading) return;
+      void (async () => {
+        setSyncStatus("syncing");
+        setSyncError(null);
+        const result = await runControlledUploadSync(
+          { session, accessStatus, firstUploadConfirmed },
+          { mode: "auto" },
+        );
+        await applySyncResult(result, "auto");
+      })();
+    }, delayMs);
+  }, [accessStatus, applySyncResult, authLoading, firstUploadConfirmed, session]);
+
+  useEffect(() => {
+    if (!isReady || authLoading) return;
+    if (pendingSyncCount <= 0) {
+      setSyncStatus((current) => current === "syncing" ? current : "synced");
+      return;
+    }
+    if (!firstUploadConfirmed && accessStatus === "active" && session?.user) {
+      setSyncStatus("first-upload-required");
+      return;
+    }
+    setSyncStatus((current) => current === "syncing" ? current : "pending");
+    scheduleAutoSync(10_000);
+  }, [accessStatus, authLoading, firstUploadConfirmed, isReady, pendingSyncCount, scheduleAutoSync, session?.user]);
+
+  useEffect(() => {
+    const handleOnline = () => scheduleAutoSync(1_000);
+    window.addEventListener("online", handleOnline);
+    return () => window.removeEventListener("online", handleOnline);
+  }, [scheduleAutoSync]);
+
+  useEffect(() => () => {
+    if (autoSyncTimerRef.current) window.clearTimeout(autoSyncTimerRef.current);
+  }, []);
+
   useEffect(() => {
     const valorMedio = calcularValorMedioHaSegmentosAtivos(ticketsMedios);
     setClientes((prev) => {
@@ -241,7 +345,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       eventos, setEventos, prioridadesP1, setPrioridadesP1,
       negocios, setNegocios, oportunidades, setOportunidades, produtos, setProdutos,
       regras, setRegras, vendedores, setVendedores, ticketsMedios, setTicketsMedios, orcamentos, setOrcamentos, empresas, setEmpresas, proximasAcoes, setProximasAcoes, formasPagamento, setFormasPagamento, prazosPagamento, setPrazosPagamento, appConfig, setAppConfig,
-      isLoading, isReady, dbError, isSaving, lastSavedAt, saveError, pendingSyncCount, refreshPendingSyncCount,
+      isLoading, isReady, dbError, isSaving, lastSavedAt, saveError, pendingSyncCount, refreshPendingSyncCount, syncStatus, syncError, lastAutoSyncAt, runManualUploadSync,
       filters, setFilters,
       filtered: { lancamentos: filteredLancs, negocios: filteredNegs, oportunidades: filteredOportunidades },
       clienteById: (id) => cMap.get(id),
