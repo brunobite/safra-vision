@@ -11,7 +11,6 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAppStore } from "@/store/AppStore";
-import { useAuth } from "@/store/AuthStore";
 import { BaseMode, ImportLog, RegraComissao, AplicarSobre, FaixaComissao, CATEGORIAS_PRODUTO_PADRAO, Empresa, FormaPagamento, PrazoPagamento } from "@/types";
 import { Plus, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -24,6 +23,7 @@ import { applyImport, buildImportPreview, IMPORT_TEMPLATES, ImportMode, ImportPr
 import { saveAsTextFile } from "@/lib/fileDownload";
 import { openAppDb, promisifyRequest } from "@/lib/db";
 import { isSupabaseConfigured } from "@/lib/supabase";
+import { getFreshSupabaseAccessContext, type FreshSupabaseAccessContext } from "@/lib/supabaseAccess";
 import { compareLocalAndRemote, getRemoteSyncMeta, runFirstUploadSync, type LocalRemoteComparison, type SyncSummary } from "@/lib/supabaseSync";
 import * as XLSX from "xlsx";
 
@@ -42,7 +42,6 @@ export default function Configuracoes() {
     clientes, lancamentos, negocios, produtos, metasEmpresa, metasPessoais, eventos, metasVendedor, metasCategoria, prioridadesP1, orcamentos, setOrcamentos, empresas, setEmpresas, formasPagamento, setFormasPagamento, prazosPagamento, setPrazosPagamento,
     setClientes, setLancamentos, setNegocios, setProdutos, setMetasEmpresa, setMetasPessoais, setEventos, setMetasVendedor, setMetasCategoria, setPrioridadesP1, appConfig, setAppConfig, pendingSyncCount, refreshPendingSyncCount,
   } = useAppStore();
-  const { user, session, accessStatus, role, refreshAccess, loading: authLoading, error: authError } = useAuth();
   const [open, setOpen] = useState(false);
   const [edit, setEdit] = useState<RegraComissao | null>(null);
   const [form, setForm] = useState<Omit<RegraComissao, "id">>(emptyRegra);
@@ -71,31 +70,51 @@ export default function Configuracoes() {
   const isCategoriaPadrao = (categoria: string) => CATEGORIAS_PRODUTO_PADRAO.includes(categoria as (typeof CATEGORIAS_PRODUTO_PADRAO)[number]);
 
 
-  const syncContext = { session, accessStatus };
+  const [cloudUserEmail, setCloudUserEmail] = useState<string | null>(null);
+  const [cloudUserId, setCloudUserId] = useState<string | null>(null);
+  const [cloudRole, setCloudRole] = useState<string | null>(null);
+  const [cloudAccessStatus, setCloudAccessStatus] = useState<string | null>(null);
+  const [cloudSessionExists, setCloudSessionExists] = useState(false);
+  const [cloudLastRefreshAt, setCloudLastRefreshAt] = useState<string>("");
+  const [cloudAuthError, setCloudAuthError] = useState<string | null>(null);
   const lastSyncAt = appConfig.syncMeta?.lastUploadAt || appConfig.syncMeta?.lastDownloadAt || "";
-  const shouldWarnAboutStaleAccess = Boolean(user && session && accessStatus === "pending");
+  const shouldWarnAboutStaleAccess = Boolean(cloudSessionExists && cloudAccessStatus !== "active");
 
-  const refreshCloudSyncMeta = async (context = syncContext) => {
-    try {
-      const meta = await getRemoteSyncMeta(context);
-      if (meta) setAppConfig((current) => ({ ...current, syncMeta: meta }));
-    } catch (error) {
-      console.error(error);
-    }
+  const updateCloudAccessPanel = (context: FreshSupabaseAccessContext) => {
+    setCloudUserEmail(context.email);
+    setCloudUserId(context.userId);
+    setCloudRole(context.role);
+    setCloudAccessStatus(context.accessStatus);
+    setCloudSessionExists(Boolean(context.session?.user));
+    setCloudAuthError(context.error);
+    setCloudLastRefreshAt(new Date().toISOString());
   };
 
   const getFreshSyncContext = async () => {
-    const profile = await refreshAccess();
-    return { session, accessStatus: profile.accessStatus };
+    const freshAccessContext = await getFreshSupabaseAccessContext();
+    updateCloudAccessPanel(freshAccessContext);
+    return freshAccessContext;
+  };
+
+  const assertFreshActiveSyncContext = (freshAccessContext: FreshSupabaseAccessContext) => {
+    if (freshAccessContext.error) throw new Error(freshAccessContext.error);
+    if (freshAccessContext.accessStatus !== "active") throw new Error("Usuário ainda não aprovado para sincronização.");
+    return { session: freshAccessContext.session, accessStatus: freshAccessContext.accessStatus };
+  };
+
+  const refreshCloudSyncMeta = async (context: { session: FreshSupabaseAccessContext["session"]; accessStatus: "active" }) => {
+    const meta = await getRemoteSyncMeta(context);
+    if (meta) setAppConfig((current) => ({ ...current, syncMeta: meta }));
   };
 
   const handleRefreshSyncPanel = async () => {
     setIsRefreshingSyncStatus(true);
     setSyncError(null);
     try {
-      const freshSyncContext = await getFreshSyncContext();
+      const freshAccessContext = await getFreshSyncContext();
       await refreshPendingSyncCount();
-      if (freshSyncContext.accessStatus === "active") await refreshCloudSyncMeta(freshSyncContext);
+      if (freshAccessContext.error) throw new Error(freshAccessContext.error);
+      if (freshAccessContext.accessStatus === "active") await refreshCloudSyncMeta({ session: freshAccessContext.session, accessStatus: freshAccessContext.accessStatus });
       toast.success("Status e pendências atualizados.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Erro desconhecido ao atualizar status e pendências.";
@@ -110,7 +129,8 @@ export default function Configuracoes() {
     setIsComparingSync(true);
     setSyncError(null);
     try {
-      const freshSyncContext = await getFreshSyncContext();
+      const freshAccessContext = await getFreshSyncContext();
+      const freshSyncContext = assertFreshActiveSyncContext(freshAccessContext);
       const result = await compareLocalAndRemote(freshSyncContext);
       setSyncComparison(result);
       toast.success("Comparação local x nuvem concluída.");
@@ -127,7 +147,8 @@ export default function Configuracoes() {
     setIsSyncing(true);
     setSyncError(null);
     try {
-      const freshSyncContext = await getFreshSyncContext();
+      const freshAccessContext = await getFreshSyncContext();
+      const freshSyncContext = assertFreshActiveSyncContext(freshAccessContext);
       const { summary, meta } = await runFirstUploadSync(freshSyncContext);
       setSyncSummary(summary);
       if (meta) setAppConfig((current) => ({ ...current, syncMeta: meta }));
@@ -165,9 +186,9 @@ export default function Configuracoes() {
   }, []);
 
   useEffect(() => {
-    if (activeTab !== "sync-cloud" || !user || !session) return;
-    void refreshAccess();
-  }, [activeTab, user?.id, session?.access_token, refreshAccess]);
+    if (activeTab !== "sync-cloud") return;
+    void handleRefreshSyncPanel();
+  }, [activeTab]);
 
   const exportPayload = {
     clientes, vendedores, lancamentos, negocios, produtos, metasEmpresa, metasPessoais, regrasComissao: regras, eventos,
@@ -446,19 +467,28 @@ export default function Configuracoes() {
           </div>
           <div className="grid gap-3 md:grid-cols-3">
             <div className="rounded-md border p-3 text-sm"><div className="text-muted-foreground">Supabase configurado</div><div className="font-medium">{isSupabaseConfigured ? "Sim" : "Não"}</div></div>
-            <div className="rounded-md border p-3 text-sm"><div className="text-muted-foreground">Usuário autenticado</div><div className="font-medium">{user?.email || "Não autenticado"}</div></div>
-            <div className="rounded-md border p-3 text-sm"><div className="text-muted-foreground">Role / status</div><div className="font-medium">{role} / {accessStatus}</div></div>
+            <div className="rounded-md border p-3 text-sm"><div className="text-muted-foreground">Usuário autenticado</div><div className="font-medium">{cloudUserEmail || "Não autenticado"}</div></div>
+            <div className="rounded-md border p-3 text-sm"><div className="text-muted-foreground">Role/status do banco</div><div className="font-medium">{cloudRole || "—"} / {cloudAccessStatus || "—"}</div></div>
             <div className="rounded-md border p-3 text-sm"><div className="text-muted-foreground">Pendências locais</div><div className="font-medium">{pendingSyncCount}</div></div>
             <div className="rounded-md border p-3 text-sm md:col-span-2"><div className="text-muted-foreground">Último sync</div><div className="font-medium">{lastSyncAt ? new Date(lastSyncAt).toLocaleString("pt-BR") : "não registrado"}</div></div>
           </div>
-          {shouldWarnAboutStaleAccess && <div className="rounded-md border border-yellow-500/40 bg-yellow-500/10 p-3 text-sm text-yellow-800">Usuário autenticado, mas status de acesso ainda não foi atualizado. Clique em Atualizar status e pendências.</div>}
-          {authError && <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">Erro de autenticação: {authError}</div>}
+          <div className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground">
+            <div className="grid gap-2 md:grid-cols-2">
+              <div><span className="font-medium text-foreground">Sessão Supabase:</span> {cloudSessionExists ? "Sim" : "Não"}</div>
+              <div><span className="font-medium text-foreground">Email atual:</span> {cloudUserEmail || "—"}</div>
+              <div><span className="font-medium text-foreground">User ID:</span> {cloudUserId || "—"}</div>
+              <div><span className="font-medium text-foreground">Role/status do banco:</span> {cloudRole || "—"} / {cloudAccessStatus || "—"}</div>
+              <div><span className="font-medium text-foreground">Última atualização do status:</span> {cloudLastRefreshAt ? new Date(cloudLastRefreshAt).toLocaleString("pt-BR") : "—"}</div>
+              {cloudAuthError && <div className="text-destructive md:col-span-2"><span className="font-medium">Erro auth:</span> {cloudAuthError}</div>}
+            </div>
+          </div>
+          {shouldWarnAboutStaleAccess && <div className="rounded-md border border-yellow-500/40 bg-yellow-500/10 p-3 text-sm text-yellow-800">Usuário ainda não aprovado para sincronização.</div>}
           {syncError && <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{syncError}</div>}
           <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" onClick={() => void handleRefreshSyncPanel()} disabled={isRefreshingSyncStatus || authLoading}>{isRefreshingSyncStatus || authLoading ? "Atualizando..." : "Atualizar status e pendências"}</Button>
+            <Button variant="secondary" onClick={() => void handleRefreshSyncPanel()} disabled={isRefreshingSyncStatus}>{isRefreshingSyncStatus ? "Atualizando..." : "Atualizar status e pendências"}</Button>
             <Button variant="outline" onClick={handleCompareCloud} disabled={isComparingSync || isSyncing || isRefreshingSyncStatus}>{isComparingSync ? "Comparando..." : "Comparar local x nuvem"}</Button>
             <Button onClick={handleUploadClick} disabled={isSyncing || isComparingSync || isRefreshingSyncStatus}>{isSyncing ? "Enviando..." : "Enviar pendências para nuvem"}</Button>
-            <Button variant="outline" onClick={() => { void refreshPendingSyncCount(); void refreshCloudSyncMeta(); }}>Atualizar contagem de pendências</Button>
+            <Button variant="outline" onClick={() => void handleRefreshSyncPanel()} disabled={isRefreshingSyncStatus}>{isRefreshingSyncStatus ? "Atualizando..." : "Atualizar contagem de pendências"}</Button>
           </div>
         </Card>
 
