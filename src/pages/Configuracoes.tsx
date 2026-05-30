@@ -131,6 +131,9 @@ export default function Configuracoes() {
   };
 
   const assertFreshActiveSyncContext = (freshAccessContext: FreshSupabaseAccessContext) => {
+    if (!freshAccessContext.session?.user) {
+      throw new Error("Sessão Supabase indisponível. Atualize o status ou faça login novamente.");
+    }
     if (freshAccessContext.error) throw new Error(freshAccessContext.error);
     if (freshAccessContext.accessStatus !== "active") throw new Error("Usuário ainda não aprovado para sincronização.");
     return { session: freshAccessContext.session, accessStatus: freshAccessContext.accessStatus };
@@ -319,8 +322,18 @@ export default function Configuracoes() {
       setCleanConfirmText("");
       await refreshPendingSyncCount();
       await refreshAuditAndComparison({ compareCloud: canCompareCloud });
-      if (typeof navigator !== "undefined" && navigator.onLine && cloudAccessStatus === "active") {
-        void runManualUploadSync();
+      if (typeof navigator !== "undefined" && navigator.onLine) {
+        const freshAccessContext = await getFreshSyncContext();
+        if (freshAccessContext.session?.user && !freshAccessContext.error && freshAccessContext.accessStatus === "active") {
+          const result = await runManualUploadSync({
+            session: freshAccessContext.session,
+            accessStatus: freshAccessContext.accessStatus,
+          });
+          if (!result.ok) {
+            setSyncError(result.message);
+            toast.error(result.message);
+          }
+        }
       }
       toast.success(`Limpeza concluída: ${ids.length} removido(s), ${queued} delete(s) enfileirado(s).`);
     } catch (error) {
@@ -337,8 +350,8 @@ export default function Configuracoes() {
     setSyncError(null);
     try {
       const freshAccessContext = await getFreshSyncContext();
-      assertFreshActiveSyncContext(freshAccessContext);
-      const result = await runManualUploadSync();
+      const freshSyncContext = assertFreshActiveSyncContext(freshAccessContext);
+      const result = await runManualUploadSync(freshSyncContext);
       if (result.skipped) {
         toast.message(result.message);
         return;
