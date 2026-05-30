@@ -1,5 +1,6 @@
 import { ChangeEvent, useEffect, useRef, useState } from "react";
 import { Card } from "@/components/ui/card";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -13,7 +14,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAppStore } from "@/store/AppStore";
 import { BaseMode, ImportLog, RegraComissao, AplicarSobre, FaixaComissao, CATEGORIAS_PRODUTO_PADRAO, Empresa, FormaPagamento, PrazoPagamento } from "@/types";
-import { Plus, Pencil, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Plus, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { deleteLocalItemsById, getLocalDbStats, LocalDbStats, replaceLocalDatabase, resetLocalDatabase, saveStore } from "@/lib/localRepository";
 import { clearLocalAppDeviceData } from "@/lib/clientCleanup";
@@ -30,6 +31,7 @@ import { fetchAccountSnapshot, shouldRestoreFromCloud, buildCloudRestoreSummary,
 import { enqueueSyncItem, requeueFailedAndStaleSyncItems } from "@/lib/syncQueue";
 import { findRemoteOnlyClientTestCandidates, softDeleteRemoteClientTests, type RemoteOnlyClientTestCandidate } from "@/lib/remoteCleanup";
 import { findLocalTestRecordCandidates, getSyncQueueAudit, type SyncQueueAudit, type TestRecordCandidate } from "@/lib/syncAudit";
+import { getAccountSyncUserMessage, getAccountSyncVisualState, SYNC_HOMOLOGATION_CHECKLIST } from "@/lib/accountSyncUi";
 import * as XLSX from "xlsx";
 
 const APLICAR: { v: AplicarSobre; label: string }[] = [
@@ -57,7 +59,7 @@ export default function Configuracoes() {
   const {
     regras, setRegras, vendedores, setVendedores, ticketsMedios, setTicketsMedios, dbError, isSaving, lastSavedAt, saveError,
     clientes, lancamentos, negocios, produtos, metasEmpresa, metasPessoais, eventos, metasVendedor, metasCategoria, prioridadesP1, orcamentos, setOrcamentos, empresas, setEmpresas, formasPagamento, setFormasPagamento, prazosPagamento, setPrazosPagamento,
-    setClientes, setLancamentos, setNegocios, setProdutos, setMetasEmpresa, setMetasPessoais, setEventos, setMetasVendedor, setMetasCategoria, setPrioridadesP1, appConfig, setAppConfig, pendingSyncCount, refreshPendingSyncCount, runManualUploadSync, runAccountSyncNowForAccount, accountSyncStatus, restoreAccountSnapshot,
+    setClientes, setLancamentos, setNegocios, setProdutos, setMetasEmpresa, setMetasPessoais, setEventos, setMetasVendedor, setMetasCategoria, setPrioridadesP1, appConfig, setAppConfig, pendingSyncCount, refreshPendingSyncCount, runManualUploadSync, runAccountSyncNowForAccount, accountSyncStatus, accountSyncHistory, restoreAccountSnapshot,
   } = useAppStore();
   const [open, setOpen] = useState(false);
   const [edit, setEdit] = useState<RegraComissao | null>(null);
@@ -103,6 +105,7 @@ export default function Configuracoes() {
   const [isCleaningRemoteOnlyTests, setIsCleaningRemoteOnlyTests] = useState(false);
   const [isCleaningTests, setIsCleaningTests] = useState(false);
   const [isRequeueingSync, setIsRequeueingSync] = useState(false);
+  const [advancedSyncOpen, setAdvancedSyncOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("comissao");
   const [dadosEmpresa, setDadosEmpresa] = useState<Empresa>(defaultEmpresa);
   const categoriasTicket = [...new Set([...CATEGORIAS_PRODUTO_PADRAO, ...ticketsMedios.map((t) => t.categoria)])];
@@ -139,6 +142,33 @@ export default function Configuracoes() {
     remoteCount: syncComparison?.totals.remoteCount ?? 0,
   });
   const showCloudRestoreCta = cloudRestoreDecision.allowed;
+  const isOnline = typeof navigator === "undefined" ? true : navigator.onLine;
+  const hasSyncConflict = Boolean(syncComparison && syncComparison.totals.onlyLocal > 0 && syncComparison.totals.onlyRemote > 0);
+  const userSyncMessage = getAccountSyncUserMessage({
+    isOnline,
+    cloudSessionExists,
+    cloudAccessStatus,
+    pendingSyncCount,
+    accountSyncStatus,
+    hasRemoteOnly: showCloudRestoreCta || Boolean(syncComparison && syncComparison.totals.onlyRemote > 0),
+    hasConflict: hasSyncConflict,
+  });
+  const userSyncState = getAccountSyncVisualState({
+    isOnline,
+    isSyncing: isAccountSyncing || isSyncing || isRestoringCloud,
+    cloudSessionExists,
+    cloudAccessStatus,
+    pendingSyncCount,
+    hasConflict: hasSyncConflict,
+    hasAttention: Boolean(syncError || showCloudRestoreCta),
+  });
+  const userSyncBadgeClass = userSyncState === "Atualizado"
+    ? "bg-emerald-100 text-emerald-800 hover:bg-emerald-100"
+    : userSyncState === "Offline" || userSyncState === "Bloqueado"
+      ? "bg-destructive/10 text-destructive hover:bg-destructive/10"
+      : userSyncState === "Pendente" || userSyncState === "Atenção"
+        ? "bg-yellow-100 text-yellow-800 hover:bg-yellow-100"
+        : "bg-blue-100 text-blue-800 hover:bg-blue-100";
 
   const updateCloudAccessPanel = (context: FreshSupabaseAccessContext) => {
     setCloudUserEmail(context.email);
@@ -375,6 +405,11 @@ export default function Configuracoes() {
     toast.success("Relatório de auditoria copiado.");
   };
 
+  const handleCopyHomologationChecklist = async () => {
+    await navigator.clipboard.writeText(SYNC_HOMOLOGATION_CHECKLIST);
+    toast.success("Checklist de homologação copiado.");
+  };
+
   const handleConfirmCleanupTests = async () => {
     if (cleanConfirmText !== "LIMPAR TESTES") return;
     if (!canCleanTests) {
@@ -509,7 +544,8 @@ export default function Configuracoes() {
   };
 
   const handleUploadClick = () => {
-    if (!lastSyncAt) {
+    const hasOverwriteRisk = Boolean(syncComparison && syncComparison.totals.remoteCount > 0 && pendingSyncCount > 0);
+    if (!lastSyncAt || hasOverwriteRisk) {
       setConfirmUploadOpen(true);
       return;
     }
@@ -824,6 +860,7 @@ export default function Configuracoes() {
             <input ref={fileInputRef} type="file" accept="application/json,.json" className="hidden" onChange={handleRestoreFile} />
           </Card>
         </Card>
+        </>}
       </TabsContent>
 
       <TabsContent value="sync-cloud" className="space-y-3">
@@ -835,55 +872,74 @@ export default function Configuracoes() {
           <div className="rounded-md border border-emerald-500/30 bg-emerald-500/5 p-3 space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <h3 className="font-semibold">Nível usuário</h3>
-                <p className="text-sm text-muted-foreground">Use este botão para enviar pendências locais e carregar dados da conta quando for seguro.</p>
+                <div className="mb-2 flex flex-wrap items-center gap-2">
+                  <h3 className="font-semibold">Sincronização da conta</h3>
+                  <Badge className={userSyncBadgeClass}>{userSyncState}</Badge>
+                </div>
+                <p className="text-sm text-muted-foreground">Use este botão para manter este dispositivo alinhado com os dados da sua conta.</p>
               </div>
               <Button onClick={() => void handleAccountSyncNow()} disabled={isAccountSyncing || isSyncing || isComparingSync || isRefreshingSyncStatus || isRestoringCloud}>{isAccountSyncing ? "Sincronizando..." : "Sincronizar agora"}</Button>
             </div>
             <div className="grid gap-3 md:grid-cols-3">
-              <div className="rounded-md border bg-background/60 p-3 text-sm"><div className="text-muted-foreground">Status da conta</div><div className="font-medium">{cloudSessionExists ? `${cloudRole || "—"} / ${cloudAccessStatus || "—"}` : "Não autenticado"}</div></div>
+              <div className="rounded-md border bg-background/60 p-3 text-sm"><div className="text-muted-foreground">Status da conta</div><div className="font-medium">{cloudSessionExists ? (cloudAccessStatus === "active" ? "A conta está ativa." : "Aguardando aprovação") : "Não autenticado"}</div></div>
               <div className="rounded-md border bg-background/60 p-3 text-sm"><div className="text-muted-foreground">Última sincronização</div><div className="font-medium">{lastSyncAt ? new Date(lastSyncAt).toLocaleString("pt-BR") : "não registrado"}</div></div>
               <div className="rounded-md border bg-background/60 p-3 text-sm"><div className="text-muted-foreground">Pendências</div><div className="font-medium">{pendingSyncCount}</div></div>
             </div>
-            <div className="rounded-md border bg-background/60 p-3 text-sm">{accountSyncStatus?.message || "Este dispositivo já está atualizado."}</div>
+            <div className="rounded-md border bg-background/60 p-3 text-sm">{userSyncMessage}</div>
           </div>
-          <div className="grid gap-3 md:grid-cols-3">
-            <div className="rounded-md border p-3 text-sm"><div className="text-muted-foreground">Supabase configurado</div><div className="font-medium">{isSupabaseConfigured ? "Sim" : "Não"}</div></div>
-            <div className="rounded-md border p-3 text-sm"><div className="text-muted-foreground">Usuário autenticado</div><div className="font-medium">{cloudUserEmail || "Não autenticado"}</div></div>
-            <div className="rounded-md border p-3 text-sm"><div className="text-muted-foreground">Role/status do banco</div><div className="font-medium">{cloudRole || "—"} / {cloudAccessStatus || "—"}</div></div>
-            <div className="rounded-md border p-3 text-sm"><div className="text-muted-foreground">Pendências locais</div><div className="font-medium">{pendingSyncCount}</div></div>
-            <div className="rounded-md border p-3 text-sm md:col-span-2"><div className="text-muted-foreground">Último sync</div><div className="font-medium">{lastSyncAt ? new Date(lastSyncAt).toLocaleString("pt-BR") : "não registrado"}</div></div>
-          </div>
-          <div className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground">
-            <div className="grid gap-2 md:grid-cols-2">
-              <div><span className="font-medium text-foreground">Sessão Supabase:</span> {cloudSessionExists ? "Sim" : "Não"}</div>
-              <div><span className="font-medium text-foreground">Status da consulta:</span> {syncQueryStatus}</div>
-              <div><span className="font-medium text-foreground">Email atual:</span> {cloudUserEmail || "—"}</div>
-              <div><span className="font-medium text-foreground">User ID:</span> {cloudUserId || "—"}</div>
-              <div><span className="font-medium text-foreground">Role/status do banco:</span> {cloudRole || "—"} / {cloudAccessStatus || "—"}</div>
-              <div><span className="font-medium text-foreground">Última tentativa de atualização:</span> {cloudLastRefreshAt ? new Date(cloudLastRefreshAt).toLocaleString("pt-BR") : "—"}</div>
-              <div className="md:col-span-2"><span className="font-medium text-foreground">Último erro:</span> {lastSyncPanelError || "—"}</div>
-              {!cloudSessionExists && <div className="text-destructive md:col-span-2">Usuário não autenticado. Volte para Login e entre novamente.</div>}
-            </div>
-          </div>
-          {shouldWarnAboutStaleAccess && <div className="rounded-md border border-yellow-500/40 bg-yellow-500/10 p-3 text-sm text-yellow-800">Usuário ainda não aprovado para sincronização.</div>}
-          {!lastSyncAt && <div className="rounded-md border border-yellow-500/40 bg-yellow-500/10 p-3 text-sm text-yellow-800">Primeiro envio deve ser confirmado manualmente.</div>}
-          {showCloudRestoreCta && <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm text-emerald-800">Há dados da sua conta na nuvem. Carregar neste dispositivo?</div>}
-          {!cloudRestoreDecision.allowed && syncComparison && cloudRestoreDecision.reason !== "no-remote-only" && <div className="rounded-md border border-yellow-500/40 bg-yellow-500/10 p-3 text-sm text-yellow-800">Restauração bloqueada: {cloudRestoreDecision.message}</div>}
-          {syncError && <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{syncError}</div>}
-          <div className="space-y-2 rounded-md border p-3">
-            <h3 className="font-semibold">Nível avançado</h3>
-            <p className="text-xs text-muted-foreground">Ferramentas técnicas para diagnóstico, primeiro envio, restauração manual e auditoria.</p>
-            <div className="flex flex-wrap gap-2">
-              <Button variant="secondary" onClick={() => void handleRefreshSyncPanel()} disabled={isRefreshingSyncStatus}>{isRefreshingSyncStatus ? "Atualizando..." : "Atualizar status e pendências"}</Button>
-              <Button variant="outline" onClick={handleCompareCloud} disabled={!canCompareCloud || isComparingSync || isSyncing || isRefreshingSyncStatus}>{isComparingSync ? "Comparando..." : "Comparar local x nuvem"}</Button>
-              <Button onClick={handleUploadClick} disabled={isSyncing || isComparingSync || isRefreshingSyncStatus || isRestoringCloud}>{isSyncing ? "Enviando..." : "Enviar pendências para nuvem"}</Button>
-              <Button variant="default" onClick={() => { setRestoreConfirmText(""); setConfirmRestoreOpen(true); }} disabled={!cloudRestoreDecision.allowed || isRestoringCloud || isSyncing || isComparingSync || isRefreshingSyncStatus}>{isRestoringCloud ? "Carregando..." : "Carregar dados da conta neste dispositivo"}</Button>
-              <Button variant="outline" onClick={() => void refreshAuditAndComparison({ compareCloud: true })} disabled={isAuditingSync}>{isAuditingSync ? "Auditando..." : "Auditoria e limpeza"}</Button>
-            </div>
-          </div>
+
+          <Collapsible open={advancedSyncOpen} onOpenChange={setAdvancedSyncOpen} className="space-y-3 rounded-md border p-3">
+            <CollapsibleTrigger asChild>
+              <Button variant="ghost" className="flex w-full justify-between p-0 text-left hover:bg-transparent">
+                <span>
+                  <span className="block font-semibold">Ferramentas avançadas de sincronização</span>
+                  <span className="block text-xs font-normal text-muted-foreground">Use apenas para diagnóstico, suporte ou correção de dados.</span>
+                </span>
+                {advancedSyncOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+              </Button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className="space-y-4">
+              <div className="grid gap-3 md:grid-cols-3">
+                <div className="rounded-md border p-3 text-sm"><div className="text-muted-foreground">Supabase configurado</div><div className="font-medium">{isSupabaseConfigured ? "Sim" : "Não"}</div></div>
+                <div className="rounded-md border p-3 text-sm"><div className="text-muted-foreground">Usuário autenticado</div><div className="font-medium">{cloudUserEmail || "Não autenticado"}</div></div>
+                <div className="rounded-md border p-3 text-sm"><div className="text-muted-foreground">Role/status do banco</div><div className="font-medium">{cloudRole || "—"} / {cloudAccessStatus || "—"}</div></div>
+                <div className="rounded-md border p-3 text-sm"><div className="text-muted-foreground">Pendências locais</div><div className="font-medium">{pendingSyncCount}</div></div>
+                <div className="rounded-md border p-3 text-sm md:col-span-2"><div className="text-muted-foreground">Último sync</div><div className="font-medium">{lastSyncAt ? new Date(lastSyncAt).toLocaleString("pt-BR") : "não registrado"}</div></div>
+              </div>
+              <div className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground">
+                <div className="grid gap-2 md:grid-cols-2">
+                  <div><span className="font-medium text-foreground">Sessão Supabase:</span> {cloudSessionExists ? "Sim" : "Não"}</div>
+                  <div><span className="font-medium text-foreground">Status da consulta:</span> {syncQueryStatus}</div>
+                  <div><span className="font-medium text-foreground">Email atual:</span> {cloudUserEmail || "—"}</div>
+                  <div><span className="font-medium text-foreground">User ID:</span> {cloudUserId || "—"}</div>
+                  <div><span className="font-medium text-foreground">Role/status do banco:</span> {cloudRole || "—"} / {cloudAccessStatus || "—"}</div>
+                  <div><span className="font-medium text-foreground">Última tentativa de atualização:</span> {cloudLastRefreshAt ? new Date(cloudLastRefreshAt).toLocaleString("pt-BR") : "—"}</div>
+                  <div className="md:col-span-2"><span className="font-medium text-foreground">Último erro:</span> {lastSyncPanelError || "—"}</div>
+                  {!cloudSessionExists && <div className="text-destructive md:col-span-2">Usuário não autenticado. Volte para Login e entre novamente.</div>}
+                </div>
+              </div>
+              {shouldWarnAboutStaleAccess && <div className="rounded-md border border-yellow-500/40 bg-yellow-500/10 p-3 text-sm text-yellow-800">Usuário ainda não aprovado para sincronização.</div>}
+              {!lastSyncAt && <div className="rounded-md border border-yellow-500/40 bg-yellow-500/10 p-3 text-sm text-yellow-800">Primeiro envio deve ser confirmado manualmente.</div>}
+              {showCloudRestoreCta && <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm text-emerald-800">Há dados da sua conta disponíveis para carregar.</div>}
+              {!cloudRestoreDecision.allowed && syncComparison && cloudRestoreDecision.reason !== "no-remote-only" && <div className="rounded-md border border-yellow-500/40 bg-yellow-500/10 p-3 text-sm text-yellow-800">Restauração bloqueada: {cloudRestoreDecision.message}</div>}
+              {syncError && <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{syncError}</div>}
+              <div className="flex flex-wrap gap-2">
+                <Button variant="secondary" onClick={() => void handleRefreshSyncPanel()} disabled={isRefreshingSyncStatus}>{isRefreshingSyncStatus ? "Atualizando..." : "Atualizar status e pendências"}</Button>
+                <Button variant="outline" onClick={handleCompareCloud} disabled={!canCompareCloud || isComparingSync || isSyncing || isRefreshingSyncStatus}>{isComparingSync ? "Comparando..." : "Comparar local x nuvem"}</Button>
+                <Button onClick={handleUploadClick} disabled={isSyncing || isComparingSync || isRefreshingSyncStatus || isRestoringCloud}>{isSyncing ? "Enviando..." : "Enviar pendências para nuvem"}</Button>
+                <Button variant="default" onClick={() => { setRestoreConfirmText(""); setConfirmRestoreOpen(true); }} disabled={!cloudRestoreDecision.allowed || isRestoringCloud || isSyncing || isComparingSync || isRefreshingSyncStatus}>{isRestoringCloud ? "Carregando..." : "Carregar dados da conta neste dispositivo"}</Button>
+                <Button variant="outline" onClick={() => void refreshAuditAndComparison({ compareCloud: true })} disabled={isAuditingSync}>{isAuditingSync ? "Auditando..." : "Auditoria e limpeza"}</Button>
+                <Button variant="outline" onClick={() => void handleCopyHomologationChecklist()}>Copiar checklist de homologação da sincronização</Button>
+              </div>
+              <div className="space-y-2">
+                <h4 className="text-sm font-semibold">Histórico recente da sincronização</h4>
+                <div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Horário</TableHead><TableHead>Tipo</TableHead><TableHead>Status</TableHead><TableHead>Mensagem</TableHead></TableRow></TableHeader><TableBody>{accountSyncHistory.length === 0 ? <TableRow><TableCell colSpan={4} className="text-sm text-muted-foreground">Nenhum evento registrado.</TableCell></TableRow> : accountSyncHistory.map((event) => <TableRow key={event.id}><TableCell>{new Date(event.timestamp).toLocaleString("pt-BR")}</TableCell><TableCell>{event.tipo}</TableCell><TableCell>{event.status}</TableCell><TableCell>{event.mensagem}</TableCell></TableRow>)}</TableBody></Table></div>
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
         </Card>
 
+        {advancedSyncOpen && <>
         {syncSummary && <Card className="p-4 space-y-3">
           <h3 className="font-semibold">Resumo do envio</h3>
           <div className="grid gap-2 md:grid-cols-3 text-sm">
@@ -970,6 +1026,7 @@ export default function Configuracoes() {
           {cleanupSummary && <div className="rounded-md border bg-muted/30 p-3 text-sm"><b>Resultado da limpeza:</b> removidos localmente {cleanupSummary.removed}; enfileirados para delete {cleanupSummary.queued}; erros {cleanupSummary.errors.length}. {cleanupSummary.errors.join("; ")}</div>}
           {remoteCleanupSummary && <div className="rounded-md border bg-muted/30 p-3 text-sm"><b>Resultado da limpeza somente na nuvem:</b> {remoteCleanupSummary.count} marcado(s) com deleted_at em {new Date(remoteCleanupSummary.deletedAt).toLocaleString("pt-BR")}. IDs: {remoteCleanupSummary.ids.join(", ")}</div>}
         </Card>
+        </>}
       </TabsContent>
 
     </Tabs>
@@ -1043,8 +1100,8 @@ export default function Configuracoes() {
     <AlertDialog open={confirmUploadOpen} onOpenChange={setConfirmUploadOpen}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Confirmar primeiro envio para nuvem</AlertDialogTitle>
-          <AlertDialogDescription>Esta ação enviará os dados locais deste dispositivo para a nuvem do usuário autenticado. Nenhum dado local será apagado. Deseja continuar?</AlertDialogDescription>
+          <AlertDialogTitle>Confirmar envio para nuvem</AlertDialogTitle>
+          <AlertDialogDescription>Esta ação enviará pendências locais deste dispositivo para a nuvem da conta autenticada. Nenhum dado local será apagado. Deseja continuar?</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>Cancelar</AlertDialogCancel>

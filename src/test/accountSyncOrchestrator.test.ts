@@ -131,7 +131,7 @@ describe("accountSyncOrchestrator", () => {
     }));
 
     expect(result.code).toBe("skipped");
-    expect(result.message).toBe("Sua conta ainda não está ativa para sincronização.");
+    expect(result.message).toBe("Usuário ainda não aprovado para sincronização.");
     expect(uploadPending).not.toHaveBeenCalled();
   });
 
@@ -152,6 +152,7 @@ describe("accountSyncOrchestrator", () => {
     expect(shouldAutoRestoreAccount({ ...base, localCount: 1 }).allowed).toBe(true);
     expect(shouldAutoRestoreAccount({ ...base, localCount: 2 }).reason).toBe("manual-cta");
     expect(shouldAutoRestoreAccount({ ...base, onlyLocal: 1 }).reason).toBe("local-conflict");
+    expect(shouldAutoRestoreAccount({ ...base, onlyLocal: 1, onlyRemote: 1 }).reason).toBe("cloud-conflict");
     expect(shouldAutoRestoreAccount({ ...base, pendingSyncCount: 1 }).reason).toBe("pending-sync");
     expect(shouldAutoRestoreAccount({ ...base, isOnline: false }).reason).toBe("offline");
   });
@@ -170,6 +171,31 @@ describe("accountSyncOrchestrator", () => {
     expect(second.code).toBe("skipped");
     expect(third.code).toBe("synced");
     expect(compareLocalAndRemote).toHaveBeenCalledTimes(2);
+  });
+
+  it("auto-check blocks conflict without restore", async () => {
+    const restoreAccountSnapshot = vi.fn();
+    const result = await runAccountSyncCheck(deps({
+      compareLocalAndRemote: vi.fn(async () => comparison({ localCount: 2, remoteCount: 2, onlyLocal: 1, onlyRemote: 1 })),
+      restoreAccountSnapshot,
+    }));
+
+    expect(result.code).toBe("blocked");
+    expect(result.message).toBe("Conflito detectado. Revisão manual necessária.");
+    expect(restoreAccountSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("auto-check does not upload local pending data automatically", async () => {
+    const uploadPending = vi.fn();
+    const result = await runAccountSyncCheck(deps({
+      refreshPendingSyncCount: vi.fn(async () => 1),
+      uploadPending,
+      compareLocalAndRemote: vi.fn(async () => comparison({ localCount: 1, remoteCount: 1 })),
+    }));
+
+    expect(result.code).toBe("blocked");
+    expect(result.message).toBe("Há dados locais aguardando envio.");
+    expect(uploadPending).not.toHaveBeenCalled();
   });
 
   it("returns simple UI messages and keeps technical errors separate", () => {
