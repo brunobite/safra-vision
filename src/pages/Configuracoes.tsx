@@ -57,7 +57,7 @@ export default function Configuracoes() {
   const {
     regras, setRegras, vendedores, setVendedores, ticketsMedios, setTicketsMedios, dbError, isSaving, lastSavedAt, saveError,
     clientes, lancamentos, negocios, produtos, metasEmpresa, metasPessoais, eventos, metasVendedor, metasCategoria, prioridadesP1, orcamentos, setOrcamentos, empresas, setEmpresas, formasPagamento, setFormasPagamento, prazosPagamento, setPrazosPagamento,
-    setClientes, setLancamentos, setNegocios, setProdutos, setMetasEmpresa, setMetasPessoais, setEventos, setMetasVendedor, setMetasCategoria, setPrioridadesP1, appConfig, setAppConfig, pendingSyncCount, refreshPendingSyncCount, runManualUploadSync, restoreAccountSnapshot,
+    setClientes, setLancamentos, setNegocios, setProdutos, setMetasEmpresa, setMetasPessoais, setEventos, setMetasVendedor, setMetasCategoria, setPrioridadesP1, appConfig, setAppConfig, pendingSyncCount, refreshPendingSyncCount, runManualUploadSync, runAccountSyncNowForAccount, accountSyncStatus, restoreAccountSnapshot,
   } = useAppStore();
   const [open, setOpen] = useState(false);
   const [edit, setEdit] = useState<RegraComissao | null>(null);
@@ -78,6 +78,7 @@ export default function Configuracoes() {
   const [syncComparison, setSyncComparison] = useState<LocalRemoteComparison | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isAccountSyncing, setIsAccountSyncing] = useState(false);
   const [isComparingSync, setIsComparingSync] = useState(false);
   const [confirmUploadOpen, setConfirmUploadOpen] = useState(false);
   const [confirmRestoreOpen, setConfirmRestoreOpen] = useState(false);
@@ -515,6 +516,28 @@ export default function Configuracoes() {
     void executeUploadSync();
   };
 
+  const handleAccountSyncNow = async () => {
+    setIsAccountSyncing(true);
+    setSyncError(null);
+    try {
+      const status = await runAccountSyncNowForAccount();
+      if (status.comparison) setSyncComparison(status.comparison);
+      if (status.uploadSummary) setSyncSummary(status.uploadSummary);
+      if (status.code === "error" || status.code === "blocked") {
+        setSyncError(status.message);
+        toast.error(status.message);
+        return;
+      }
+      toast.success(status.message);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Erro desconhecido ao sincronizar conta.";
+      setSyncError(message);
+      toast.error(message);
+    } finally {
+      setIsAccountSyncing(false);
+    }
+  };
+
 
   const loadStats = async () => {
     try { setStats(await getLocalDbStats()); } catch (error) { console.error(error); }
@@ -806,8 +829,23 @@ export default function Configuracoes() {
       <TabsContent value="sync-cloud" className="space-y-3">
         <Card className="p-4 space-y-4">
           <div>
-            <h2 className="text-lg font-semibold">Sincronização em nuvem</h2>
-            <p className="text-sm text-muted-foreground">Sincronização manual e controlada entre IndexedDB local e Supabase. A conta manda nos dados; o dispositivo é cache local/offline.</p>
+            <h2 className="text-lg font-semibold">Sincronização da conta</h2>
+            <p className="text-sm text-muted-foreground">A conta é a fonte dos dados; este dispositivo mantém um cache local/offline.</p>
+          </div>
+          <div className="rounded-md border border-emerald-500/30 bg-emerald-500/5 p-3 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 className="font-semibold">Nível usuário</h3>
+                <p className="text-sm text-muted-foreground">Use este botão para enviar pendências locais e carregar dados da conta quando for seguro.</p>
+              </div>
+              <Button onClick={() => void handleAccountSyncNow()} disabled={isAccountSyncing || isSyncing || isComparingSync || isRefreshingSyncStatus || isRestoringCloud}>{isAccountSyncing ? "Sincronizando..." : "Sincronizar agora"}</Button>
+            </div>
+            <div className="grid gap-3 md:grid-cols-3">
+              <div className="rounded-md border bg-background/60 p-3 text-sm"><div className="text-muted-foreground">Status da conta</div><div className="font-medium">{cloudSessionExists ? `${cloudRole || "—"} / ${cloudAccessStatus || "—"}` : "Não autenticado"}</div></div>
+              <div className="rounded-md border bg-background/60 p-3 text-sm"><div className="text-muted-foreground">Última sincronização</div><div className="font-medium">{lastSyncAt ? new Date(lastSyncAt).toLocaleString("pt-BR") : "não registrado"}</div></div>
+              <div className="rounded-md border bg-background/60 p-3 text-sm"><div className="text-muted-foreground">Pendências</div><div className="font-medium">{pendingSyncCount}</div></div>
+            </div>
+            <div className="rounded-md border bg-background/60 p-3 text-sm">{accountSyncStatus?.message || "Este dispositivo já está atualizado."}</div>
           </div>
           <div className="grid gap-3 md:grid-cols-3">
             <div className="rounded-md border p-3 text-sm"><div className="text-muted-foreground">Supabase configurado</div><div className="font-medium">{isSupabaseConfigured ? "Sim" : "Não"}</div></div>
@@ -833,12 +871,16 @@ export default function Configuracoes() {
           {showCloudRestoreCta && <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm text-emerald-800">Há dados da sua conta na nuvem. Carregar neste dispositivo?</div>}
           {!cloudRestoreDecision.allowed && syncComparison && cloudRestoreDecision.reason !== "no-remote-only" && <div className="rounded-md border border-yellow-500/40 bg-yellow-500/10 p-3 text-sm text-yellow-800">Restauração bloqueada: {cloudRestoreDecision.message}</div>}
           {syncError && <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{syncError}</div>}
-          <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" onClick={() => void handleRefreshSyncPanel()} disabled={isRefreshingSyncStatus}>{isRefreshingSyncStatus ? "Atualizando..." : "Atualizar status e pendências"}</Button>
-            <Button variant="outline" onClick={handleCompareCloud} disabled={!canCompareCloud || isComparingSync || isSyncing || isRefreshingSyncStatus}>{isComparingSync ? "Comparando..." : "Comparar local x nuvem"}</Button>
-            <Button onClick={handleUploadClick} disabled={isSyncing || isComparingSync || isRefreshingSyncStatus || isRestoringCloud}>{isSyncing ? "Enviando..." : "Enviar pendências para nuvem"}</Button>
-            <Button variant="default" onClick={() => { setRestoreConfirmText(""); setConfirmRestoreOpen(true); }} disabled={!cloudRestoreDecision.allowed || isRestoringCloud || isSyncing || isComparingSync || isRefreshingSyncStatus}>{isRestoringCloud ? "Carregando..." : "Carregar dados da conta neste dispositivo"}</Button>
-            <Button variant="outline" onClick={() => void handleRefreshSyncPanel()} disabled={isRefreshingSyncStatus}>{isRefreshingSyncStatus ? "Atualizando..." : "Atualizar contagem de pendências"}</Button>
+          <div className="space-y-2 rounded-md border p-3">
+            <h3 className="font-semibold">Nível avançado</h3>
+            <p className="text-xs text-muted-foreground">Ferramentas técnicas para diagnóstico, primeiro envio, restauração manual e auditoria.</p>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="secondary" onClick={() => void handleRefreshSyncPanel()} disabled={isRefreshingSyncStatus}>{isRefreshingSyncStatus ? "Atualizando..." : "Atualizar status e pendências"}</Button>
+              <Button variant="outline" onClick={handleCompareCloud} disabled={!canCompareCloud || isComparingSync || isSyncing || isRefreshingSyncStatus}>{isComparingSync ? "Comparando..." : "Comparar local x nuvem"}</Button>
+              <Button onClick={handleUploadClick} disabled={isSyncing || isComparingSync || isRefreshingSyncStatus || isRestoringCloud}>{isSyncing ? "Enviando..." : "Enviar pendências para nuvem"}</Button>
+              <Button variant="default" onClick={() => { setRestoreConfirmText(""); setConfirmRestoreOpen(true); }} disabled={!cloudRestoreDecision.allowed || isRestoringCloud || isSyncing || isComparingSync || isRefreshingSyncStatus}>{isRestoringCloud ? "Carregando..." : "Carregar dados da conta neste dispositivo"}</Button>
+              <Button variant="outline" onClick={() => void refreshAuditAndComparison({ compareCloud: true })} disabled={isAuditingSync}>{isAuditingSync ? "Auditando..." : "Auditoria e limpeza"}</Button>
+            </div>
           </div>
         </Card>
 

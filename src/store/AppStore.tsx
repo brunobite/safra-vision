@@ -7,6 +7,7 @@ import { bootstrapLocalDatabase, saveStore } from "@/lib/localRepository";
 import { restoreAccountSnapshotToLocal, type AccountSnapshot, type CloudRestoreResult } from "@/lib/cloudRestore";
 import { enqueueSyncItem, getPendingSyncItems, shouldTrackSyncStore } from "@/lib/syncQueue";
 import { getAutoSyncCooldownRemaining, runControlledUploadSync, type AutoSyncAccessStatus, type AutoSyncContext, type AutoSyncResult } from "@/lib/autoSync";
+import { runAccountSyncCheck, runAccountSyncNow, type AccountSyncStatus } from "@/lib/accountSyncOrchestrator";
 import { getFreshSupabaseAccessContext } from "@/lib/supabaseAccess";
 import { useAuth } from "@/store/AuthStore";
 import { calcularPotencialCliente, calcularValorMedioHaSegmentosAtivos } from "@/utils/businessRules";
@@ -48,11 +49,13 @@ interface AppStoreCtx {
   lastSavedAt: string | null;
   saveError: string | null;
   pendingSyncCount: number;
-  refreshPendingSyncCount: () => Promise<void>;
+  refreshPendingSyncCount: () => Promise<number>;
   syncStatus: "idle" | "pending" | "syncing" | "synced" | "error" | "first-upload-required";
   syncError: string | null;
   lastAutoSyncAt: string | null;
+  accountSyncStatus: AccountSyncStatus | null;
   runManualUploadSync: (overrideContext?: ManualUploadSyncOverrideContext) => Promise<AutoSyncResult>;
+  runAccountSyncNowForAccount: () => Promise<AccountSyncStatus>;
   restoreAccountSnapshot: (snapshot: AccountSnapshot) => Promise<CloudRestoreResult>;
   isReady: boolean;
   dbError: string | null;
@@ -102,6 +105,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const [syncStatus, setSyncStatus] = useState<"idle" | "pending" | "syncing" | "synced" | "error" | "first-upload-required">("idle");
   const [syncError, setSyncError] = useState<string | null>(null);
   const [lastAutoSyncAt, setLastAutoSyncAt] = useState<string | null>(null);
+  const [accountSyncStatus, setAccountSyncStatus] = useState<AccountSyncStatus | null>(null);
   const hasHydratedRef = useRef(false);
   const isApplyingCloudRestoreRef = useRef(false);
   const skipNextPersistStoresRef = useRef<Set<string>>(new Set());
@@ -328,6 +332,49 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     return result;
   }, [accessStatus, applySyncResult, session]);
 
+  const applyAccountSyncStatus = useCallback((status: AccountSyncStatus) => {
+    setAccountSyncStatus(status);
+    if (status.code === "error" || status.code === "blocked") {
+      setSyncStatus("error");
+      setSyncError(status.message);
+      if (status.technicalMessage) console.error(status.technicalMessage);
+      return;
+    }
+    if (status.code === "restored" || status.code === "synced") {
+      setSyncStatus("synced");
+      setSyncError(null);
+      setLastAutoSyncAt(status.lastCheckedAt);
+      return;
+    }
+    if (status.code === "cta-available") {
+      setSyncStatus("pending");
+      setSyncError(status.message);
+    }
+  }, []);
+
+  const buildAccountSyncDependencies = useCallback(() => ({
+    getFreshAccessContext: getFreshSupabaseAccessContext,
+    refreshPendingSyncCount,
+    uploadPending: async (context: { session: NonNullable<typeof session>; accessStatus: "active" }) => runManualUploadSync(context),
+    restoreAccountSnapshot,
+  }), [refreshPendingSyncCount, restoreAccountSnapshot, runManualUploadSync, session]);
+
+  const runAccountSyncNowForAccount = useCallback(async () => {
+    setSyncStatus("syncing");
+    setSyncError(null);
+    const status = await runAccountSyncNow(buildAccountSyncDependencies());
+    applyAccountSyncStatus(status);
+    await refreshPendingSyncCount();
+    return status;
+  }, [applyAccountSyncStatus, buildAccountSyncDependencies, refreshPendingSyncCount]);
+
+  const runAccountSyncCheckForAccount = useCallback(async () => {
+    if (!isReadyRef.current || syncStatusRef.current === "syncing") return;
+    const status = await runAccountSyncCheck(buildAccountSyncDependencies());
+    applyAccountSyncStatus(status);
+    await refreshPendingSyncCount();
+  }, [applyAccountSyncStatus, buildAccountSyncDependencies, refreshPendingSyncCount]);
+
   const getFreshAutoSyncContext = useCallback(async (): Promise<{ context: AutoSyncContext } | { result: AutoSyncResult }> => {
     const fresh = await getFreshSupabaseAccessContext();
 
@@ -437,8 +484,17 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   }, [authLoading, isReady, pendingSyncCount, scheduleAutoSync]);
 
   useEffect(() => {
+    if (!isReady || authLoading) return;
+    const timer = window.setTimeout(() => {
+      void runAccountSyncCheckForAccount();
+    }, 1_000);
+    return () => window.clearTimeout(timer);
+  }, [authLoading, isReady, runAccountSyncCheckForAccount]);
+
+  useEffect(() => {
     const triggerAutoSync = () => {
       void refreshPendingSyncCount();
+      void runAccountSyncCheckForAccount();
       if (syncStatusRef.current === "syncing") return;
       setSyncStatus("pending");
       setSyncError("Aguardando sessão Supabase...");
@@ -457,7 +513,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       window.removeEventListener("focus", triggerAutoSync);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [refreshPendingSyncCount, scheduleAutoSync]);
+  }, [refreshPendingSyncCount, runAccountSyncCheckForAccount, scheduleAutoSync]);
 
   useEffect(() => {
     if (!isReady || pendingSyncCount <= 0 || syncStatus === "syncing" || (typeof navigator !== "undefined" && !navigator.onLine)) {
@@ -551,7 +607,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       eventos, setEventos, prioridadesP1, setPrioridadesP1,
       negocios, setNegocios, oportunidades, setOportunidades, produtos, setProdutos,
       regras, setRegras, vendedores, setVendedores, ticketsMedios, setTicketsMedios, orcamentos, setOrcamentos, empresas, setEmpresas, proximasAcoes, setProximasAcoes, formasPagamento, setFormasPagamento, prazosPagamento, setPrazosPagamento, appConfig, setAppConfig,
-      isLoading, isReady, dbError, isSaving, lastSavedAt, saveError, pendingSyncCount, refreshPendingSyncCount, syncStatus, syncError, lastAutoSyncAt, runManualUploadSync, restoreAccountSnapshot,
+      isLoading, isReady, dbError, isSaving, lastSavedAt, saveError, pendingSyncCount, refreshPendingSyncCount, syncStatus, syncError, lastAutoSyncAt, accountSyncStatus, runManualUploadSync, runAccountSyncNowForAccount, restoreAccountSnapshot,
       filters, setFilters,
       filtered: { lancamentos: filteredLancs, negocios: filteredNegs, oportunidades: filteredOportunidades },
       clienteById: (id) => cMap.get(id),
