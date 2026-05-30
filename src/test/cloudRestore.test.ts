@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { StoreName } from "@/lib/db";
 import type { RemoteRow } from "@/lib/supabaseSync";
 
@@ -70,6 +70,14 @@ describe("cloudRestore", () => {
     dbState.clear();
     pendingItems = [];
     vi.useRealTimers();
+    vi.stubGlobal("navigator", {
+      onLine: true,
+      userAgent: "Vitest",
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it("builds active account snapshots and maps remote tables to local stores", async () => {
