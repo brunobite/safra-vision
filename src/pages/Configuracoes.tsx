@@ -27,6 +27,7 @@ import { isSupabaseConfigured } from "@/lib/supabase";
 import { getFreshSupabaseAccessContext, type FreshSupabaseAccessContext } from "@/lib/supabaseAccess";
 import { compareLocalAndRemote, getRemoteSyncMeta, type LocalRemoteComparison, type SyncSummary } from "@/lib/supabaseSync";
 import { enqueueSyncItem, requeueFailedAndStaleSyncItems } from "@/lib/syncQueue";
+import { findRemoteOnlyClientTestCandidates, softDeleteRemoteClientTests, type RemoteOnlyClientTestCandidate } from "@/lib/remoteCleanup";
 import { findLocalTestRecordCandidates, getSyncQueueAudit, type SyncQueueAudit, type TestRecordCandidate } from "@/lib/syncAudit";
 import * as XLSX from "xlsx";
 
@@ -86,7 +87,14 @@ export default function Configuracoes() {
   const [cleanConfirmOpen, setCleanConfirmOpen] = useState(false);
   const [cleanConfirmText, setCleanConfirmText] = useState("");
   const [cleanupSummary, setCleanupSummary] = useState<{ removed: number; queued: number; errors: string[] } | null>(null);
+  const [remoteOnlyCandidates, setRemoteOnlyCandidates] = useState<RemoteOnlyClientTestCandidate[]>([]);
+  const [selectedRemoteOnlyIds, setSelectedRemoteOnlyIds] = useState<string[]>([]);
+  const [remoteCleanConfirmOpen, setRemoteCleanConfirmOpen] = useState(false);
+  const [remoteCleanConfirmText, setRemoteCleanConfirmText] = useState("");
+  const [remoteCleanupSummary, setRemoteCleanupSummary] = useState<{ count: number; ids: string[]; deletedAt: string } | null>(null);
   const [isAuditingSync, setIsAuditingSync] = useState(false);
+  const [isFindingRemoteOnlyTests, setIsFindingRemoteOnlyTests] = useState(false);
+  const [isCleaningRemoteOnlyTests, setIsCleaningRemoteOnlyTests] = useState(false);
   const [isCleaningTests, setIsCleaningTests] = useState(false);
   const [isRequeueingSync, setIsRequeueingSync] = useState(false);
   const [activeTab, setActiveTab] = useState("comissao");
@@ -112,6 +120,7 @@ export default function Configuracoes() {
   const canViewAudit = Boolean(cloudSessionExists && cloudAccessStatus === "active");
   const canCleanTests = Boolean(canViewAudit && cloudRole === "admin");
   const selectedTestCandidates = testCandidates.filter((candidate) => selectedTestKeys.includes(candidate.key));
+  const selectedRemoteOnlyCandidates = remoteOnlyCandidates.filter((candidate) => selectedRemoteOnlyIds.includes(candidate.id));
   const lastSyncPanelError = cloudAuthError || syncError;
 
   const updateCloudAccessPanel = (context: FreshSupabaseAccessContext) => {
@@ -136,7 +145,7 @@ export default function Configuracoes() {
     }
     if (freshAccessContext.error) throw new Error(freshAccessContext.error);
     if (freshAccessContext.accessStatus !== "active") throw new Error("Usuário ainda não aprovado para sincronização.");
-    return { session: freshAccessContext.session, accessStatus: freshAccessContext.accessStatus };
+    return { session: freshAccessContext.session, accessStatus: freshAccessContext.accessStatus, role: freshAccessContext.role };
   };
 
   const refreshCloudSyncMeta = async (context: { session: FreshSupabaseAccessContext["session"]; accessStatus: "active" }) => {
@@ -223,6 +232,73 @@ export default function Configuracoes() {
     }
   };
 
+  const handleFindRemoteOnlyTests = async () => {
+    setIsFindingRemoteOnlyTests(true);
+    setSyncError(null);
+    try {
+      const freshAccessContext = await getFreshSyncContext();
+      const freshSyncContext = assertFreshActiveSyncContext(freshAccessContext);
+      const candidates = await findRemoteOnlyClientTestCandidates(freshSyncContext);
+      setRemoteOnlyCandidates(candidates);
+      setSelectedRemoteOnlyIds((current) => current.filter((id) => candidates.some((candidate) => candidate.id === id)));
+      toast.success(`${candidates.length} cliente(s) teste somente na nuvem encontrado(s).`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Erro desconhecido ao buscar testes somente na nuvem.";
+      setSyncError(message);
+      toast.error(message);
+    } finally {
+      setIsFindingRemoteOnlyTests(false);
+    }
+  };
+
+  const handleConfirmRemoteOnlyCleanup = async () => {
+    if (remoteCleanConfirmText !== "LIMPAR NUVEM") return;
+    if (!canCleanTests) {
+      toast.error("Somente administradores podem limpar testes somente na nuvem.");
+      return;
+    }
+    if (selectedRemoteOnlyCandidates.length === 0) {
+      toast.error("Selecione manualmente pelo menos um cliente teste somente na nuvem.");
+      return;
+    }
+    if (selectedRemoteOnlyCandidates.some((candidate) => !candidate.motivo || candidate.origem !== "somente-nuvem")) {
+      toast.error("Bloqueio de segurança: há candidato sem padrão de teste ou sem origem somente-nuvem.");
+      return;
+    }
+
+    setIsCleaningRemoteOnlyTests(true);
+    setSyncError(null);
+    try {
+      const freshAccessContext = await getFreshSyncContext();
+      const freshSyncContext = assertFreshActiveSyncContext(freshAccessContext);
+      if (freshAccessContext.role !== "admin") throw new Error("Somente administradores podem limpar testes somente na nuvem.");
+      const result = await softDeleteRemoteClientTests(freshSyncContext, selectedRemoteOnlyCandidates.map((candidate) => candidate.id));
+      setRemoteCleanupSummary({ count: result.count, ids: result.ids, deletedAt: result.deletedAt });
+      setSelectedRemoteOnlyIds([]);
+      setRemoteCleanConfirmOpen(false);
+      setRemoteCleanConfirmText("");
+
+      const [queueAudit, localCandidates, remoteCandidates, comparison] = await Promise.all([
+        getSyncQueueAudit(),
+        findLocalTestRecordCandidates(),
+        findRemoteOnlyClientTestCandidates(freshSyncContext),
+        compareLocalAndRemote(freshSyncContext),
+      ]);
+      setSyncQueueAudit(queueAudit);
+      setTestCandidates(localCandidates);
+      setRemoteOnlyCandidates(remoteCandidates);
+      setSyncComparison(comparison);
+      await refreshPendingSyncCount();
+      toast.success(`${result.count} cliente(s) teste somente na nuvem marcado(s) como excluído(s).`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Erro desconhecido na limpeza somente na nuvem.";
+      setSyncError(message);
+      toast.error(message);
+    } finally {
+      setIsCleaningRemoteOnlyTests(false);
+    }
+  };
+
   const handleRequeueFailedItems = async () => {
     if (!canCleanTests) {
       toast.error("Somente administradores podem reprocessar erros/travados.");
@@ -268,10 +344,13 @@ export default function Configuracoes() {
       "",
       `Registros de teste detectados: ${testCandidates.length}`,
       ...testCandidates.slice(0, 20).map((candidate) => `- ${candidate.store}/${candidate.id}: ${candidate.label} (${candidate.reason})`),
+      `Clientes teste somente na nuvem: ${remoteOnlyCandidates.length}`,
+      ...remoteOnlyCandidates.slice(0, 20).map((candidate) => `- clientes/${candidate.id}: ${candidate.nome} (${candidate.motivo})`),
       "",
       "Ações recomendadas:",
       syncQueueAudit && syncQueueAudit.byStatus.error + syncQueueAudit.staleProcessing.length > 0 ? "- Reprocessar erros/travados." : "- Fila sem erros/travados detectados.",
       testCandidates.length > 0 ? "- Revisar candidatos de teste e limpar manualmente apenas clientes confirmados." : "- Nenhum registro de teste detectado pelos padrões configurados.",
+      remoteOnlyCandidates.length > 0 ? "- Revisar testes somente na nuvem e limpar manualmente apenas candidatos confirmados." : "- Nenhum teste somente na nuvem carregado ou detectado.",
       syncComparison && (syncComparison.totals.onlyLocal > 0 || syncComparison.totals.onlyRemote > 0) ? "- Revisar divergências local x nuvem." : "- Comparação local x nuvem sem divergências destacadas ou não executada.",
     ];
 
@@ -765,12 +844,49 @@ export default function Configuracoes() {
             <div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Selecionar</TableHead><TableHead>Store</TableHead><TableHead>ID</TableHead><TableHead>Nome/descrição</TableHead><TableHead>Cidade/rota</TableHead><TableHead>Created/updated</TableHead><TableHead>Motivo</TableHead><TableHead>Status local</TableHead><TableHead>Status remoto</TableHead></TableRow></TableHeader><TableBody>{testCandidates.map((candidate) => <TableRow key={candidate.key}><TableCell><Checkbox checked={selectedTestKeys.includes(candidate.key)} disabled={!candidate.cleanable || !canCleanTests} onCheckedChange={(checked) => setSelectedTestKeys((current) => checked === true ? Array.from(new Set([...current, candidate.key])) : current.filter((key) => key !== candidate.key))} /></TableCell><TableCell>{candidate.store}{!candidate.cleanable ? <div className="text-[10px] text-muted-foreground">leitura</div> : null}</TableCell><TableCell className="font-mono text-xs">{candidate.id}</TableCell><TableCell>{candidate.label}</TableCell><TableCell>{candidate.cityRoute || "—"}</TableCell><TableCell className="text-xs">{candidate.createdAt || "—"}<br />{candidate.updatedAt || "—"}</TableCell><TableCell>{candidate.reason}</TableCell><TableCell>{candidate.localStatus}</TableCell><TableCell>{candidate.remoteStatus || "—"}</TableCell></TableRow>)}</TableBody></Table></div>
           </div>
 
+          <div className="space-y-2 rounded-md border border-blue-500/30 bg-blue-500/5 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h4 className="text-sm font-semibold">Clientes teste somente na nuvem</h4>
+                <p className="text-xs text-muted-foreground">Lista apenas clientes ativos no Supabase que não existem no IndexedDB local e batem nos padrões de teste. A limpeza faz delete lógico remoto via deleted_at.</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" onClick={() => void handleFindRemoteOnlyTests()} disabled={!canViewAudit || isFindingRemoteOnlyTests || isCleaningRemoteOnlyTests}>{isFindingRemoteOnlyTests ? "Buscando..." : "Buscar testes somente na nuvem"}</Button>
+                <Button variant="destructive" onClick={() => setRemoteCleanConfirmOpen(true)} disabled={!canCleanTests || selectedRemoteOnlyCandidates.length === 0 || isCleaningRemoteOnlyTests}>Limpar testes somente na nuvem selecionados</Button>
+              </div>
+            </div>
+            <div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Selecionar</TableHead><TableHead>Nome</TableHead><TableHead>Cidade/rota</TableHead><TableHead>Motivo</TableHead><TableHead>ID</TableHead><TableHead>Updated_at</TableHead></TableRow></TableHeader><TableBody>{remoteOnlyCandidates.map((candidate) => <TableRow key={candidate.id}><TableCell><Checkbox checked={selectedRemoteOnlyIds.includes(candidate.id)} disabled={!canCleanTests || !candidate.motivo || candidate.origem !== "somente-nuvem"} onCheckedChange={(checked) => setSelectedRemoteOnlyIds((current) => checked === true ? Array.from(new Set([...current, candidate.id])) : current.filter((id) => id !== candidate.id))} /></TableCell><TableCell>{candidate.nome}</TableCell><TableCell>{[candidate.cidade, candidate.rota].filter(Boolean).join(" / ") || "—"}</TableCell><TableCell>{candidate.motivo}</TableCell><TableCell className="font-mono text-xs">{candidate.id}</TableCell><TableCell className="text-xs">{candidate.updated_at ? new Date(candidate.updated_at).toLocaleString("pt-BR") : "—"}</TableCell></TableRow>)}</TableBody></Table></div>
+          </div>
+
           {cleanupSummary && <div className="rounded-md border bg-muted/30 p-3 text-sm"><b>Resultado da limpeza:</b> removidos localmente {cleanupSummary.removed}; enfileirados para delete {cleanupSummary.queued}; erros {cleanupSummary.errors.length}. {cleanupSummary.errors.join("; ")}</div>}
+          {remoteCleanupSummary && <div className="rounded-md border bg-muted/30 p-3 text-sm"><b>Resultado da limpeza somente na nuvem:</b> {remoteCleanupSummary.count} marcado(s) com deleted_at em {new Date(remoteCleanupSummary.deletedAt).toLocaleString("pt-BR")}. IDs: {remoteCleanupSummary.ids.join(", ")}</div>}
         </Card>
       </TabsContent>
 
     </Tabs>
 
+
+    <Dialog open={remoteCleanConfirmOpen} onOpenChange={(open) => { setRemoteCleanConfirmOpen(open); if (!open) setRemoteCleanConfirmText(""); }}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader><DialogTitle>Confirmar limpeza somente na nuvem</DialogTitle></DialogHeader>
+        <div className="space-y-3 text-sm">
+          <p>Esta ação marcará como excluídos apenas clientes de teste que existem somente na nuvem. Nenhum cliente local será apagado.</p>
+          <p>Você selecionou <b>{selectedRemoteOnlyCandidates.length}</b> cliente(s). A operação será feita apenas na tabela clientes, com deleted_at e updated_at.</p>
+          <div className="max-h-40 overflow-auto rounded-md border p-2 text-xs">
+            {selectedRemoteOnlyCandidates.map((candidate) => <div key={candidate.id}>clientes/{candidate.id} — {candidate.nome} ({candidate.motivo})</div>)}
+          </div>
+          <div className="rounded-md border border-yellow-500/40 bg-yellow-500/10 p-3 text-yellow-800">Digite <b>LIMPAR NUVEM</b> para confirmar. Nenhum cliente local será removido.</div>
+          <div>
+            <Label>Confirmação</Label>
+            <Input value={remoteCleanConfirmText} onChange={(event) => setRemoteCleanConfirmText(event.target.value)} placeholder="LIMPAR NUVEM" />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setRemoteCleanConfirmOpen(false)}>Cancelar</Button>
+          <Button variant="destructive" onClick={() => void handleConfirmRemoteOnlyCleanup()} disabled={remoteCleanConfirmText !== "LIMPAR NUVEM" || isCleaningRemoteOnlyTests}>{isCleaningRemoteOnlyTests ? "Limpando..." : "Confirmar limpeza na nuvem"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
 
     <Dialog open={cleanConfirmOpen} onOpenChange={(open) => { setCleanConfirmOpen(open); if (!open) setCleanConfirmText(""); }}>
       <DialogContent className="max-w-2xl">
