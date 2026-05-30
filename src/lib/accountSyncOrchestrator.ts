@@ -190,7 +190,11 @@ async function uploadPendingFirstIfNeeded(
   if (!uploadResult.ok) {
     return {
       pendingSyncCount,
-      status: buildAccountSyncStatus({ code: "blocked", technicalMessage: uploadResult.message }),
+      status: buildAccountSyncStatus({
+        code: "blocked",
+        message: "Existem dados locais que precisam de revisão antes de sincronizar.",
+        technicalMessage: uploadResult.message,
+      }),
     };
   }
   if (uploadResult.skipped) {
@@ -205,6 +209,7 @@ async function uploadPendingFirstIfNeeded(
       uploadSummary: uploadResult.summary,
       status: buildAccountSyncStatus({
         code: "blocked",
+        message: "Existem dados locais que precisam de revisão antes de sincronizar.",
         uploadSummary: uploadResult.summary,
         technicalMessage: uploadResult.summary.errors.map((error) => error.message).join("; "),
       }),

@@ -803,7 +803,7 @@ export default function Configuracoes() {
         </div>
       </Card></TabsContent>
 
-      <TabsContent value="banco-local">
+      <TabsContent value="banco-local" className="space-y-3">
         <Card className="space-y-3 p-4 text-sm">
           <div className="text-xs font-semibold">Base: {baseMode === "teste" ? "Teste" : "Operacional"}</div><div><b>Status do banco:</b> {stats?.status || "ativo"}</div>
           <div><b>Tipo:</b> {stats?.tipo || "IndexedDB"}</div>
@@ -832,35 +832,36 @@ export default function Configuracoes() {
             toast.success("Dados locais deste dispositivo foram removidos.");
             window.location.reload();
           }}>Limpar dados locais deste dispositivo</Button>
-          <Card className="space-y-2 border-dashed p-3">
-            <div className="font-semibold">Exportação e backup</div>
-            <p className="text-xs text-muted-foreground">Use estas opções para salvar seus dados fora do navegador, enviar por e-mail, WhatsApp ou guardar em local seguro.</p>
-
-          <Card className="space-y-3 border-dashed p-3">
-            <div className="font-semibold">Importação de clientes</div>
-            <p className="text-xs text-muted-foreground">Baixe o modelo, preencha os dados e importe a planilha para cadastrar ou atualizar clientes.</p><div className="text-xs">Último backup manual: {lastBackupAt ? new Date(lastBackupAt).toLocaleString("pt-BR") : "não registrado"}</div>
-            <div className="grid gap-2 md:grid-cols-2">
-              <Select value={importMode} onValueChange={(v: ImportMode) => setImportMode(v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>
-                <SelectItem value="add">Adicionar novos registros</SelectItem><SelectItem value="update">Atualizar registros existentes</SelectItem><SelectItem value="replace">Substituir base de clientes</SelectItem>
-              </SelectContent></Select>
-              <Button variant="outline" onClick={() => { downloadBackupJson(exportPayload); setLastBackupAt(new Date().toISOString()); }}>Gerar backup antes de importar</Button>
-            </div>
-            <div className="grid gap-2 sm:grid-cols-2">
-              <Button variant="outline" onClick={downloadTemplateClientes}>Baixar planilha modelo de clientes</Button>
-              <Button onClick={() => importFileRef.current?.click()}>Importar planilha de clientes</Button>
-            </div>
-            <input ref={importFileRef} type="file" accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="hidden" onChange={handleImportFile} />
-          </Card>
-            <div className="grid gap-2 sm:grid-cols-2">
-              <Button onClick={() => exportWorkbook(exportPayload)}>Exportar Excel</Button>
-              <Button variant="outline" onClick={() => exportAllEntitiesToCsv(exportPayload)}>Exportar CSV</Button>
-              <Button variant="outline" onClick={() => downloadBackupJson(exportPayload)}>Gerar backup JSON</Button>
-              <Button variant="secondary" onClick={() => fileInputRef.current?.click()}>Restaurar backup JSON</Button>
-            </div>
-            <input ref={fileInputRef} type="file" accept="application/json,.json" className="hidden" onChange={handleRestoreFile} />
-          </Card>
         </Card>
-        </>}
+
+        <Card className="space-y-2 border-dashed p-3 text-sm">
+          <div className="font-semibold">Exportação e backup</div>
+          <p className="text-xs text-muted-foreground">Use estas opções para salvar seus dados fora do navegador, enviar por e-mail, WhatsApp ou guardar em local seguro.</p>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <Button onClick={() => exportWorkbook(exportPayload)}>Exportar Excel</Button>
+            <Button variant="outline" onClick={() => exportAllEntitiesToCsv(exportPayload)}>Exportar CSV</Button>
+            <Button variant="outline" onClick={() => downloadBackupJson(exportPayload)}>Gerar backup JSON</Button>
+            <Button variant="secondary" onClick={() => fileInputRef.current?.click()}>Restaurar backup JSON</Button>
+          </div>
+          <input ref={fileInputRef} type="file" accept="application/json,.json" className="hidden" onChange={handleRestoreFile} />
+        </Card>
+
+        <Card className="space-y-3 border-dashed p-3 text-sm">
+          <div className="font-semibold">Importação de clientes</div>
+          <p className="text-xs text-muted-foreground">Baixe o modelo, preencha os dados e importe a planilha para cadastrar ou atualizar clientes.</p>
+          <div className="text-xs">Último backup manual: {lastBackupAt ? new Date(lastBackupAt).toLocaleString("pt-BR") : "não registrado"}</div>
+          <div className="grid gap-2 md:grid-cols-2">
+            <Select value={importMode} onValueChange={(v: ImportMode) => setImportMode(v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>
+              <SelectItem value="add">Adicionar novos registros</SelectItem><SelectItem value="update">Atualizar registros existentes</SelectItem><SelectItem value="replace">Substituir base de clientes</SelectItem>
+            </SelectContent></Select>
+            <Button variant="outline" onClick={() => { downloadBackupJson(exportPayload); setLastBackupAt(new Date().toISOString()); }}>Gerar backup antes de importar</Button>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <Button variant="outline" onClick={downloadTemplateClientes}>Baixar planilha modelo de clientes</Button>
+            <Button onClick={() => importFileRef.current?.click()}>Importar planilha de clientes</Button>
+          </div>
+          <input ref={importFileRef} type="file" accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="hidden" onChange={handleImportFile} />
+        </Card>
       </TabsContent>
 
       <TabsContent value="sync-cloud" className="space-y-3">

@@ -151,7 +151,7 @@ describe("accountSyncOrchestrator", () => {
     expect(shouldAutoRestoreAccount(base).allowed).toBe(true);
     expect(shouldAutoRestoreAccount({ ...base, localCount: 1 }).allowed).toBe(true);
     expect(shouldAutoRestoreAccount({ ...base, localCount: 2 }).reason).toBe("manual-cta");
-    expect(shouldAutoRestoreAccount({ ...base, onlyLocal: 1 }).reason).toBe("local-conflict");
+    expect(shouldAutoRestoreAccount({ ...base, onlyLocal: 1, onlyRemote: 0 }).reason).toBe("local-conflict");
     expect(shouldAutoRestoreAccount({ ...base, onlyLocal: 1, onlyRemote: 1 }).reason).toBe("cloud-conflict");
     expect(shouldAutoRestoreAccount({ ...base, pendingSyncCount: 1 }).reason).toBe("pending-sync");
     expect(shouldAutoRestoreAccount({ ...base, isOnline: false }).reason).toBe("offline");
