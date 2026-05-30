@@ -138,8 +138,18 @@ export function detectTestRecordReasons(record: Record<string, unknown>) {
     record.nomeContato,
   ];
   const haystack = normalize(searchableValues.filter(Boolean).join(" | "));
+  const seen = new Set<string>();
+  const reasons: string[] = [];
 
-  return TEST_RECORD_PATTERNS.filter((pattern) => haystack.includes(normalize(pattern)));
+  for (const pattern of TEST_RECORD_PATTERNS) {
+    const normalizedPattern = normalize(pattern);
+    if (!haystack.includes(normalizedPattern)) continue;
+    if (seen.has(normalizedPattern)) continue;
+    seen.add(normalizedPattern);
+    reasons.push(pattern);
+  }
+
+  return reasons;
 }
 
 export function toTestRecordCandidate(store: SyncableStore, record: Record<string, unknown>): TestRecordCandidate | null {
