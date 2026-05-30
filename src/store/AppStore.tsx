@@ -6,6 +6,7 @@ import {
 import { bootstrapLocalDatabase, saveStore } from "@/lib/localRepository";
 import { enqueueSyncItem, getPendingSyncItems, shouldTrackSyncStore } from "@/lib/syncQueue";
 import { getAutoSyncCooldownRemaining, runControlledUploadSync, type AutoSyncAccessStatus, type AutoSyncContext, type AutoSyncResult } from "@/lib/autoSync";
+import { getSyncRelevantAppConfigPayload } from "@/lib/appConfigSync";
 import { getFreshSupabaseAccessContext } from "@/lib/supabaseAccess";
 import { useAuth } from "@/store/AuthStore";
 import { calcularPotencialCliente, calcularValorMedioHaSegmentosAtivos } from "@/utils/businessRules";
@@ -101,7 +102,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const [syncError, setSyncError] = useState<string | null>(null);
   const [lastAutoSyncAt, setLastAutoSyncAt] = useState<string | null>(null);
   const hasHydratedRef = useRef(false);
-  const lastPersistedAppConfigRef = useRef<string>(JSON.stringify({ id: "main", percentualAcertoEsperado: 12 }));
+  const lastPersistedAppConfigRef = useRef<string>(JSON.stringify(getSyncRelevantAppConfigPayload({ id: "main", percentualAcertoEsperado: 12 })));
   const autoSyncTimerRef = useRef<number | null>(null);
   const autoSyncWatchdogIntervalRef = useRef<number | null>(null);
   const pendingSyncCountRef = useRef(pendingSyncCount);
@@ -166,7 +167,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         setPrazosPagamento((localData as {prazosPagamento?: PrazoPagamento[]}).prazosPagamento || []);
         const hydratedAppConfig = (localData as {appConfig?: AppConfig[]}).appConfig?.[0] || { id: "main", percentualAcertoEsperado: 12 };
         setAppConfig(hydratedAppConfig);
-        lastPersistedAppConfigRef.current = JSON.stringify({ id: hydratedAppConfig.id, percentualAcertoEsperado: hydratedAppConfig.percentualAcertoEsperado });
+        lastPersistedAppConfigRef.current = JSON.stringify(getSyncRelevantAppConfigPayload(hydratedAppConfig));
         await refreshPendingSyncCount();
       } catch (error) {
         console.error(error);
@@ -192,7 +193,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         const isOnlySyncMetaChange = store === "appConfig" && (() => {
           const config = data[0] as AppConfig | undefined;
           if (!config) return false;
-          const syncRelevantPayload = JSON.stringify({ id: config.id, percentualAcertoEsperado: config.percentualAcertoEsperado });
+          const syncRelevantPayload = JSON.stringify(getSyncRelevantAppConfigPayload(config));
           const unchanged = syncRelevantPayload === lastPersistedAppConfigRef.current;
           lastPersistedAppConfigRef.current = syncRelevantPayload;
           return unchanged;
@@ -274,12 +275,17 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     setSyncStatus("syncing");
     setSyncError(null);
     const result = await runControlledUploadSync(
-      { session: syncSession, accessStatus: syncAccessStatus, firstUploadConfirmed: true },
+      {
+        session: syncSession,
+        accessStatus: syncAccessStatus,
+        firstUploadConfirmed: true,
+        lastSyncedUserId: appConfig.syncMeta?.lastSyncedUserId ?? null,
+      },
       { mode: "manual", bypassCooldown: true },
     );
     await applySyncResult(result, "manual");
     return result;
-  }, [accessStatus, applySyncResult, session]);
+  }, [accessStatus, appConfig.syncMeta?.lastSyncedUserId, applySyncResult, session]);
 
   const getFreshAutoSyncContext = useCallback(async (): Promise<{ context: AutoSyncContext } | { result: AutoSyncResult }> => {
     const fresh = await getFreshSupabaseAccessContext();
@@ -319,9 +325,10 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         session: fresh.session,
         accessStatus: fresh.accessStatus,
         firstUploadConfirmed,
+        lastSyncedUserId: appConfig.syncMeta?.lastSyncedUserId ?? null,
       },
     };
-  }, [firstUploadConfirmed]);
+  }, [appConfig.syncMeta?.lastSyncedUserId, firstUploadConfirmed]);
 
   const scheduleAutoSync = useCallback((delayMs: number) => {
     if (syncStatusRef.current === "syncing") return;

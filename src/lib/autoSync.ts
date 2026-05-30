@@ -1,6 +1,7 @@
 import type { Session } from "@supabase/supabase-js";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import { getPendingSyncItems } from "@/lib/syncQueue";
+import { syncReadinessMessages } from "@/lib/syncReadiness";
 import { syncPendingQueue, type SyncMetaPayload, type SyncSummary } from "@/lib/supabaseSync";
 
 export type AutoSyncAccessStatus = "pending" | "active" | "blocked" | "inactive" | null;
@@ -12,6 +13,8 @@ export type AutoSyncSkipReason =
   | "offline"
   | "no-pending-items"
   | "first-upload-required"
+  | "user-switch-detected"
+  | "local-empty-cloud-existing"
   | "already-running"
   | "cooldown";
 
@@ -24,6 +27,8 @@ export type AutoSyncContext = {
   session: Session | null;
   accessStatus: AutoSyncAccessStatus;
   firstUploadConfirmed: boolean;
+  lastSyncedUserId?: string | null;
+  localEmptyCloudExisting?: boolean;
 };
 
 const AUTO_SYNC_COOLDOWN_MS = 30_000;
@@ -56,8 +61,14 @@ export async function runControlledUploadSync(
   if (!context.session?.user) return skip("missing-session", "Usuário não autenticado.");
   if (context.accessStatus !== "active") return skip("inactive-profile", "Usuário ainda não aprovado para sincronização.");
   if (typeof navigator !== "undefined" && !navigator.onLine) return skip("offline", "Sem conexão com a internet.");
+  if (context.lastSyncedUserId && context.lastSyncedUserId !== context.session.user.id) {
+    return skip("user-switch-detected", syncReadinessMessages.userSwitch);
+  }
+  if (context.localEmptyCloudExisting) {
+    return skip("local-empty-cloud-existing", syncReadinessMessages.localEmptyCloudExisting);
+  }
   if (options.mode === "auto" && !context.firstUploadConfirmed) {
-    return skip("first-upload-required", "Primeiro envio deve ser confirmado manualmente.");
+    return skip("first-upload-required", syncReadinessMessages.firstUpload);
   }
 
   let pendingItems;

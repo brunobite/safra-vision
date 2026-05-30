@@ -12,6 +12,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAppStore } from "@/store/AppStore";
+import { useAuth } from "@/store/AuthStore";
 import { BaseMode, ImportLog, RegraComissao, AplicarSobre, FaixaComissao, CATEGORIAS_PRODUTO_PADRAO, Empresa, FormaPagamento, PrazoPagamento } from "@/types";
 import { Plus, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -25,7 +26,8 @@ import { saveAsTextFile } from "@/lib/fileDownload";
 import { openAppDb, promisifyRequest } from "@/lib/db";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import { getFreshSupabaseAccessContext, type FreshSupabaseAccessContext } from "@/lib/supabaseAccess";
-import { compareLocalAndRemote, getRemoteSyncMeta, type LocalRemoteComparison, type SyncSummary } from "@/lib/supabaseSync";
+import { compareLocalAndRemote, getRemoteSyncMeta, type LocalRemoteComparison, type SyncMetaPayload, type SyncSummary } from "@/lib/supabaseSync";
+import { buildSyncReadinessReport, getLocalOperationalCount, syncReadinessMessages, type SyncReadinessReport } from "@/lib/syncReadiness";
 import { enqueueSyncItem, requeueFailedAndStaleSyncItems } from "@/lib/syncQueue";
 import { findLocalTestRecordCandidates, getSyncQueueAudit, type SyncQueueAudit, type TestRecordCandidate } from "@/lib/syncAudit";
 import * as XLSX from "xlsx";
@@ -57,6 +59,7 @@ export default function Configuracoes() {
     clientes, lancamentos, negocios, produtos, metasEmpresa, metasPessoais, eventos, metasVendedor, metasCategoria, prioridadesP1, orcamentos, setOrcamentos, empresas, setEmpresas, formasPagamento, setFormasPagamento, prazosPagamento, setPrazosPagamento,
     setClientes, setLancamentos, setNegocios, setProdutos, setMetasEmpresa, setMetasPessoais, setEventos, setMetasVendedor, setMetasCategoria, setPrioridadesP1, appConfig, setAppConfig, pendingSyncCount, refreshPendingSyncCount, runManualUploadSync,
   } = useAppStore();
+  const { signOut } = useAuth();
   const [open, setOpen] = useState(false);
   const [edit, setEdit] = useState<RegraComissao | null>(null);
   const [form, setForm] = useState<Omit<RegraComissao, "id">>(emptyRegra);
@@ -81,6 +84,8 @@ export default function Configuracoes() {
   const [isRefreshingSyncStatus, setIsRefreshingSyncStatus] = useState(false);
   const [syncQueryStatus, setSyncQueryStatus] = useState<SyncQueryStatus>("parado");
   const [syncQueueAudit, setSyncQueueAudit] = useState<SyncQueueAudit | null>(null);
+  const [remoteSyncMeta, setRemoteSyncMeta] = useState<SyncMetaPayload | null>(null);
+  const [remoteSyncMetaChecked, setRemoteSyncMetaChecked] = useState(false);
   const [testCandidates, setTestCandidates] = useState<TestRecordCandidate[]>([]);
   const [selectedTestKeys, setSelectedTestKeys] = useState<string[]>([]);
   const [cleanConfirmOpen, setCleanConfirmOpen] = useState(false);
@@ -111,6 +116,25 @@ export default function Configuracoes() {
   );
   const canViewAudit = Boolean(cloudSessionExists && cloudAccessStatus === "active");
   const canCleanTests = Boolean(canViewAudit && cloudRole === "admin");
+  const syncReadiness: SyncReadinessReport = buildSyncReadinessReport({
+    supabaseConfigured: isSupabaseConfigured,
+    sessionExists: cloudSessionExists,
+    userId: cloudUserId,
+    email: cloudUserEmail,
+    role: cloudRole,
+    accessStatus: cloudAccessStatus as SyncReadinessReport["accessStatus"],
+    indexedDbLoaded: !dbError,
+    pendingSyncCount,
+    localSyncMeta: appConfig.syncMeta ?? null,
+    remoteSyncMeta,
+    remoteSyncMetaChecked,
+    online: typeof navigator === "undefined" ? true : navigator.onLine,
+    comparison: syncComparison,
+    localOperationalCount: getLocalOperationalCount(stats),
+    currentUserId: cloudUserId,
+  });
+  const firstUploadConfirmed = syncReadiness.firstUploadConfirmed;
+  const shouldBlockUnsafeUpload = syncReadiness.userSwitchDetected || syncReadiness.localEmptyCloudExisting;
   const selectedTestCandidates = testCandidates.filter((candidate) => selectedTestKeys.includes(candidate.key));
   const lastSyncPanelError = cloudAuthError || syncError;
 
@@ -145,7 +169,8 @@ export default function Configuracoes() {
       SYNC_PANEL_TIMEOUT_MS,
       "Tempo excedido ao buscar metadados de sincronização Supabase.",
     );
-    if (meta) setAppConfig((current) => ({ ...current, syncMeta: meta }));
+    setRemoteSyncMeta(meta);
+    setRemoteSyncMetaChecked(true);
   };
 
   const handleRefreshSyncPanel = async () => {
@@ -161,6 +186,10 @@ export default function Configuracoes() {
       );
       if (freshAccessContext.error) throw new Error(freshAccessContext.error);
       if (freshAccessContext.accessStatus === "active") await refreshCloudSyncMeta({ session: freshAccessContext.session, accessStatus: freshAccessContext.accessStatus });
+      else {
+        setRemoteSyncMeta(null);
+        setRemoteSyncMetaChecked(false);
+      }
       setSyncQueryStatus("sucesso");
       toast.success("Status e pendências atualizados.");
     } catch (error) {
@@ -221,6 +250,31 @@ export default function Configuracoes() {
     } finally {
       setIsAuditingSync(false);
     }
+  };
+
+
+
+  const handleCopyHomologationChecklist = async () => {
+    const lines = [
+      "Checklist de homologação Safra Vision — Sprint 17F",
+      `Data/hora: ${new Date().toLocaleString("pt-BR")}`,
+      `Usuário atual: ${cloudUserEmail || "—"} (${cloudUserId || "—"})`,
+      `Role/status: ${cloudRole || "—"} / ${cloudAccessStatus || "—"}`,
+      `Primeiro envio confirmado: ${syncReadiness.firstUploadConfirmed ? "Sim" : "Não"}`,
+      `Último upload: ${appConfig.syncMeta?.lastUploadAt ? new Date(appConfig.syncMeta.lastUploadAt).toLocaleString("pt-BR") : "não registrado"}`,
+      `Último download: ${appConfig.syncMeta?.lastDownloadAt ? new Date(appConfig.syncMeta.lastDownloadAt).toLocaleString("pt-BR") : "não registrado"}`,
+      `Último usuário sincronizado: ${appConfig.syncMeta?.lastSyncedEmail || "—"} (${appConfig.syncMeta?.lastSyncedUserId || "—"})`,
+      `Pendências locais: ${pendingSyncCount}`,
+      `Status local x nuvem: ${syncComparison ? `Local ${syncComparison.totals.localCount}; Nuvem ${syncComparison.totals.remoteCount}; Só local ${syncComparison.totals.onlyLocal}; Só nuvem ${syncComparison.totals.onlyRemote}; Nos dois ${syncComparison.totals.inBoth}` : "comparação não executada"}`,
+      `SyncMeta remoto: ${syncReadiness.hasRemoteSyncMeta ? "Encontrado" : remoteSyncMetaChecked ? "Não encontrado" : "Não consultado"}`,
+      `Bloqueios detectados: ${syncReadiness.blockingMessages.length > 0 ? syncReadiness.blockingMessages.join(" | ") : "nenhum"}`,
+      `Autosync: ${syncReadiness.autosyncAllowed ? "habilitado" : `bloqueado — ${syncReadiness.autosyncBlockedReason}`}`,
+      `Recomendação operacional: ${syncReadiness.operationalRecommendation}`,
+      `Recomendação final: ${syncReadiness.finalRecommendation}`,
+    ];
+
+    await navigator.clipboard.writeText(lines.join("\n"));
+    toast.success("Checklist de homologação copiado.");
   };
 
   const handleRequeueFailedItems = async () => {
@@ -346,6 +400,11 @@ export default function Configuracoes() {
   };
 
   const executeUploadSync = async () => {
+    if (shouldBlockUnsafeUpload) {
+      toast.error(syncReadiness.autosyncBlockedReason ?? "Upload bloqueado pelo diagnóstico de sincronização.");
+      return;
+    }
+
     setIsSyncing(true);
     setSyncError(null);
     try {
@@ -371,7 +430,11 @@ export default function Configuracoes() {
   };
 
   const handleUploadClick = () => {
-    if (!lastSyncAt) {
+    if (shouldBlockUnsafeUpload) {
+      toast.error(syncReadiness.autosyncBlockedReason ?? "Upload bloqueado pelo diagnóstico de sincronização.");
+      return;
+    }
+    if (!firstUploadConfirmed) {
       setConfirmUploadOpen(true);
       return;
     }
@@ -677,7 +740,8 @@ export default function Configuracoes() {
             <div className="rounded-md border p-3 text-sm"><div className="text-muted-foreground">Usuário autenticado</div><div className="font-medium">{cloudUserEmail || "Não autenticado"}</div></div>
             <div className="rounded-md border p-3 text-sm"><div className="text-muted-foreground">Role/status do banco</div><div className="font-medium">{cloudRole || "—"} / {cloudAccessStatus || "—"}</div></div>
             <div className="rounded-md border p-3 text-sm"><div className="text-muted-foreground">Pendências locais</div><div className="font-medium">{pendingSyncCount}</div></div>
-            <div className="rounded-md border p-3 text-sm md:col-span-2"><div className="text-muted-foreground">Último sync</div><div className="font-medium">{lastSyncAt ? new Date(lastSyncAt).toLocaleString("pt-BR") : "não registrado"}</div></div>
+            <div className="rounded-md border p-3 text-sm"><div className="text-muted-foreground">Primeiro envio confirmado</div><div className="font-medium">{firstUploadConfirmed ? "Sim" : "Não"}</div></div>
+            <div className="rounded-md border p-3 text-sm"><div className="text-muted-foreground">Último sync</div><div className="font-medium">{lastSyncAt ? new Date(lastSyncAt).toLocaleString("pt-BR") : "não registrado"}</div></div>
           </div>
           <div className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground">
             <div className="grid gap-2 md:grid-cols-2">
@@ -687,18 +751,53 @@ export default function Configuracoes() {
               <div><span className="font-medium text-foreground">User ID:</span> {cloudUserId || "—"}</div>
               <div><span className="font-medium text-foreground">Role/status do banco:</span> {cloudRole || "—"} / {cloudAccessStatus || "—"}</div>
               <div><span className="font-medium text-foreground">Última tentativa de atualização:</span> {cloudLastRefreshAt ? new Date(cloudLastRefreshAt).toLocaleString("pt-BR") : "—"}</div>
+              <div><span className="font-medium text-foreground">Último usuário sincronizado:</span> {appConfig.syncMeta?.lastSyncedEmail || "—"} ({appConfig.syncMeta?.lastSyncedUserId || "—"})</div>
+              <div><span className="font-medium text-foreground">Usuário atual:</span> {cloudUserEmail || "—"} ({cloudUserId || "—"})</div>
               <div className="md:col-span-2"><span className="font-medium text-foreground">Último erro:</span> {lastSyncPanelError || "—"}</div>
               {!cloudSessionExists && <div className="text-destructive md:col-span-2">Usuário não autenticado. Volte para Login e entre novamente.</div>}
             </div>
           </div>
+
+          <Card className="border-dashed p-4 space-y-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h3 className="font-semibold">Diagnóstico de sincronização</h3>
+                <p className="text-sm text-muted-foreground">Readiness antes de qualquer envio. Não faz download, merge ou restauração da nuvem.</p>
+              </div>
+              <Badge variant={syncReadiness.finalRecommendation === "Bloqueado" ? "destructive" : syncReadiness.finalRecommendation === "Apto para uso" ? "default" : "secondary"}>{syncReadiness.state}</Badge>
+            </div>
+            <div className="grid gap-2 md:grid-cols-2 text-sm">
+              <div><b>Supabase configurado:</b> {syncReadiness.supabaseConfigured ? "Sim" : "Não"}</div>
+              <div><b>Sessão:</b> {syncReadiness.sessionExists ? "Sim" : "Não"}</div>
+              <div><b>Usuário:</b> {syncReadiness.email || "—"}</div>
+              <div><b>Role/status:</b> {syncReadiness.role || "—"} / {syncReadiness.accessStatus || "—"}</div>
+              <div><b>Primeiro envio confirmado:</b> {syncReadiness.firstUploadConfirmed ? "Sim" : "Não"}</div>
+              <div><b>Último usuário sincronizado:</b> {appConfig.syncMeta?.lastSyncedEmail || "—"}</div>
+              <div><b>Usuário atual:</b> {syncReadiness.email || "—"}</div>
+              <div><b>Troca de usuário detectada:</b> {syncReadiness.userSwitchDetected ? "Sim" : "Não"}</div>
+              <div><b>Pendências locais:</b> {syncReadiness.pendingSyncCount}</div>
+              <div><b>Autosync:</b> {syncReadiness.autosyncAllowed ? "habilitado" : "bloqueado"}</div>
+              <div className="md:col-span-2"><b>Motivo do bloqueio:</b> {syncReadiness.autosyncBlockedReason || "—"}</div>
+              <div><b>SyncMeta local:</b> {syncReadiness.hasLocalSyncMeta ? "Sim" : "Não"}</div>
+              <div><b>SyncMeta remoto:</b> {syncReadiness.hasRemoteSyncMeta ? "Sim" : remoteSyncMetaChecked ? "Não" : "Não consultado"}</div>
+              <div><b>Base local vazia + nuvem existente:</b> {syncReadiness.localEmptyCloudExisting ? "Sim" : "Não"}</div>
+              <div><b>Divergência local x nuvem:</b> {syncReadiness.divergenceDetected ? "Sim" : syncComparison ? "Não" : "Não comparado"}</div>
+              <div className="md:col-span-2"><b>Recomendação operacional:</b> {syncReadiness.operationalRecommendation}</div>
+            </div>
+            {syncReadiness.userSwitchDetected && <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{syncReadinessMessages.userSwitch}</div>}
+            {syncReadiness.localEmptyCloudExisting && <div className="rounded-md border border-yellow-500/40 bg-yellow-500/10 p-3 text-sm text-yellow-800">{syncReadinessMessages.localEmptyCloudExisting}</div>}
+          </Card>
+
           {shouldWarnAboutStaleAccess && <div className="rounded-md border border-yellow-500/40 bg-yellow-500/10 p-3 text-sm text-yellow-800">Usuário ainda não aprovado para sincronização.</div>}
-          {!lastSyncAt && <div className="rounded-md border border-yellow-500/40 bg-yellow-500/10 p-3 text-sm text-yellow-800">Primeiro envio deve ser confirmado manualmente.</div>}
+          {!firstUploadConfirmed && <div className="rounded-md border border-yellow-500/40 bg-yellow-500/10 p-3 text-sm text-yellow-800">{syncReadinessMessages.firstUpload}</div>}
           {syncError && <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{syncError}</div>}
           <div className="flex flex-wrap gap-2">
             <Button variant="secondary" onClick={() => void handleRefreshSyncPanel()} disabled={isRefreshingSyncStatus}>{isRefreshingSyncStatus ? "Atualizando..." : "Atualizar status e pendências"}</Button>
             <Button variant="outline" onClick={handleCompareCloud} disabled={!canCompareCloud || isComparingSync || isSyncing || isRefreshingSyncStatus}>{isComparingSync ? "Comparando..." : "Comparar local x nuvem"}</Button>
-            <Button onClick={handleUploadClick} disabled={isSyncing || isComparingSync || isRefreshingSyncStatus}>{isSyncing ? "Enviando..." : "Enviar pendências para nuvem"}</Button>
-            <Button variant="outline" onClick={() => void handleRefreshSyncPanel()} disabled={isRefreshingSyncStatus}>{isRefreshingSyncStatus ? "Atualizando..." : "Atualizar contagem de pendências"}</Button>
+            <Button onClick={handleUploadClick} disabled={isSyncing || isComparingSync || isRefreshingSyncStatus || shouldBlockUnsafeUpload}>{isSyncing ? "Enviando..." : "Enviar pendências para nuvem"}</Button>
+            <Button variant="outline" onClick={() => void handleCopyHomologationChecklist()}>Copiar checklist de homologação</Button>
+            <Button variant="outline" onClick={() => downloadBackupJson(exportPayload)}>Exportar backup local</Button>
+            <Button variant="outline" onClick={() => void signOut()}>Limpar sessão</Button>
           </div>
         </Card>
 

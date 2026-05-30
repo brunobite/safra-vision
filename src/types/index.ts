@@ -117,6 +117,8 @@ export interface SyncSummaryMeta {
 export interface LocalSyncMeta {
   lastUploadAt: string | null;
   lastDownloadAt: string | null;
+  lastSyncedUserId?: string | null;
+  lastSyncedEmail?: string | null;
   lastSyncSummary?: SyncSummaryMeta;
   deviceLabel?: string;
 }

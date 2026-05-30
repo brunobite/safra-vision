@@ -81,6 +81,8 @@ export type LocalRemoteComparison = {
 export type SyncMetaPayload = {
   lastUploadAt: string | null;
   lastDownloadAt: string | null;
+  lastSyncedUserId: string | null;
+  lastSyncedEmail: string | null;
   lastSyncSummary: SyncSummary;
   deviceLabel: string;
 };
@@ -172,6 +174,8 @@ async function persistRemoteSyncMeta(context: SyncContext, summary: SyncSummary)
   const payload: SyncMetaPayload = {
     lastUploadAt: nowIso(),
     lastDownloadAt: null,
+    lastSyncedUserId: userId,
+    lastSyncedEmail: context.session?.user.email ?? null,
     lastSyncSummary: summary,
     deviceLabel: typeof navigator === "undefined" ? "Dispositivo desconhecido" : navigator.userAgent,
   };
