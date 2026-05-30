@@ -88,3 +88,40 @@ async function updateSyncItem(id: string, updater: (item: SyncQueueItem) => Sync
 export const markSyncItemProcessing = (id: string) => updateSyncItem(id, (item) => ({ ...item, status: "processing", updatedAt: now(), attempts: item.attempts + 1 }));
 export const markSyncItemSynced = (id: string) => updateSyncItem(id, (item) => ({ ...item, status: "synced", updatedAt: now(), lastError: undefined }));
 export const markSyncItemError = (id: string, error: string) => updateSyncItem(id, (item) => ({ ...item, status: "error", updatedAt: now(), lastError: error }));
+
+export async function getAllSyncItems() {
+  return withDb(async (db) => {
+    const tx = db.transaction(STORE_NAME, "readonly");
+    return (await promisifyRequest(tx.objectStore(STORE_NAME).getAll())) as SyncQueueItem[];
+  });
+}
+
+export async function requeueFailedAndStaleSyncItems(staleMinutes = 10) {
+  return withDb(async (db) => {
+    const staleLimit = Date.now() - staleMinutes * 60_000;
+    const tx = db.transaction(STORE_NAME, "readwrite");
+    const os = tx.objectStore(STORE_NAME);
+    const items = (await promisifyRequest(os.getAll())) as SyncQueueItem[];
+    const changed: SyncQueueItem[] = [];
+
+    items.forEach((item) => {
+      const isStaleProcessing = item.status === "processing" && new Date(item.updatedAt).getTime() <= staleLimit;
+      if (item.status !== "error" && !isStaleProcessing) return;
+      const updated: SyncQueueItem = {
+        ...item,
+        status: "pending",
+        updatedAt: now(),
+        lastError: item.status === "error" ? item.lastError : undefined,
+      };
+      os.put(updated);
+      changed.push(updated);
+    });
+
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error ?? new Error("Erro ao reprocessar itens da fila."));
+    });
+
+    return changed;
+  });
+}

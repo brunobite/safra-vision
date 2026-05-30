@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -14,7 +15,7 @@ import { useAppStore } from "@/store/AppStore";
 import { BaseMode, ImportLog, RegraComissao, AplicarSobre, FaixaComissao, CATEGORIAS_PRODUTO_PADRAO, Empresa, FormaPagamento, PrazoPagamento } from "@/types";
 import { Plus, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { getLocalDbStats, LocalDbStats, replaceLocalDatabase, resetLocalDatabase, saveStore } from "@/lib/localRepository";
+import { deleteLocalItemsById, getLocalDbStats, LocalDbStats, replaceLocalDatabase, resetLocalDatabase, saveStore } from "@/lib/localRepository";
 import { clearLocalAppDeviceData } from "@/lib/clientCleanup";
 import { exportAllEntitiesToCsv } from "@/lib/csvService";
 import { exportWorkbook } from "@/lib/excelService";
@@ -25,6 +26,8 @@ import { openAppDb, promisifyRequest } from "@/lib/db";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import { getFreshSupabaseAccessContext, type FreshSupabaseAccessContext } from "@/lib/supabaseAccess";
 import { compareLocalAndRemote, getRemoteSyncMeta, type LocalRemoteComparison, type SyncSummary } from "@/lib/supabaseSync";
+import { enqueueSyncItem, requeueFailedAndStaleSyncItems } from "@/lib/syncQueue";
+import { findLocalTestRecordCandidates, getSyncQueueAudit, type SyncQueueAudit, type TestRecordCandidate } from "@/lib/syncAudit";
 import * as XLSX from "xlsx";
 
 const APLICAR: { v: AplicarSobre; label: string }[] = [
@@ -77,6 +80,15 @@ export default function Configuracoes() {
   const [confirmUploadOpen, setConfirmUploadOpen] = useState(false);
   const [isRefreshingSyncStatus, setIsRefreshingSyncStatus] = useState(false);
   const [syncQueryStatus, setSyncQueryStatus] = useState<SyncQueryStatus>("parado");
+  const [syncQueueAudit, setSyncQueueAudit] = useState<SyncQueueAudit | null>(null);
+  const [testCandidates, setTestCandidates] = useState<TestRecordCandidate[]>([]);
+  const [selectedTestKeys, setSelectedTestKeys] = useState<string[]>([]);
+  const [cleanConfirmOpen, setCleanConfirmOpen] = useState(false);
+  const [cleanConfirmText, setCleanConfirmText] = useState("");
+  const [cleanupSummary, setCleanupSummary] = useState<{ removed: number; queued: number; errors: string[] } | null>(null);
+  const [isAuditingSync, setIsAuditingSync] = useState(false);
+  const [isCleaningTests, setIsCleaningTests] = useState(false);
+  const [isRequeueingSync, setIsRequeueingSync] = useState(false);
   const [activeTab, setActiveTab] = useState("comissao");
   const [dadosEmpresa, setDadosEmpresa] = useState<Empresa>(defaultEmpresa);
   const categoriasTicket = [...new Set([...CATEGORIAS_PRODUTO_PADRAO, ...ticketsMedios.map((t) => t.categoria)])];
@@ -97,6 +109,9 @@ export default function Configuracoes() {
       && cloudAccessStatus === "active"
       && (cloudRole === "admin" || cloudRole === "user"),
   );
+  const canViewAudit = Boolean(cloudSessionExists && cloudAccessStatus === "active");
+  const canCleanTests = Boolean(canViewAudit && cloudRole === "admin");
+  const selectedTestCandidates = testCandidates.filter((candidate) => selectedTestKeys.includes(candidate.key));
   const lastSyncPanelError = cloudAuthError || syncError;
 
   const updateCloudAccessPanel = (context: FreshSupabaseAccessContext) => {
@@ -171,6 +186,149 @@ export default function Configuracoes() {
       toast.error(message);
     } finally {
       setIsComparingSync(false);
+    }
+  };
+
+  const refreshAuditAndComparison = async (options: { compareCloud?: boolean } = {}) => {
+    setIsAuditingSync(true);
+    setSyncError(null);
+    try {
+      const freshAccessContext = await getFreshSyncContext();
+      const freshSyncContext = assertFreshActiveSyncContext(freshAccessContext);
+
+      const [queueAudit, candidates] = await Promise.all([
+        getSyncQueueAudit(),
+        findLocalTestRecordCandidates(),
+      ]);
+      setSyncQueueAudit(queueAudit);
+      setTestCandidates(candidates);
+      setSelectedTestKeys((current) => current.filter((key) => candidates.some((candidate) => candidate.key === key)));
+      await refreshPendingSyncCount();
+
+      if (options.compareCloud) {
+        const comparison = await compareLocalAndRemote(freshSyncContext);
+        setSyncComparison(comparison);
+      }
+
+      toast.success("Auditoria e limpeza atualizadas.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Erro desconhecido ao atualizar auditoria.";
+      setSyncError(message);
+      toast.error(message);
+    } finally {
+      setIsAuditingSync(false);
+    }
+  };
+
+  const handleRequeueFailedItems = async () => {
+    if (!canCleanTests) {
+      toast.error("Somente administradores podem reprocessar erros/travados.");
+      return;
+    }
+    const ok = window.confirm("Esta ação apenas recoloca erros/travados na fila. Nenhum dado será apagado.");
+    if (!ok) return;
+
+    setIsRequeueingSync(true);
+    try {
+      const changed = await requeueFailedAndStaleSyncItems(10);
+      await refreshAuditAndComparison();
+      toast.success(`${changed.length} item(ns) recolocado(s) na fila.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Erro desconhecido ao reprocessar fila.";
+      setSyncError(message);
+      toast.error(message);
+    } finally {
+      setIsRequeueingSync(false);
+    }
+  };
+
+  const handleCopyAuditReport = async () => {
+    const lines = [
+      "Relatório de auditoria Safra Vision",
+      `Data/hora: ${new Date().toLocaleString("pt-BR")}`,
+      `Usuário: ${cloudUserEmail || "—"} (${cloudUserId || "—"})`,
+      `Role/status: ${cloudRole || "—"} / ${cloudAccessStatus || "—"}`,
+      `Supabase configurado: ${isSupabaseConfigured ? "Sim" : "Não"}`,
+      `Sessão Supabase: ${cloudSessionExists ? "Sim" : "Não"}`,
+      `Último sync: ${lastSyncAt ? new Date(lastSyncAt).toLocaleString("pt-BR") : "não registrado"}`,
+      `Pendências locais: ${pendingSyncCount}`,
+      "",
+      "Totais local x nuvem:",
+      syncComparison
+        ? `Local ${syncComparison.totals.localCount}; Nuvem ${syncComparison.totals.remoteCount}; Só local ${syncComparison.totals.onlyLocal}; Só nuvem ${syncComparison.totals.onlyRemote}; Nos dois ${syncComparison.totals.inBoth}; Remotos excluídos ${syncComparison.totals.remoteDeleted}.`
+        : "Comparação ainda não executada.",
+      "",
+      "Fila por status:",
+      syncQueueAudit
+        ? `pending ${syncQueueAudit.byStatus.pending}; processing ${syncQueueAudit.byStatus.processing}; synced ${syncQueueAudit.byStatus.synced}; error ${syncQueueAudit.byStatus.error}; travados ${syncQueueAudit.staleProcessing.length}.`
+        : "Auditoria da fila ainda não executada.",
+      "",
+      `Registros de teste detectados: ${testCandidates.length}`,
+      ...testCandidates.slice(0, 20).map((candidate) => `- ${candidate.store}/${candidate.id}: ${candidate.label} (${candidate.reason})`),
+      "",
+      "Ações recomendadas:",
+      syncQueueAudit && syncQueueAudit.byStatus.error + syncQueueAudit.staleProcessing.length > 0 ? "- Reprocessar erros/travados." : "- Fila sem erros/travados detectados.",
+      testCandidates.length > 0 ? "- Revisar candidatos de teste e limpar manualmente apenas clientes confirmados." : "- Nenhum registro de teste detectado pelos padrões configurados.",
+      syncComparison && (syncComparison.totals.onlyLocal > 0 || syncComparison.totals.onlyRemote > 0) ? "- Revisar divergências local x nuvem." : "- Comparação local x nuvem sem divergências destacadas ou não executada.",
+    ];
+
+    await navigator.clipboard.writeText(lines.join("\n"));
+    toast.success("Relatório de auditoria copiado.");
+  };
+
+  const handleConfirmCleanupTests = async () => {
+    if (cleanConfirmText !== "LIMPAR TESTES") return;
+    if (!canCleanTests) {
+      toast.error("Somente administradores podem limpar registros de teste.");
+      return;
+    }
+
+    const selectedClientes = selectedTestCandidates.filter((candidate) => candidate.store === "clientes" && candidate.cleanable);
+    if (selectedClientes.length === 0) {
+      toast.error("Selecione pelo menos um cliente de teste.");
+      return;
+    }
+    if (selectedClientes.length >= clientes.length) {
+      toast.error("Bloqueio de segurança: não é permitido limpar todos os clientes.");
+      return;
+    }
+    if (selectedClientes.some((candidate) => !candidate.reason)) {
+      toast.error("Bloqueio de segurança: há cliente selecionado sem padrão de teste identificado.");
+      return;
+    }
+
+    setIsCleaningTests(true);
+    const errors: string[] = [];
+    let queued = 0;
+    try {
+      const ids = selectedClientes.map((candidate) => candidate.id);
+      await deleteLocalItemsById("clientes", ids);
+      for (const candidate of selectedClientes) {
+        try {
+          await enqueueSyncItem({ store: "clientes", entityId: candidate.id, operation: "delete", payload: candidate.payload });
+          queued += 1;
+        } catch (error) {
+          errors.push(`${candidate.id}: ${error instanceof Error ? error.message : "erro ao enfileirar delete"}`);
+        }
+      }
+      setClientes((current) => current.filter((cliente) => !ids.includes(cliente.id)));
+      setSelectedTestKeys([]);
+      const summary = { removed: ids.length, queued, errors };
+      setCleanupSummary(summary);
+      setCleanConfirmOpen(false);
+      setCleanConfirmText("");
+      await refreshPendingSyncCount();
+      await refreshAuditAndComparison({ compareCloud: canCompareCloud });
+      if (typeof navigator !== "undefined" && navigator.onLine && cloudAccessStatus === "active") {
+        void runManualUploadSync();
+      }
+      toast.success(`Limpeza concluída: ${ids.length} removido(s), ${queued} delete(s) enfileirado(s).`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Erro desconhecido na limpeza segura.";
+      setSyncError(message);
+      toast.error(message);
+    } finally {
+      setIsCleaningTests(false);
     }
   };
 
@@ -546,12 +704,83 @@ export default function Configuracoes() {
           <div className="grid gap-2 md:grid-cols-6 text-sm">
             <div><b>Local:</b> {syncComparison.totals.localCount}</div><div><b>Nuvem:</b> {syncComparison.totals.remoteCount}</div><div><b>Só local:</b> {syncComparison.totals.onlyLocal}</div><div><b>Só nuvem:</b> {syncComparison.totals.onlyRemote}</div><div><b>Nos dois:</b> {syncComparison.totals.inBoth}</div><div><b>Remotos excluídos:</b> {syncComparison.totals.remoteDeleted}</div>
           </div>
-          <div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Store</TableHead><TableHead>Tabela</TableHead><TableHead>Local</TableHead><TableHead>Nuvem</TableHead><TableHead>Só local</TableHead><TableHead>Só nuvem</TableHead><TableHead>Nos dois</TableHead><TableHead>Excluídos</TableHead></TableRow></TableHeader><TableBody>{syncComparison.stores.map((row) => <TableRow key={row.store}><TableCell>{row.store}</TableCell><TableCell>{row.table}</TableCell><TableCell>{row.localCount}</TableCell><TableCell>{row.remoteCount}</TableCell><TableCell>{row.onlyLocal}</TableCell><TableCell>{row.onlyRemote}</TableCell><TableCell>{row.inBoth}</TableCell><TableCell>{row.remoteDeleted}</TableCell></TableRow>)}</TableBody></Table></div>
+          <div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Store</TableHead><TableHead>Tabela</TableHead><TableHead>Local</TableHead><TableHead>Nuvem</TableHead><TableHead>Só local</TableHead><TableHead>Só nuvem</TableHead><TableHead>Nos dois</TableHead><TableHead>Excluídos</TableHead></TableRow></TableHeader><TableBody>{syncComparison.stores.map((row) => <TableRow key={row.store}><TableCell>{row.store}</TableCell><TableCell>{row.table}</TableCell><TableCell>{row.localCount}</TableCell><TableCell>{row.remoteCount}</TableCell><TableCell className={row.onlyLocal > 0 ? "font-semibold text-yellow-700" : undefined}>{row.onlyLocal}</TableCell><TableCell className={row.onlyRemote > 0 ? "font-semibold text-yellow-700" : undefined}>{row.onlyRemote}</TableCell><TableCell>{row.inBoth}</TableCell><TableCell>{row.remoteDeleted}</TableCell></TableRow>)}</TableBody></Table></div>
         </Card>}
+
+        <Card className="p-4 space-y-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h3 className="font-semibold">Auditoria e limpeza</h3>
+              <p className="text-sm text-muted-foreground">Verifica integridade local/nuvem, audita a syncQueue e permite limpeza segura apenas de clientes de teste.</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="secondary" onClick={() => void refreshAuditAndComparison({ compareCloud: canCompareCloud })} disabled={!canViewAudit || isAuditingSync}>{isAuditingSync ? "Auditando..." : "Atualizar auditoria"}</Button>
+              <Button variant="outline" onClick={() => void handleCopyAuditReport()} disabled={!syncQueueAudit && !syncComparison}>Copiar relatório de auditoria</Button>
+              <Button variant="outline" onClick={() => void handleRequeueFailedItems()} disabled={!canCleanTests || isRequeueingSync || !syncQueueAudit || (syncQueueAudit.byStatus.error + syncQueueAudit.staleProcessing.length === 0)}>{isRequeueingSync ? "Reprocessando..." : "Reprocessar erros/travados"}</Button>
+            </div>
+          </div>
+
+          {!canViewAudit && <div className="rounded-md border border-yellow-500/40 bg-yellow-500/10 p-3 text-sm text-yellow-800">A seção exige usuário autenticado e status active.</div>}
+          {canViewAudit && !canCleanTests && <div className="rounded-md border border-yellow-500/40 bg-yellow-500/10 p-3 text-sm text-yellow-800">Somente administradores podem limpar registros de teste.</div>}
+
+          <div className="grid gap-3 md:grid-cols-5">
+            <div className="rounded-md border p-3 text-sm"><div className="text-muted-foreground">Total local</div><div className="font-medium">{syncComparison?.totals.localCount ?? "—"}</div></div>
+            <div className="rounded-md border p-3 text-sm"><div className="text-muted-foreground">Total nuvem</div><div className="font-medium">{syncComparison?.totals.remoteCount ?? "—"}</div></div>
+            <div className={`rounded-md border p-3 text-sm ${syncComparison && syncComparison.totals.onlyLocal > 0 ? "border-yellow-500/50 bg-yellow-500/10" : ""}`}><div className="text-muted-foreground">Só local</div><div className="font-medium">{syncComparison?.totals.onlyLocal ?? "—"}</div></div>
+            <div className={`rounded-md border p-3 text-sm ${syncComparison && syncComparison.totals.onlyRemote > 0 ? "border-yellow-500/50 bg-yellow-500/10" : ""}`}><div className="text-muted-foreground">Só nuvem</div><div className="font-medium">{syncComparison?.totals.onlyRemote ?? "—"}</div></div>
+            <div className="rounded-md border p-3 text-sm"><div className="text-muted-foreground">Última comparação</div><div className="font-medium">{syncComparison?.generatedAt ? new Date(syncComparison.generatedAt).toLocaleString("pt-BR") : "—"}</div></div>
+            <div className="rounded-md border p-3 text-sm"><div className="text-muted-foreground">Nos dois</div><div className="font-medium">{syncComparison?.totals.inBoth ?? "—"}</div></div>
+            <div className="rounded-md border p-3 text-sm"><div className="text-muted-foreground">Remotos excluídos</div><div className="font-medium">{syncComparison?.totals.remoteDeleted ?? "—"}</div></div>
+            <div className={`rounded-md border p-3 text-sm ${syncQueueAudit && syncQueueAudit.byStatus.error > 0 ? "border-destructive/50 bg-destructive/10" : ""}`}><div className="text-muted-foreground">Erros na fila</div><div className="font-medium">{syncQueueAudit?.byStatus.error ?? "—"}</div></div>
+            <div className={`rounded-md border p-3 text-sm ${syncQueueAudit && syncQueueAudit.staleProcessing.length > 0 ? "border-yellow-500/50 bg-yellow-500/10" : ""}`}><div className="text-muted-foreground">Processing travado</div><div className="font-medium">{syncQueueAudit?.staleProcessing.length ?? "—"}</div></div>
+            <div className={`rounded-md border p-3 text-sm ${testCandidates.length > 0 ? "border-yellow-500/50 bg-yellow-500/10" : ""}`}><div className="text-muted-foreground">Testes detectados</div><div className="font-medium">{testCandidates.length}</div></div>
+          </div>
+
+          {syncQueueAudit && <div className="space-y-2">
+            <h4 className="text-sm font-semibold">Auditoria da syncQueue</h4>
+            <div className="grid gap-2 md:grid-cols-4 text-sm">
+              <div><b>pending:</b> {syncQueueAudit.byStatus.pending}</div><div><b>processing:</b> {syncQueueAudit.byStatus.processing}</div><div><b>synced:</b> {syncQueueAudit.byStatus.synced}</div><div><b>error:</b> {syncQueueAudit.byStatus.error}</div>
+            </div>
+            <div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Status</TableHead><TableHead>Store</TableHead><TableHead>Entity ID</TableHead><TableHead>Operação</TableHead><TableHead>Tentativas</TableHead><TableHead>UpdatedAt</TableHead><TableHead>Último erro</TableHead></TableRow></TableHeader><TableBody>{[...syncQueueAudit.recentErrors, ...syncQueueAudit.staleProcessing].slice(0, 12).map((item) => <TableRow key={`${item.id}-${item.status}`}><TableCell>{item.status}</TableCell><TableCell>{item.store}</TableCell><TableCell className="font-mono text-xs">{item.entityId}</TableCell><TableCell>{item.operation}</TableCell><TableCell>{item.attempts}</TableCell><TableCell>{new Date(item.updatedAt).toLocaleString("pt-BR")}</TableCell><TableCell className="max-w-xs truncate text-xs">{item.lastError || "—"}</TableCell></TableRow>)}</TableBody></Table></div>
+          </div>}
+
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h4 className="text-sm font-semibold">Registros de teste detectados</h4>
+              <Button variant="destructive" onClick={() => setCleanConfirmOpen(true)} disabled={!canCleanTests || selectedTestCandidates.length === 0 || isCleaningTests}>Limpar testes selecionados</Button>
+            </div>
+            <div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Selecionar</TableHead><TableHead>Store</TableHead><TableHead>ID</TableHead><TableHead>Nome/descrição</TableHead><TableHead>Cidade/rota</TableHead><TableHead>Created/updated</TableHead><TableHead>Motivo</TableHead><TableHead>Status local</TableHead><TableHead>Status remoto</TableHead></TableRow></TableHeader><TableBody>{testCandidates.map((candidate) => <TableRow key={candidate.key}><TableCell><Checkbox checked={selectedTestKeys.includes(candidate.key)} disabled={!candidate.cleanable || !canCleanTests} onCheckedChange={(checked) => setSelectedTestKeys((current) => checked === true ? Array.from(new Set([...current, candidate.key])) : current.filter((key) => key !== candidate.key))} /></TableCell><TableCell>{candidate.store}{!candidate.cleanable ? <div className="text-[10px] text-muted-foreground">leitura</div> : null}</TableCell><TableCell className="font-mono text-xs">{candidate.id}</TableCell><TableCell>{candidate.label}</TableCell><TableCell>{candidate.cityRoute || "—"}</TableCell><TableCell className="text-xs">{candidate.createdAt || "—"}<br />{candidate.updatedAt || "—"}</TableCell><TableCell>{candidate.reason}</TableCell><TableCell>{candidate.localStatus}</TableCell><TableCell>{candidate.remoteStatus || "—"}</TableCell></TableRow>)}</TableBody></Table></div>
+          </div>
+
+          {cleanupSummary && <div className="rounded-md border bg-muted/30 p-3 text-sm"><b>Resultado da limpeza:</b> removidos localmente {cleanupSummary.removed}; enfileirados para delete {cleanupSummary.queued}; erros {cleanupSummary.errors.length}. {cleanupSummary.errors.join("; ")}</div>}
+        </Card>
       </TabsContent>
 
     </Tabs>
 
+
+    <Dialog open={cleanConfirmOpen} onOpenChange={(open) => { setCleanConfirmOpen(open); if (!open) setCleanConfirmText(""); }}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Confirmar limpeza segura de testes</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3 text-sm">
+          <p>Você selecionou <b>{selectedTestCandidates.length}</b> item(ns). Somente clientes com padrão de teste identificado serão removidos localmente e enfileirados como delete lógico para o Supabase.</p>
+          <div className="max-h-40 overflow-auto rounded-md border p-2 text-xs">
+            {selectedTestCandidates.map((candidate) => <div key={candidate.key}>{candidate.store}/{candidate.id} — {candidate.label} ({candidate.reason})</div>)}
+          </div>
+          <div className="rounded-md border border-yellow-500/40 bg-yellow-500/10 p-3 text-yellow-800">Digite <b>LIMPAR TESTES</b> para confirmar. Nenhum dado real deve ser selecionado.</div>
+          <div>
+            <Label>Confirmação</Label>
+            <Input value={cleanConfirmText} onChange={(event) => setCleanConfirmText(event.target.value)} placeholder="LIMPAR TESTES" />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setCleanConfirmOpen(false)}>Cancelar</Button>
+          <Button variant="destructive" onClick={() => void handleConfirmCleanupTests()} disabled={cleanConfirmText !== "LIMPAR TESTES" || isCleaningTests}>{isCleaningTests ? "Limpando..." : "Confirmar limpeza"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
 
     <AlertDialog open={confirmUploadOpen} onOpenChange={setConfirmUploadOpen}>
       <AlertDialogContent>
