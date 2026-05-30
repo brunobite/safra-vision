@@ -125,12 +125,13 @@ export function shouldUploadPendingFirst(params: { pendingSyncCount: number }) {
 export function shouldAutoRestoreAccount(params: AccountSyncDecisionParams): AccountSyncDecision {
   if (!params.supabaseConfigured) return { allowed: false, reason: "supabase-unconfigured", message: "Sincronização da conta indisponível neste ambiente." };
   if (!params.sessionExists) return { allowed: false, reason: "missing-session", message: "Faça login para sincronizar os dados da conta." };
-  if (params.accessStatus !== "active") return { allowed: false, reason: "inactive-profile", message: "Sua conta ainda não está ativa para sincronização." };
-  if (!params.isOnline) return { allowed: false, reason: "offline", message: "Sem conexão. A sincronização será tentada novamente quando voltar online." };
-  if (params.pendingSyncCount > 0) return { allowed: false, reason: "pending-sync", message: "Existem dados locais pendentes. Envie antes de carregar a conta." };
-  if (params.onlyLocal > 0) return { allowed: false, reason: "local-conflict", message: "Existem dados locais que precisam de revisão antes de sincronizar." };
-  if (params.remoteCount <= 0) return { allowed: false, reason: "no-cloud-data", message: "Este dispositivo já está atualizado." };
-  if (params.onlyRemote <= 0) return { allowed: false, reason: "already-updated", message: "Este dispositivo já está atualizado." };
+  if (params.accessStatus !== "active") return { allowed: false, reason: "inactive-profile", message: "Usuário ainda não aprovado para sincronização." };
+  if (!params.isOnline) return { allowed: false, reason: "offline", message: "Sem conexão. Os dados locais continuam disponíveis." };
+  if (params.pendingSyncCount > 0) return { allowed: false, reason: "pending-sync", message: "Há dados locais aguardando envio." };
+  if (params.onlyLocal > 0 && params.onlyRemote > 0) return { allowed: false, reason: "cloud-conflict", message: "Conflito detectado. Revisão manual necessária." };
+  if (params.onlyLocal > 0) return { allowed: false, reason: "local-conflict", message: "Conflito detectado. Revisão manual necessária." };
+  if (params.remoteCount <= 0) return { allowed: false, reason: "no-cloud-data", message: "Este dispositivo está atualizado." };
+  if (params.onlyRemote <= 0) return { allowed: false, reason: "already-updated", message: "Este dispositivo está atualizado." };
   if (params.localCount <= NEAR_EMPTY_LOCAL_COUNT) return { allowed: true, reason: "allowed", message: "Carregando dados da sua conta..." };
   return { allowed: false, reason: "manual-cta", message: "Há dados da sua conta disponíveis. Sincronizar agora?" };
 }
@@ -154,13 +155,13 @@ export function buildAccountSyncStatus(params: {
       case "cta-available":
         return "Há dados da sua conta disponíveis. Sincronizar agora?";
       case "blocked":
-        return "Existem dados locais que precisam de revisão antes de sincronizar.";
+        return "Conflito detectado. Revisão manual necessária.";
       case "skipped":
-        if (params.reason === "offline") return "Sem conexão. A sincronização será tentada novamente quando voltar online.";
+        if (params.reason === "offline") return "Sem conexão. Os dados locais continuam disponíveis.";
         if (params.reason === "missing-session") return "Faça login para sincronizar os dados da conta.";
-        if (params.reason === "inactive-profile") return "Sua conta ainda não está ativa para sincronização.";
+        if (params.reason === "inactive-profile") return "Usuário ainda não aprovado para sincronização.";
         if (params.reason === "supabase-unconfigured") return "Sincronização da conta indisponível neste ambiente.";
-        return "Este dispositivo já está atualizado.";
+        return "Este dispositivo está atualizado.";
       case "error":
         return "Não foi possível concluir a sincronização agora.";
     }
@@ -189,7 +190,11 @@ async function uploadPendingFirstIfNeeded(
   if (!uploadResult.ok) {
     return {
       pendingSyncCount,
-      status: buildAccountSyncStatus({ code: "blocked", technicalMessage: uploadResult.message }),
+      status: buildAccountSyncStatus({
+        code: "blocked",
+        message: "Existem dados locais que precisam de revisão antes de sincronizar.",
+        technicalMessage: uploadResult.message,
+      }),
     };
   }
   if (uploadResult.skipped) {
@@ -204,6 +209,7 @@ async function uploadPendingFirstIfNeeded(
       uploadSummary: uploadResult.summary,
       status: buildAccountSyncStatus({
         code: "blocked",
+        message: "Existem dados locais que precisam de revisão antes de sincronizar.",
         uploadSummary: uploadResult.summary,
         technicalMessage: uploadResult.summary.errors.map((error) => error.message).join("; "),
       }),
@@ -271,8 +277,8 @@ export async function runAccountSyncCheck(dependencies: AccountSyncContext): Pro
   const now = (dependencies.now ?? Date.now)();
   const cooldownMs = dependencies.cooldownMs ?? ACCOUNT_SYNC_COOLDOWN_MS;
 
-  if (autoCheckInProgress) return buildAccountSyncStatus({ code: "skipped", message: "Verificação de sincronização já em andamento." });
-  if (now - lastAutoCheckAt < cooldownMs) return buildAccountSyncStatus({ code: "skipped", message: "Este dispositivo já está atualizado." });
+  if (autoCheckInProgress) return buildAccountSyncStatus({ code: "skipped", message: "Este dispositivo está atualizado." });
+  if (now - lastAutoCheckAt < cooldownMs) return buildAccountSyncStatus({ code: "skipped", message: "Este dispositivo está atualizado." });
 
   if (!(dependencies.isSupabaseConfigured ?? defaultSupabaseConfigured)()) {
     return buildAccountSyncStatus({ code: "skipped", reason: "supabase-unconfigured" });
@@ -289,11 +295,7 @@ export async function runAccountSyncCheck(dependencies: AccountSyncContext): Pro
     const syncContext = activeContext(fresh);
     if ("code" in syncContext) return syncContext;
 
-    let pendingSyncCount = await dependencies.refreshPendingSyncCount();
-    const upload = await uploadPendingFirstIfNeeded(dependencies, syncContext, pendingSyncCount);
-    if (upload.status) return upload.status;
-    pendingSyncCount = upload.pendingSyncCount;
-
+    const pendingSyncCount = await dependencies.refreshPendingSyncCount();
     const comparison = await (dependencies.compareLocalAndRemote ?? compareLocalAndRemote)(syncContext);
     const decision = shouldAutoRestoreAccount({
       supabaseConfigured: true,
@@ -307,13 +309,13 @@ export async function runAccountSyncCheck(dependencies: AccountSyncContext): Pro
       remoteCount: comparison.totals.remoteCount,
     });
 
-    if (decision.allowed) return restoreRemoteOnlyData(dependencies, syncContext, comparison, upload.uploadSummary);
+    if (decision.allowed) return restoreRemoteOnlyData(dependencies, syncContext, comparison, undefined);
     if (decision.reason === "manual-cta") return buildAccountSyncStatus({ code: "cta-available", message: decision.message, comparison, pendingSyncCount });
     if (["pending-sync", "local-conflict", "cloud-conflict"].includes(decision.reason)) {
       return buildAccountSyncStatus({ code: "blocked", message: decision.message, comparison, pendingSyncCount });
     }
 
-    return buildAccountSyncStatus({ code: "synced", message: decision.message, comparison, pendingSyncCount, uploadSummary: upload.uploadSummary });
+    return buildAccountSyncStatus({ code: "synced", message: decision.message, comparison, pendingSyncCount, uploadSummary: undefined });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Erro desconhecido ao verificar sincronização da conta.";
     console.error(message);

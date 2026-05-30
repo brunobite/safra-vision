@@ -8,6 +8,7 @@ import { restoreAccountSnapshotToLocal, type AccountSnapshot, type CloudRestoreR
 import { enqueueSyncItem, getPendingSyncItems, shouldTrackSyncStore } from "@/lib/syncQueue";
 import { getAutoSyncCooldownRemaining, runControlledUploadSync, type AutoSyncAccessStatus, type AutoSyncContext, type AutoSyncResult } from "@/lib/autoSync";
 import { runAccountSyncCheck, runAccountSyncNow, type AccountSyncStatus } from "@/lib/accountSyncOrchestrator";
+import { addAccountSyncHistoryEvent, getHistoryStatusFromAccountSyncStatus, type AccountSyncHistoryEvent } from "@/lib/accountSyncUi";
 import { getFreshSupabaseAccessContext } from "@/lib/supabaseAccess";
 import { useAuth } from "@/store/AuthStore";
 import { calcularPotencialCliente, calcularValorMedioHaSegmentosAtivos } from "@/utils/businessRules";
@@ -54,6 +55,7 @@ interface AppStoreCtx {
   syncError: string | null;
   lastAutoSyncAt: string | null;
   accountSyncStatus: AccountSyncStatus | null;
+  accountSyncHistory: AccountSyncHistoryEvent[];
   runManualUploadSync: (overrideContext?: ManualUploadSyncOverrideContext) => Promise<AutoSyncResult>;
   runAccountSyncNowForAccount: () => Promise<AccountSyncStatus>;
   restoreAccountSnapshot: (snapshot: AccountSnapshot) => Promise<CloudRestoreResult>;
@@ -106,6 +108,13 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const [syncError, setSyncError] = useState<string | null>(null);
   const [lastAutoSyncAt, setLastAutoSyncAt] = useState<string | null>(null);
   const [accountSyncStatus, setAccountSyncStatus] = useState<AccountSyncStatus | null>(null);
+  const [accountSyncHistory, setAccountSyncHistory] = useState<AccountSyncHistoryEvent[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("accountSyncHistory") || "[]") as AccountSyncHistoryEvent[];
+    } catch {
+      return [];
+    }
+  });
   const hasHydratedRef = useRef(false);
   const isApplyingCloudRestoreRef = useRef(false);
   const skipNextPersistStoresRef = useRef<Set<string>>(new Set());
@@ -127,6 +136,14 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     pendingSyncCountRef.current = pendingSyncCount;
   }, [pendingSyncCount]);
+  useEffect(() => {
+    localStorage.setItem("accountSyncHistory", JSON.stringify(accountSyncHistory));
+  }, [accountSyncHistory]);
+
+  const recordAccountSyncHistory = useCallback((event: Omit<AccountSyncHistoryEvent, "id" | "timestamp"> & { id?: string; timestamp?: string }) => {
+    setAccountSyncHistory((current) => addAccountSyncHistoryEvent(current, event));
+  }, []);
+
 
   useEffect(() => {
     syncStatusRef.current = syncStatus;
@@ -297,6 +314,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         setSyncStatus(pendingSyncCount > 0 ? "pending" : "idle");
         setSyncError(result.reason === "cooldown" ? "Cooldown de sincronização; nova tentativa em instantes." : result.message);
       }
+      recordAccountSyncHistory({ tipo: source === "auto" ? "auto-check" : "upload", status: "pendente", mensagem: result.message });
       await refreshPendingSyncCount();
       return;
     }
@@ -304,6 +322,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     if (!result.ok) {
       setSyncStatus("error");
       setSyncError(result.message);
+      recordAccountSyncHistory({ tipo: "error", status: "erro", mensagem: "Não foi possível concluir a sincronização agora.", detalhes: result.message });
       await refreshPendingSyncCount();
       return;
     }
@@ -312,11 +331,12 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     setSyncStatus(result.summary.error > 0 ? "error" : "synced");
     setLastAutoSyncAt(new Date().toISOString());
     if (result.meta) setAppConfig((current) => ({ ...current, syncMeta: result.meta }));
+    recordAccountSyncHistory({ tipo: source === "auto" ? "auto-check" : "upload", status: result.summary.error > 0 ? "erro" : "sucesso", mensagem: result.summary.error > 0 ? `${result.summary.error} item(ns) não foram sincronizados.` : "Sincronização concluída.", detalhes: `${result.summary.success} enviados, ${result.summary.error} erros.` });
     await refreshPendingSyncCount();
     if (source === "auto" && result.summary.error > 0) {
       setSyncError(`${result.summary.error} item(ns) não foram sincronizados automaticamente.`);
     }
-  }, [pendingSyncCount, refreshPendingSyncCount]);
+  }, [pendingSyncCount, recordAccountSyncHistory, refreshPendingSyncCount]);
 
   const runManualUploadSync = useCallback(async (overrideContext?: ManualUploadSyncOverrideContext) => {
     const syncSession = overrideContext?.session ?? session;
@@ -332,8 +352,15 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     return result;
   }, [accessStatus, applySyncResult, session]);
 
-  const applyAccountSyncStatus = useCallback((status: AccountSyncStatus) => {
+  const applyAccountSyncStatus = useCallback((status: AccountSyncStatus, source: "auto-check" | "sync-now" = "auto-check") => {
     setAccountSyncStatus(status);
+    recordAccountSyncHistory({
+      tipo: status.code === "error" ? "error" : status.code === "restored" ? "restore" : source,
+      status: getHistoryStatusFromAccountSyncStatus(status),
+      mensagem: status.message,
+      detalhes: status.technicalMessage,
+      timestamp: status.lastCheckedAt,
+    });
     if (status.code === "error" || status.code === "blocked") {
       setSyncStatus("error");
       setSyncError(status.message);
@@ -350,7 +377,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       setSyncStatus("pending");
       setSyncError(status.message);
     }
-  }, []);
+  }, [recordAccountSyncHistory]);
 
   const buildAccountSyncDependencies = useCallback(() => ({
     getFreshAccessContext: getFreshSupabaseAccessContext,
@@ -363,7 +390,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     setSyncStatus("syncing");
     setSyncError(null);
     const status = await runAccountSyncNow(buildAccountSyncDependencies());
-    applyAccountSyncStatus(status);
+    applyAccountSyncStatus(status, "sync-now");
     await refreshPendingSyncCount();
     return status;
   }, [applyAccountSyncStatus, buildAccountSyncDependencies, refreshPendingSyncCount]);
@@ -371,7 +398,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const runAccountSyncCheckForAccount = useCallback(async () => {
     if (!isReadyRef.current || syncStatusRef.current === "syncing") return;
     const status = await runAccountSyncCheck(buildAccountSyncDependencies());
-    applyAccountSyncStatus(status);
+    applyAccountSyncStatus(status, "auto-check");
     await refreshPendingSyncCount();
   }, [applyAccountSyncStatus, buildAccountSyncDependencies, refreshPendingSyncCount]);
 
@@ -607,7 +634,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       eventos, setEventos, prioridadesP1, setPrioridadesP1,
       negocios, setNegocios, oportunidades, setOportunidades, produtos, setProdutos,
       regras, setRegras, vendedores, setVendedores, ticketsMedios, setTicketsMedios, orcamentos, setOrcamentos, empresas, setEmpresas, proximasAcoes, setProximasAcoes, formasPagamento, setFormasPagamento, prazosPagamento, setPrazosPagamento, appConfig, setAppConfig,
-      isLoading, isReady, dbError, isSaving, lastSavedAt, saveError, pendingSyncCount, refreshPendingSyncCount, syncStatus, syncError, lastAutoSyncAt, accountSyncStatus, runManualUploadSync, runAccountSyncNowForAccount, restoreAccountSnapshot,
+      isLoading, isReady, dbError, isSaving, lastSavedAt, saveError, pendingSyncCount, refreshPendingSyncCount, syncStatus, syncError, lastAutoSyncAt, accountSyncStatus, accountSyncHistory, runManualUploadSync, runAccountSyncNowForAccount, restoreAccountSnapshot,
       filters, setFilters,
       filtered: { lancamentos: filteredLancs, negocios: filteredNegs, oportunidades: filteredOportunidades },
       clienteById: (id) => cMap.get(id),
