@@ -154,6 +154,7 @@ describe("cloudRestore", () => {
     const snapshot = buildAccountSnapshotFromRemoteRows({
       clientes: [activeRow("c1", { id: "c1" }), activeRow("c2", { id: "c2" })],
       produtos: [activeRow("p1", { id: "p1" })],
+      appConfig: [activeRow("main", { id: "main", percentualAcertoEsperado: 12 })],
     });
 
     await restoreAccountSnapshotToLocal(snapshot);
@@ -170,7 +171,9 @@ describe("cloudRestore", () => {
                   ? [activeRow("c1", { id: "c1" }), activeRow("c2", { id: "c2" })]
                   : table === "produtos"
                     ? [activeRow("p1", { id: "p1" })]
-                    : [],
+                    : table === "app_config"
+                      ? [activeRow("main", { id: "main", percentualAcertoEsperado: 12 })]
+                      : [],
                 error: null,
               }),
             }),
@@ -184,10 +187,10 @@ describe("cloudRestore", () => {
       accessStatus: "active",
     });
 
-    expect(comparison.totals.localCount).toBe(3);
-    expect(comparison.totals.remoteCount).toBe(3);
+    expect(comparison.totals.localCount).toBe(4);
+    expect(comparison.totals.remoteCount).toBe(4);
     expect(comparison.totals.onlyLocal).toBe(0);
     expect(comparison.totals.onlyRemote).toBe(0);
-    expect(comparison.totals.inBoth).toBe(3);
+    expect(comparison.totals.inBoth).toBe(4);
   });
 });
