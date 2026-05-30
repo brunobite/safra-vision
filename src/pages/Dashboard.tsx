@@ -4,7 +4,7 @@ import { GlobalFilters } from "@/components/GlobalFilters";
 import { KpiCard } from "@/components/dashboard/KpiCard";
 import { useAppStore } from "@/store/AppStore";
 import { calcDashboard, fmtBRL, fmtNum, fmtPct } from "@/utils/calculations";
-import { calcularMetaCarteira, calcularPotencialCarteira, calcularRealizadoCarteira } from "@/utils/businessRules";
+import { montarDashboardComercialSafra } from "@/utils/businessRules";
 import {
   TrendingUp, AlertTriangle, FileText, CalendarDays, Layers, Clock, Percent, Award,
 } from "lucide-react";
@@ -15,7 +15,7 @@ import {
 } from "recharts";
 
 export default function Dashboard() {
-  const { clientes, metasEmpresa, metasPessoais, filtered, lancamentos, negocios, regras, orcamentos, proximasAcoes, appConfig, clienteById, ticketsMedios } = useAppStore();
+  const { clientes, metasEmpresa, metasPessoais, filtered, lancamentos, negocios, regras, orcamentos, oportunidades, proximasAcoes, appConfig, clienteById, ticketsMedios } = useAppStore();
   const [acaoFiltro, setAcaoFiltro] = useState<"hoje"|"semana"|"mes"|"atrasadas"|"todas">("hoje");
   const nav = useNavigate();
 
@@ -58,12 +58,22 @@ export default function Dashboard() {
 
 
   const hoje = new Date().toISOString().slice(0,10);
-  const potencialCarteira = calcularPotencialCarteira(clientes, ticketsMedios);
   const taxa = Math.min(100, Math.max(0, appConfig.percentualAcertoEsperado || 0));
-  const metaCarteira = calcularMetaCarteira(clientes, ticketsMedios, taxa);
-  const realizado = calcularRealizadoCarteira(negocios, orcamentos);
-  const pct = metaCarteira>0 ? realizado/metaCarteira : 0;
-  const gapParaMeta = metaCarteira-realizado;
+  const gestaoComercial = useMemo(() => montarDashboardComercialSafra({
+    clientes,
+    ticketsMedios,
+    percentualAcertoEsperado: taxa,
+    negocios,
+    orcamentos,
+    oportunidades,
+    proximasAcoes,
+    hojeIso: hoje,
+  }), [clientes, ticketsMedios, taxa, negocios, orcamentos, oportunidades, proximasAcoes, hoje]);
+  const potencialCarteira = gestaoComercial.potencialCarteira;
+  const metaCarteira = gestaoComercial.metaCarteira;
+  const realizado = gestaoComercial.realizado;
+  const pct = gestaoComercial.percentualAtingido;
+  const gapParaMeta = gestaoComercial.gap;
   const operacionais = useMemo(() => ({
     atrasados: clientes.filter(c => c.statusAtual !== "Inativo" && ((c.dataProximaAcao && c.dataProximaAcao < hoje) || (c.retorno && c.retorno < hoje))).length,
     proximasSemana: proximasAcoes.filter(a=>a.status==="Pendente" && a.data >= hoje).length,
@@ -140,6 +150,118 @@ export default function Dashboard() {
         <KpiCard label="Gap para meta" value={fmtBRL(gapParaMeta)} icon={AlertTriangle} tone={gapParaMeta <= 0 ? "success" : "destructive"} />
         </div>
         {potencialCarteira === 0 && <p className="mt-3 text-xs text-muted-foreground">Potencial da carteira ainda não configurado.</p>}
+      </Card>
+
+      <Card className="p-4">
+        <div className="mb-3 flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
+          <h2 className="text-sm font-semibold text-foreground">Gestão Comercial Safra 26/27</h2>
+          <span className="rounded-full bg-muted px-3 py-1 text-xs text-muted-foreground">Status: {gestaoComercial.statusVisual}</span>
+        </div>
+        <div className="grid grid-cols-2 gap-2 sm:gap-3 md:grid-cols-4 lg:grid-cols-6">
+          <KpiCard label="Clientes ativos" value={fmtNum(gestaoComercial.clientesAtivos)} icon={Award} />
+          <KpiCard label="Área cadastrada" value={`${fmtNum(gestaoComercial.areaTotalHa)} ha`} icon={Layers} />
+          <KpiCard label="Ticket estimado/ha" value={fmtBRL(gestaoComercial.ticketMedioEstimadoHa)} icon={TrendingUp} />
+          <KpiCard label="Oportunidades abertas" value={fmtNum(gestaoComercial.oportunidadesAbertas)} icon={Layers} />
+          <KpiCard label="Orçamentos aprovados" value={fmtNum(gestaoComercial.orcamentosAprovados)} icon={FileText} tone="success" />
+          <KpiCard label="Negócios ganhos" value={fmtNum(gestaoComercial.negociosGanhos)} icon={Award} tone="success" />
+        </div>
+      </Card>
+
+      <div className="grid gap-4 xl:grid-cols-2">
+        <Card className="p-4">
+          <h2 className="mb-3 text-sm font-semibold text-foreground">Desempenho por vendedor</h2>
+          <div className="overflow-auto">
+            <table className="w-full min-w-[760px] text-left text-xs">
+              <thead className="border-b text-muted-foreground">
+                <tr><th className="py-2">Vendedor</th><th>Clientes</th><th>Área</th><th>Potencial</th><th>Realizado</th><th>Gap</th><th>%</th><th>Opp.</th><th>Ações críticas</th></tr>
+              </thead>
+              <tbody>
+                {gestaoComercial.porVendedor.map((linha) => (
+                  <tr key={linha.vendedor} className="border-b last:border-0">
+                    <td className="py-2 font-medium">{linha.vendedor}</td>
+                    <td>{fmtNum(linha.clientes)}</td>
+                    <td>{fmtNum(linha.areaHa)} ha</td>
+                    <td>{fmtBRL(linha.potencial)}</td>
+                    <td>{fmtBRL(linha.realizado)}</td>
+                    <td className={linha.gap <= 0 ? "text-emerald-700" : "text-red-700"}>{fmtBRL(linha.gap)}</td>
+                    <td>{fmtPct(linha.percentualAtingido)}</td>
+                    <td>{fmtNum(linha.oportunidadesAbertas)}</td>
+                    <td>{fmtNum(linha.proximasAcoesCriticas)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+
+        <Card className="p-4">
+          <h2 className="mb-3 text-sm font-semibold text-foreground">Desempenho por ABC e prioridade</h2>
+          <div className="overflow-auto">
+            <table className="w-full min-w-[620px] text-left text-xs">
+              <thead className="border-b text-muted-foreground">
+                <tr><th className="py-2">ABC</th><th>Clientes</th><th>Área</th><th>Potencial</th><th>Realizado</th><th>Gap</th><th>P1 sem ação</th></tr>
+              </thead>
+              <tbody>
+                {gestaoComercial.porAbc.map((linha) => (
+                  <tr key={linha.abc} className="border-b last:border-0">
+                    <td className="py-2 font-medium">{linha.abc}</td>
+                    <td>{fmtNum(linha.clientes)}</td>
+                    <td>{fmtNum(linha.areaHa)} ha</td>
+                    <td>{fmtBRL(linha.potencial)}</td>
+                    <td>{fmtBRL(linha.realizado)}</td>
+                    <td className={linha.gap <= 0 ? "text-emerald-700" : "text-red-700"}>{fmtBRL(linha.gap)}</td>
+                    <td>{fmtNum(linha.prioritariosSemProximaAcao)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      </div>
+
+      <Card className="p-4">
+        <h2 className="mb-3 text-sm font-semibold text-foreground">Visão por cliente</h2>
+        <div className="overflow-auto">
+          <table className="w-full min-w-[1120px] text-left text-xs">
+            <thead className="border-b text-muted-foreground">
+              <tr><th className="py-2">Cliente</th><th>Fazenda</th><th>Cidade</th><th>Vendedor</th><th>ABC</th><th>Prioridade</th><th>Área</th><th>Potencial</th><th>Realizado</th><th>Gap</th><th>Status</th><th>Próxima ação</th></tr>
+            </thead>
+            <tbody>
+              {gestaoComercial.porCliente.slice(0, 25).map((linha) => (
+                <tr key={linha.clienteId} className="border-b last:border-0">
+                  <td className="py-2 font-medium"><button className="text-primary hover:underline" onClick={() => nav(`/clientes/${linha.clienteId}`)}>{linha.cliente}</button></td>
+                  <td>{linha.fazenda}</td>
+                  <td>{linha.cidade}</td>
+                  <td>{linha.vendedor}</td>
+                  <td>{linha.abc}</td>
+                  <td>{linha.prioridade}</td>
+                  <td>{fmtNum(linha.areaHa)} ha</td>
+                  <td>{fmtBRL(linha.potencial)}</td>
+                  <td>{fmtBRL(linha.realizado)}</td>
+                  <td className={linha.gap <= 0 ? "text-emerald-700" : "text-red-700"}>{fmtBRL(linha.gap)}</td>
+                  <td>{linha.statusComercial}</td>
+                  <td>{linha.proximaAcao}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      <Card className="p-4">
+        <h2 className="mb-3 text-sm font-semibold text-foreground">Alertas gerenciais</h2>
+        <div className="grid gap-2 md:grid-cols-2">
+          {gestaoComercial.alertas.slice(0, 12).map((alerta) => (
+            <div key={alerta.id} className="rounded border p-3 text-xs">
+              <div className="flex items-center justify-between gap-2">
+                <b>{alerta.titulo}</b>
+                <span className={`rounded px-2 py-0.5 ${alerta.severidade === "alta" ? "bg-red-100 text-red-700" : alerta.severidade === "media" ? "bg-yellow-100 text-yellow-700" : "bg-blue-100 text-blue-700"}`}>{alerta.severidade}</span>
+              </div>
+              <div className="mt-1 text-muted-foreground">{alerta.detalhe}</div>
+            </div>
+          ))}
+          {!gestaoComercial.alertas.length && <p className="text-xs text-muted-foreground">Nenhum alerta gerencial no momento.</p>}
+        </div>
       </Card>
 
       <Card className="p-4">
