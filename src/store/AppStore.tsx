@@ -4,6 +4,7 @@ import {
   Negocio, Produto, RegraComissao, Vendedor, MetaVendedor, MetaCategoria, TicketMedioRegra, Orcamento, Empresa, ProximaAcao, FormaPagamento, PrazoPagamento, AppConfig, OportunidadeComercial,
 } from "@/types";
 import { bootstrapLocalDatabase, saveStore } from "@/lib/localRepository";
+import { restoreAccountSnapshotToLocal, type AccountSnapshot, type CloudRestoreResult } from "@/lib/cloudRestore";
 import { enqueueSyncItem, getPendingSyncItems, shouldTrackSyncStore } from "@/lib/syncQueue";
 import { getAutoSyncCooldownRemaining, runControlledUploadSync, type AutoSyncAccessStatus, type AutoSyncContext, type AutoSyncResult } from "@/lib/autoSync";
 import { getFreshSupabaseAccessContext } from "@/lib/supabaseAccess";
@@ -52,6 +53,7 @@ interface AppStoreCtx {
   syncError: string | null;
   lastAutoSyncAt: string | null;
   runManualUploadSync: (overrideContext?: ManualUploadSyncOverrideContext) => Promise<AutoSyncResult>;
+  restoreAccountSnapshot: (snapshot: AccountSnapshot) => Promise<CloudRestoreResult>;
   isReady: boolean;
   dbError: string | null;
   filters: Filters; setFilters: React.Dispatch<React.SetStateAction<Filters>>;
@@ -101,6 +103,8 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const [syncError, setSyncError] = useState<string | null>(null);
   const [lastAutoSyncAt, setLastAutoSyncAt] = useState<string | null>(null);
   const hasHydratedRef = useRef(false);
+  const isApplyingCloudRestoreRef = useRef(false);
+  const skipNextPersistStoresRef = useRef<Set<string>>(new Set());
   const lastPersistedAppConfigRef = useRef<string>(JSON.stringify({ id: "main", percentualAcertoEsperado: 12 }));
   const autoSyncTimerRef = useRef<number | null>(null);
   const autoSyncWatchdogIntervalRef = useRef<number | null>(null);
@@ -183,7 +187,11 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
 
 
   const persistStore = useCallback(async <T extends { id: string }>(store: Parameters<typeof saveStore<T>>[0], data: T[]) => {
-    if (!isReady || !hasHydratedRef.current || dbError) return;
+    if (!isReady || !hasHydratedRef.current || dbError || isApplyingCloudRestoreRef.current) return;
+    if (skipNextPersistStoresRef.current.has(store)) {
+      skipNextPersistStoresRef.current.delete(store);
+      return;
+    }
     setIsSaving(true);
     setSaveError(null);
     try {
@@ -231,6 +239,45 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => { void persistStore("formasPagamento", formasPagamento as never); }, [formasPagamento, persistStore]);
   useEffect(() => { void persistStore("prazosPagamento", prazosPagamento as never); }, [prazosPagamento, persistStore]);
   useEffect(() => { void persistStore("appConfig", [appConfig] as never); }, [appConfig, persistStore]);
+
+
+  const restoreAccountSnapshot = useCallback(async (snapshot: AccountSnapshot) => {
+    isApplyingCloudRestoreRef.current = true;
+    setIsSaving(true);
+    setSaveError(null);
+    try {
+      const result = await restoreAccountSnapshotToLocal(snapshot);
+      skipNextPersistStoresRef.current = new Set([
+        "clientes", "lancamentos", "oportunidades", "orcamentos", "negocios", "proximasAcoes",
+        "vendedores", "produtos", "formasPagamento", "prazosPagamento", "appConfig",
+      ]);
+      setClientes(result.snapshot.clientes as Cliente[]);
+      setLancamentos(result.snapshot.lancamentos as Lancamento[]);
+      setOportunidades(result.snapshot.oportunidades as OportunidadeComercial[]);
+      setOrcamentos(result.snapshot.orcamentos as Orcamento[]);
+      setNegocios(result.snapshot.negocios as Negocio[]);
+      setProximasAcoes(result.snapshot.proximasAcoes as ProximaAcao[]);
+      setVendedores(result.snapshot.vendedores as Vendedor[]);
+      setProdutos(result.snapshot.produtos as Produto[]);
+      setFormasPagamento(result.snapshot.formasPagamento as FormaPagamento[]);
+      setPrazosPagamento(result.snapshot.prazosPagamento as PrazoPagamento[]);
+      const restoredConfig = result.snapshot.appConfig[0] as AppConfig;
+      setAppConfig(restoredConfig);
+      lastPersistedAppConfigRef.current = JSON.stringify({ id: restoredConfig.id, percentualAcertoEsperado: restoredConfig.percentualAcertoEsperado });
+      setLastSavedAt(result.restoredAt);
+      setSyncStatus("synced");
+      setSyncError(null);
+      await refreshPendingSyncCount();
+      return result;
+    } catch (error) {
+      console.error(error);
+      setSaveError("Erro ao restaurar dados da conta neste dispositivo.");
+      throw error;
+    } finally {
+      isApplyingCloudRestoreRef.current = false;
+      setIsSaving(false);
+    }
+  }, [refreshPendingSyncCount]);
 
   const firstUploadConfirmed = Boolean(appConfig.syncMeta?.lastUploadAt);
 
@@ -504,7 +551,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       eventos, setEventos, prioridadesP1, setPrioridadesP1,
       negocios, setNegocios, oportunidades, setOportunidades, produtos, setProdutos,
       regras, setRegras, vendedores, setVendedores, ticketsMedios, setTicketsMedios, orcamentos, setOrcamentos, empresas, setEmpresas, proximasAcoes, setProximasAcoes, formasPagamento, setFormasPagamento, prazosPagamento, setPrazosPagamento, appConfig, setAppConfig,
-      isLoading, isReady, dbError, isSaving, lastSavedAt, saveError, pendingSyncCount, refreshPendingSyncCount, syncStatus, syncError, lastAutoSyncAt, runManualUploadSync,
+      isLoading, isReady, dbError, isSaving, lastSavedAt, saveError, pendingSyncCount, refreshPendingSyncCount, syncStatus, syncError, lastAutoSyncAt, runManualUploadSync, restoreAccountSnapshot,
       filters, setFilters,
       filtered: { lancamentos: filteredLancs, negocios: filteredNegs, oportunidades: filteredOportunidades },
       clienteById: (id) => cMap.get(id),
