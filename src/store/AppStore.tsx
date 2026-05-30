@@ -5,7 +5,7 @@ import {
 } from "@/types";
 import { bootstrapLocalDatabase, saveStore } from "@/lib/localRepository";
 import { enqueueSyncItem, getPendingSyncItems, shouldTrackSyncStore } from "@/lib/syncQueue";
-import { getAutoSyncCooldownRemaining, runControlledUploadSync, type AutoSyncContext, type AutoSyncResult } from "@/lib/autoSync";
+import { getAutoSyncCooldownRemaining, runControlledUploadSync, type AutoSyncAccessStatus, type AutoSyncContext, type AutoSyncResult } from "@/lib/autoSync";
 import { getFreshSupabaseAccessContext } from "@/lib/supabaseAccess";
 import { useAuth } from "@/store/AuthStore";
 import { calcularPotencialCliente, calcularValorMedioHaSegmentosAtivos } from "@/utils/businessRules";
@@ -15,6 +15,11 @@ interface Filters {
   abc: string; prioridade: string; rota: string;
   status: string; frente: string; vendedor: string;
 }
+
+type ManualUploadSyncOverrideContext = {
+  session: AutoSyncContext["session"];
+  accessStatus: AutoSyncAccessStatus;
+};
 
 interface AppStoreCtx {
   clientes: Cliente[]; setClientes: React.Dispatch<React.SetStateAction<Cliente[]>>;
@@ -46,7 +51,7 @@ interface AppStoreCtx {
   syncStatus: "idle" | "pending" | "syncing" | "synced" | "error" | "first-upload-required";
   syncError: string | null;
   lastAutoSyncAt: string | null;
-  runManualUploadSync: () => Promise<AutoSyncResult>;
+  runManualUploadSync: (overrideContext?: ManualUploadSyncOverrideContext) => Promise<AutoSyncResult>;
   isReady: boolean;
   dbError: string | null;
   filters: Filters; setFilters: React.Dispatch<React.SetStateAction<Filters>>;
@@ -262,11 +267,14 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     }
   }, [pendingSyncCount, refreshPendingSyncCount]);
 
-  const runManualUploadSync = useCallback(async () => {
+  const runManualUploadSync = useCallback(async (overrideContext?: ManualUploadSyncOverrideContext) => {
+    const syncSession = overrideContext?.session ?? session;
+    const syncAccessStatus = overrideContext?.accessStatus ?? accessStatus;
+
     setSyncStatus("syncing");
     setSyncError(null);
     const result = await runControlledUploadSync(
-      { session, accessStatus, firstUploadConfirmed: true },
+      { session: syncSession, accessStatus: syncAccessStatus, firstUploadConfirmed: true },
       { mode: "manual", bypassCooldown: true },
     );
     await applySyncResult(result, "manual");
