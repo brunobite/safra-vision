@@ -1,4 +1,4 @@
-import {
+import type {
   ABC,
   Cliente,
   Negocio,
@@ -7,6 +7,7 @@ import {
   ProximaAcao,
   MetaVendedor,
   TicketMedioRegra,
+  Vendedor,
 } from "@/types";
 
 const ACAO_ATIVA_STATUS = ["Pendente", "Em andamento", "Reagendada"];
@@ -106,9 +107,28 @@ export interface DashboardComercialSafra {
   alertasConfiguracao: string[];
 }
 
-export function normalizarVendedor(vendedor?: string): string {
-  const nome = vendedor?.trim();
-  return nome || "Não definido";
+function normalizarTextoVendedor(vendedor?: string): string {
+  return (vendedor || "").trim().replace(/\s+/g, " ");
+}
+
+function chaveComparacaoVendedor(vendedor?: string): string {
+  return normalizarTextoVendedor(vendedor)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase("pt-BR");
+}
+
+export function resolverVendedorCanonico(vendedor?: string, vendedores: Pick<Vendedor, "nome">[] = []): string {
+  const nomeNormalizado = normalizarTextoVendedor(vendedor);
+  if (!nomeNormalizado) return "Não definido";
+
+  const chaveVendedor = chaveComparacaoVendedor(nomeNormalizado);
+  const vendedorOficial = vendedores.find((item) => chaveComparacaoVendedor(item.nome) === chaveVendedor);
+  return vendedorOficial ? normalizarTextoVendedor(vendedorOficial.nome) : nomeNormalizado;
+}
+
+export function normalizarVendedor(vendedor?: string, vendedores: Pick<Vendedor, "nome">[] = []): string {
+  return resolverVendedorCanonico(vendedor, vendedores);
 }
 
 function temProximaAcaoAtiva(clienteId: string, proximasAcoes: ProximaAcao[], hojeIso?: string): boolean {
@@ -200,6 +220,7 @@ export function montarDashboardComercialSafra(params: {
   ticketsMedios: TicketMedioRegra[];
   percentualAcertoEsperado: number;
   metasVendedor?: MetaVendedor[];
+  vendedores?: Pick<Vendedor, "nome">[];
   negocios: Negocio[];
   orcamentos: Orcamento[];
   oportunidades: OportunidadeComercial[];
@@ -208,6 +229,7 @@ export function montarDashboardComercialSafra(params: {
 }): DashboardComercialSafra {
   const { clientes, ticketsMedios, percentualAcertoEsperado, negocios, orcamentos, oportunidades, proximasAcoes } = params;
   const metasVendedor = params.metasVendedor || [];
+  const vendedoresCadastrados = params.vendedores || [];
   const hojeIso = params.hojeIso || new Date().toISOString().slice(0, 10);
   const potencialCarteira = calcularPotencialCarteira(clientes, ticketsMedios);
   const metaCarteira = calcularMetaCarteira(clientes, ticketsMedios, percentualAcertoEsperado);
@@ -231,7 +253,7 @@ export function montarDashboardComercialSafra(params: {
       cliente: cliente.nome,
       fazenda: cliente.localidade || cliente.rota || "—",
       cidade: cliente.cidade || "—",
-      vendedor: normalizarVendedor(cliente.vendedor),
+      vendedor: resolverVendedorCanonico(cliente.vendedor, vendedoresCadastrados),
       abc: cliente.abc,
       prioridade: cliente.prioridade,
       areaHa: cliente.areaHa || 0,
@@ -266,8 +288,8 @@ export function montarDashboardComercialSafra(params: {
     mapa.set(cliente.vendedor, atual);
     return mapa;
   }, new Map<string, VisaoVendedorComercial>()).values()).map((vendedor) => {
-    const clientesDoVendedor = clientes.filter((cliente) => normalizarVendedor(cliente.vendedor) === vendedor.vendedor);
-    const metaConfigurada = metasVendedor.find((meta) => (meta.ativo ?? true) && normalizarVendedor(meta.vendedor) === vendedor.vendedor);
+    const clientesDoVendedor = clientes.filter((cliente) => resolverVendedorCanonico(cliente.vendedor, vendedoresCadastrados) === vendedor.vendedor);
+    const metaConfigurada = metasVendedor.find((meta) => (meta.ativo ?? true) && resolverVendedorCanonico(meta.vendedor, vendedoresCadastrados) === vendedor.vendedor);
     const metaManual = metaConfigurada?.metaManual ?? (metaConfigurada?.origemMeta === "proporcional" ? undefined : metaConfigurada?.meta);
     const metaAutomatica = metaConfigurada?.metaCalculada ?? metaCarteira * (potencialCarteira > 0 ? vendedor.potencial / potencialCarteira : 0);
     const metaVendedor = metaManual !== undefined ? normalizarValorNaoNegativo(metaManual) : normalizarValorNaoNegativo(metaAutomatica);
@@ -325,7 +347,7 @@ export function montarDashboardComercialSafra(params: {
   const areaTotalHa = clientes.reduce((s, cliente) => s + Math.max(0, cliente.areaHa || 0), 0);
   const regrasAtivas = ticketsMedios.filter((ticket) => ticket.ativo && normalizarValorNaoNegativo(ticket.valorMedioHa) > 0);
   const vendedoresCarteira = new Set(porVendedor.map((vendedor) => vendedor.vendedor));
-  const metasAtivas = metasVendedor.filter((meta) => (meta.ativo ?? true) && vendedoresCarteira.has(normalizarVendedor(meta.vendedor)));
+  const metasAtivas = metasVendedor.filter((meta) => (meta.ativo ?? true) && vendedoresCarteira.has(resolverVendedorCanonico(meta.vendedor, vendedoresCadastrados)));
   const alertasConfiguracao = [
     ...(regrasAtivas.length === 0 ? ["Ticket médio/ha não configurado."] : []),
     ...(percentualAcertoEsperado === undefined || percentualAcertoEsperado === null ? ["Percentual de acerto esperado não configurado."] : []),
@@ -359,11 +381,12 @@ export function distribuirMetaPorPotencial(params: {
   clientes: Cliente[];
   ticketsMedios: TicketMedioRegra[];
   percentualAcertoEsperado: number;
+  vendedores?: Pick<Vendedor, "nome">[];
 }): MetaVendedor[] {
   const potencialCarteira = calcularPotencialCarteira(params.clientes, params.ticketsMedios);
   const metaCarteira = calcularMetaCarteira(params.clientes, params.ticketsMedios, params.percentualAcertoEsperado);
   const potenciaisPorVendedor = params.clientes.reduce((mapa, cliente) => {
-    const vendedor = normalizarVendedor(cliente.vendedor);
+    const vendedor = resolverVendedorCanonico(cliente.vendedor, params.vendedores || []);
     mapa.set(vendedor, (mapa.get(vendedor) || 0) + calcularPotencialCliente(cliente, params.ticketsMedios));
     return mapa;
   }, new Map<string, number>());

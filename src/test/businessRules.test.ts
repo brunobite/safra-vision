@@ -5,8 +5,9 @@ import {
   calcularPotencialCliente,
   calcularRealizadoCarteira,
   montarDashboardComercialSafra,
+  resolverVendedorCanonico,
 } from "@/utils/businessRules";
-import { Cliente, Negocio, OportunidadeComercial, Orcamento, ProximaAcao, TicketMedioRegra } from "@/types";
+import type { Cliente, Negocio, OportunidadeComercial, Orcamento, ProximaAcao, TicketMedioRegra, Vendedor } from "@/types";
 
 const tickets: TicketMedioRegra[] = [
   { id: "t1", categoria: "Nutrição", valorMedioHa: 100, ativo: true },
@@ -181,6 +182,113 @@ describe("regras comerciais do Sprint 21", () => {
 });
 
 describe("configuração comercial do Sprint 22", () => {
+
+
+  it("normaliza vendedores herdados usando a lista oficial cadastrada", () => {
+    const vendedores: Vendedor[] = [
+      { id: "v1", nome: "BRUNO", ativo: true },
+      { id: "v2", nome: "DOUGLAS", ativo: true },
+      { id: "v3", nome: "JOÃO SILVA", ativo: true },
+    ];
+
+    expect(resolverVendedorCanonico("Bruno", vendedores)).toBe("BRUNO");
+    expect(resolverVendedorCanonico("bruno", vendedores)).toBe("BRUNO");
+    expect(resolverVendedorCanonico("Douglas", vendedores)).toBe("DOUGLAS");
+    expect(resolverVendedorCanonico("  joao   silva  ", vendedores)).toBe("JOÃO SILVA");
+    expect(resolverVendedorCanonico("", vendedores)).toBe("Não definido");
+    expect(resolverVendedorCanonico("  Sem   Cadastro  ", vendedores)).toBe("Sem Cadastro");
+  });
+
+  it("agrupa dashboard por vendedor canônico sem separar variações de caixa", () => {
+    const vendedores: Vendedor[] = [
+      { id: "v1", nome: "BRUNO", ativo: true },
+      { id: "v2", nome: "DOUGLAS", ativo: true },
+    ];
+    const painel = montarDashboardComercialSafra({
+      clientes: [
+        cliente({ id: "c1", vendedor: "Bruno", areaHa: 10 }),
+        cliente({ id: "c2", vendedor: "BRUNO", areaHa: 20 }),
+        cliente({ id: "c3", vendedor: "bruno", areaHa: 30 }),
+        cliente({ id: "c4", vendedor: "Douglas", areaHa: 40 }),
+        cliente({ id: "c5", vendedor: "", areaHa: 50 }),
+      ],
+      vendedores,
+      ticketsMedios: tickets,
+      percentualAcertoEsperado: 10,
+      negocios: [],
+      orcamentos: [],
+      oportunidades: [],
+      proximasAcoes: [],
+      hojeIso: "2026-05-30",
+    });
+
+    expect(painel.porVendedor.map((linha) => linha.vendedor).sort()).toEqual(["BRUNO", "DOUGLAS", "Não definido"]);
+    expect(painel.porVendedor.find((linha) => linha.vendedor === "BRUNO")?.clientes).toBe(3);
+    expect(painel.porVendedor.find((linha) => linha.vendedor === "BRUNO")?.potencial).toBe(9000);
+    expect(painel.porVendedor.find((linha) => linha.vendedor === "DOUGLAS")?.clientes).toBe(1);
+    expect(painel.porVendedor.find((linha) => linha.vendedor === "Não definido")?.clientes).toBe(1);
+  });
+
+  it("aplica metas manuais somente ao grupo do vendedor canônico correspondente", () => {
+    const vendedores: Vendedor[] = [
+      { id: "v1", nome: "BRUNO", ativo: true },
+      { id: "v2", nome: "DOUGLAS", ativo: true },
+    ];
+    const painel = montarDashboardComercialSafra({
+      clientes: [
+        cliente({ id: "c1", vendedor: "Bruno", areaHa: 10 }),
+        cliente({ id: "c2", vendedor: "bruno", areaHa: 20 }),
+        cliente({ id: "c3", vendedor: "Douglas", areaHa: 30 }),
+      ],
+      vendedores,
+      ticketsMedios: tickets,
+      percentualAcertoEsperado: 10,
+      metasVendedor: [
+        { id: "mv1", vendedor: "BRUNO", metaManual: 1000, ativo: true, origemMeta: "manual" },
+        { id: "mv2", vendedor: "DOUGLAS", metaManual: 2000, ativo: true, origemMeta: "manual" },
+      ],
+      negocios: [],
+      orcamentos: [],
+      oportunidades: [],
+      proximasAcoes: [],
+      hojeIso: "2026-05-30",
+    });
+
+    const bruno = painel.porVendedor.find((linha) => linha.vendedor === "BRUNO");
+    const douglas = painel.porVendedor.find((linha) => linha.vendedor === "DOUGLAS");
+    expect(bruno?.clientes).toBe(2);
+    expect(bruno?.meta).toBe(1000);
+    expect(bruno?.potencial).toBe(4500);
+    expect(douglas?.clientes).toBe(1);
+    expect(douglas?.meta).toBe(2000);
+    expect(douglas?.potencial).toBe(4500);
+  });
+
+  it("distribui automaticamente metas por potencial usando vendedores canônicos", async () => {
+    const { distribuirMetaPorPotencial } = await import("@/utils/businessRules");
+    const vendedores: Vendedor[] = [
+      { id: "v1", nome: "BRUNO", ativo: true },
+      { id: "v2", nome: "DOUGLAS", ativo: true },
+    ];
+    const distribuicao = distribuirMetaPorPotencial({
+      clientes: [
+        cliente({ id: "c1", vendedor: "Bruno", areaHa: 10 }),
+        cliente({ id: "c2", vendedor: "BRUNO", areaHa: 20 }),
+        cliente({ id: "c3", vendedor: "Douglas", areaHa: 30 }),
+        cliente({ id: "c4", vendedor: "", areaHa: 40 }),
+      ],
+      vendedores,
+      ticketsMedios: tickets,
+      percentualAcertoEsperado: 10,
+    });
+
+    expect(distribuicao.map((meta) => meta.vendedor).sort()).toEqual(["BRUNO", "DOUGLAS", "Não definido"]);
+    expect(distribuicao.reduce((soma, meta) => soma + (meta.metaCalculada || 0), 0)).toBe(1500);
+    expect(distribuicao.find((meta) => meta.vendedor === "BRUNO")?.metaCalculada).toBe(450);
+    expect(distribuicao.find((meta) => meta.vendedor === "DOUGLAS")?.metaCalculada).toBe(450);
+    expect(distribuicao.find((meta) => meta.vendedor === "Não definido")?.metaCalculada).toBe(600);
+  });
+
   it("considera apenas tickets ativos e ignora valor negativo", () => {
     const regras: TicketMedioRegra[] = [
       { id: "t1", categoria: "Nutrição", valorMedioHa: 100, ativo: true },
