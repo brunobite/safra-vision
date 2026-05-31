@@ -1,12 +1,39 @@
 import { Outlet, NavLink } from "react-router-dom";
-import { LayoutDashboard, FilePlus2, Target, FileBarChart, Users, Route, Star, CalendarDays, Settings, Sprout, GitBranch, Package, Warehouse, FileText, ListTodo, ClipboardList } from "lucide-react";
+import {
+  LayoutDashboard,
+  FilePlus2,
+  Target,
+  FileBarChart,
+  Users,
+  Route,
+  Star,
+  CalendarDays,
+  Settings,
+  Sprout,
+  GitBranch,
+  Package,
+  Warehouse,
+  FileText,
+  ListTodo,
+  ClipboardList,
+  Menu,
+  Plus,
+} from "lucide-react";
 import {
   Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel,
   SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger,
   SidebarHeader,
+  useSidebar,
 } from "@/components/ui/sidebar";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useAppStore } from "@/store/AppStore";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 
@@ -28,7 +55,24 @@ const items = [
   { group: "Sistema", title: "Configurações", url: "/configuracoes", icon: Settings },
 ];
 
+const quickActions = [
+  { title: "Agendar visita", url: "/agenda?action=agendar-visita" },
+  { title: "Lançar visita concluída", url: "/agenda?action=visita-concluida" },
+  { title: "Marcar próxima ação", url: "/agenda?action=nova-acao" },
+  { title: "Criar oportunidade", url: "/funil?new=1" },
+  { title: "Criar orçamento", url: "/orcamentos?new=1" },
+  { title: "Cadastrar cliente", url: "/clientes?new=1" },
+];
+
 function AppSidebar() {
+  const { isMobile, setOpenMobile } = useSidebar();
+
+  const closeMobileMenu = () => {
+    if (isMobile) {
+      setOpenMobile(false);
+    }
+  };
+
   return (
     <Sidebar collapsible="icon">
       <SidebarHeader className="border-b border-sidebar-border px-4 py-4">
@@ -51,9 +95,14 @@ function AppSidebar() {
               {items.filter((item) => item.group === group).map(item => (
                 <SidebarMenuItem key={item.url}>
                   <SidebarMenuButton asChild tooltip={item.title}>
-                    <NavLink to={item.url} end={item.url === "/"} className={({ isActive }) =>
-                      isActive ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium" : ""
-                    }>
+                    <NavLink
+                      to={item.url}
+                      end={item.url === "/"}
+                      onClick={closeMobileMenu}
+                      className={({ isActive }) =>
+                        isActive ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium" : ""
+                      }
+                    >
                       <item.icon className="h-4 w-4" />
                       <span>{item.title}</span>
                     </NavLink>
@@ -115,19 +164,43 @@ export default function AppLayout() {
               {syncStatus === "error" && syncError && <div className="max-w-xs truncate text-destructive/80" title={syncError}>{syncError}</div>}
             </div>
           </header>
-          <main className="flex-1 p-4 md:p-6">
+          <main className="flex-1 overflow-x-hidden p-4 pb-[calc(6rem+env(safe-area-inset-bottom))] md:p-6 md:pb-6">
             <Outlet />
           </main>
-          <div className="fixed bottom-5 right-5 z-40">
-            <Button className="h-12 w-12 rounded-full text-xl" onClick={() => setOpen((v) => !v)}>+</Button>
-            {open && <div className="mt-2 w-48 rounded border bg-card p-2 text-sm shadow">
-              <NavLink onClick={() => setOpen(false)} className="block rounded px-2 py-1 hover:bg-accent" to="/agenda?action=agendar-visita">Agendar visita</NavLink>
-              <NavLink onClick={() => setOpen(false)} className="block rounded px-2 py-1 hover:bg-accent" to="/agenda?action=visita-concluida">Lançar visita concluída</NavLink>
-              <NavLink onClick={() => setOpen(false)} className="block rounded px-2 py-1 hover:bg-accent" to="/funil?new=1">Criar oportunidade</NavLink>
-              <NavLink onClick={() => setOpen(false)} className="block rounded px-2 py-1 hover:bg-accent" to="/orcamentos?new=1">Criar orçamento</NavLink>
-              <NavLink onClick={() => setOpen(false)} className="block rounded px-2 py-1 hover:bg-accent" to="/agenda?action=nova-acao">Marcar próxima ação</NavLink>
-              <NavLink onClick={() => setOpen(false)} className="block rounded px-2 py-1 hover:bg-accent" to="/clientes?new=1">Cadastrar cliente</NavLink>
+          <div className="fixed bottom-5 right-5 z-40 hidden md:block">
+            <Button className="h-12 w-12 rounded-full text-xl" onClick={() => setOpen((v) => !v)} aria-label="Abrir ações rápidas">+</Button>
+            {open && <div className="absolute bottom-14 right-0 w-56 rounded border bg-card p-2 text-sm shadow">
+              {quickActions.map((action) => (
+                <NavLink key={action.url} onClick={() => setOpen(false)} className="block rounded px-2 py-2 hover:bg-accent" to={action.url}>{action.title}</NavLink>
+              ))}
             </div>}
+          </div>
+          <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-card/95 px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-3 shadow-[0_-8px_24px_rgba(15,23,42,0.12)] backdrop-blur md:hidden">
+            <div className="mx-auto grid max-w-md grid-cols-2 gap-3">
+              <SidebarTrigger
+                className="h-11 w-full min-w-11 justify-center rounded-xl border border-border bg-background text-foreground shadow-sm hover:bg-accent"
+                aria-label="Abrir menu de navegação"
+              >
+                <Menu className="h-5 w-5" />
+                <span>Menu</span>
+              </SidebarTrigger>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button className="h-11 min-w-11 rounded-xl shadow-sm" aria-label="Abrir ações rápidas">
+                    <Plus className="h-5 w-5" />
+                    <span>Adicionar rápido</span>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" side="top" sideOffset={12} className="z-40 mb-1 w-[min(22rem,calc(100vw-2rem))] p-2">
+                  <DropdownMenuLabel>Ações rápidas</DropdownMenuLabel>
+                  {quickActions.map((action) => (
+                    <DropdownMenuItem key={action.url} asChild className="min-h-11 cursor-pointer text-sm">
+                      <NavLink to={action.url}>{action.title}</NavLink>
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
           </div>
         </div>
       </div>
