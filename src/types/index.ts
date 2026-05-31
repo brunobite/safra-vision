@@ -51,6 +51,10 @@ export interface ProximaAcao {
   data: string;
   status: StatusProximaAcao;
   origem?: "Cliente" | "Lançamento" | "Negócio" | "Orçamento" | "Avulsa";
+  googleCalendarSyncStatus?: "pending" | "synced" | "error" | "not_required";
+  googleCalendarEventId?: string;
+  dataHoraInicio?: string;
+  dataHoraFim?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -148,6 +152,10 @@ export interface Lancamento {
   proximaAcao?: string;
   dataProximaAcao?: string;
   tipoProximaAcao?: TipoProximaAcao;
+  googleCalendarSyncStatus?: "pending" | "synced" | "error" | "not_required";
+  googleCalendarEventId?: string;
+  dataHoraInicio?: string;
+  dataHoraFim?: string;
 }
 
 export interface Negocio {

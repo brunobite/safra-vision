@@ -8,6 +8,8 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Lancamento, ProximaAcao, StatusProximaAcao, TipoLancamento, TipoProximaAcao } from "@/types";
 import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Filter } from "lucide-react";
 
 const TIPOS: TipoProximaAcao[] = ["Visita", "Ligação", "WhatsApp", "Enviar orçamento", "Cobrar retorno", "Pós-venda", "Renovação", "Outro"];
 const STATUSES: StatusProximaAcao[] = ["Pendente", "Em andamento", "Realizada", "Reagendada", "Cancelada", "Concluída"];
@@ -28,6 +30,8 @@ export default function ProximasAcoes() {
   const [buscaCliente, setBuscaCliente] = useState("");
   const [fStatus, setFStatus] = useState("__all__");
   const [fGrupo, setFGrupo] = useState<"responsavel"|"vendedor">("responsavel");
+  const [filtrosOpen, setFiltrosOpen] = useState(false);
+  const [draftFiltros, setDraftFiltros] = useState({ status: "__all__", grupo: "responsavel" as "responsavel"|"vendedor" });
   const nav = useNavigate();
   const hoje = new Date().toISOString().slice(0, 10);
   const semanaFim = new Date();
@@ -115,7 +119,7 @@ export default function ProximasAcoes() {
   </Card>
 
   <Card className="p-4">
-  <div className="mb-3 flex gap-3"><div className="w-60"><Label>Filtro status</Label><Select value={fStatus} onValueChange={setFStatus}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="__all__">Todos</SelectItem>{STATUSES.map(s=><SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent></Select></div><div className="w-60"><Label>Agrupar por</Label><Select value={fGrupo} onValueChange={(v:"responsavel"|"vendedor")=>setFGrupo(v)}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="responsavel">Responsável</SelectItem><SelectItem value="vendedor">Vendedor</SelectItem></SelectContent></Select></div></div>
+  <div className="mb-3 flex items-center justify-between gap-3"><h2 className="font-semibold">Consulta de próximas ações</h2><Button variant="ghost" className="h-auto px-2 py-1 text-xs" onClick={() => { setDraftFiltros({ status: fStatus, grupo: fGrupo }); setFiltrosOpen(true); }}><Filter className="mr-1 h-3.5 w-3.5" />Filtros{fStatus !== "__all__" ? " (1)" : ""}</Button></div>
   <div className="space-y-4">{Object.entries(porGrupo).map(([g, items])=><div key={g}><h3 className="mb-2 font-semibold">{g} <span className="text-muted-foreground">({items.length})</span></h3><div className="space-y-2">{items.map((a)=><div key={a.id} className="rounded-xl border bg-card p-3 text-sm">
     <div className="mb-2 flex flex-wrap items-center justify-between gap-2"><button className="font-semibold text-primary hover:underline" onClick={() => a.clienteId && nav(`/clientes/${a.clienteId}`)}>{clienteById(a.clienteId || "")?.nome || "Sem cliente"}</button><Badge variant={a.data < hoje && a.status === "Pendente" ? "destructive" : "outline"}>{a.status}</Badge></div>
     <div className="grid gap-1 text-muted-foreground md:grid-cols-2"><span><b className="text-foreground">Data:</b> {a.data}</span><span><b className="text-foreground">Tipo:</b> {a.tipo}</span><span><b className="text-foreground">Responsável:</b> {a.responsavel || "—"}</span><span><b className="text-foreground">Objetivo:</b> {a.objetivo || "—"}</span><span><b className="text-foreground">Descrição:</b> {a.descricao}</span><span><b className="text-foreground">Observações:</b> {a.observacoes || "—"}</span>
@@ -123,5 +127,7 @@ export default function ProximasAcoes() {
     <div className="mt-3 flex flex-wrap gap-2"><Select value={a.status} onValueChange={(v: StatusProximaAcao)=>setProximasAcoes(prev=>prev.map(x=>x.id===a.id?{...x,status:v,updatedAt:new Date().toISOString()}:x))}><SelectTrigger className="w-full md:w-44"><SelectValue/></SelectTrigger><SelectContent>{STATUSES.map(s=><SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent></Select>
     <Button size="sm" variant="outline" onClick={() => concluirAcao(a, false)}>Concluir</Button>
     <Button size="sm" onClick={() => concluirAcao(a, true)}>Concluir + gerar lançamento</Button></div>
-    </div>)}</div></div>)}</div></Card></div>;
+    </div>)}</div></div>)}</div></Card>
+    <Dialog open={filtrosOpen} onOpenChange={setFiltrosOpen}><DialogContent><DialogHeader><DialogTitle className="flex items-center gap-2"><Filter className="h-4 w-4" />Filtros de Próximas Ações</DialogTitle></DialogHeader><div className="grid gap-3 md:grid-cols-2"><div><Label>Status</Label><Select value={draftFiltros.status} onValueChange={(status)=>setDraftFiltros((atual)=>({...atual,status}))}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="__all__">Todos</SelectItem>{STATUSES.map(s=><SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent></Select></div><div><Label>Agrupar por</Label><Select value={draftFiltros.grupo} onValueChange={(grupo:"responsavel"|"vendedor")=>setDraftFiltros((atual)=>({...atual,grupo}))}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="responsavel">Responsável</SelectItem><SelectItem value="vendedor">Vendedor</SelectItem></SelectContent></Select></div></div><DialogFooter><Button variant="outline" onClick={()=>{setDraftFiltros({status:"__all__",grupo:"responsavel"});setFStatus("__all__");setFGrupo("responsavel");}}>Limpar</Button><Button onClick={()=>{setFStatus(draftFiltros.status);setFGrupo(draftFiltros.grupo);setFiltrosOpen(false);}}>Aplicar filtros</Button></DialogFooter></DialogContent></Dialog>
+    </div>;
 }

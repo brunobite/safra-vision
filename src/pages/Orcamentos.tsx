@@ -112,6 +112,11 @@ export default function Orcamentos() {
       return;
     }
 
+    if (params.get("new")) {
+      novoOrcamento();
+      return;
+    }
+
     const oportunidadeId = params.get("oportunidadeId");
     if (!oportunidadeId) return;
     const op = oportunidades.find((x) => x.id === oportunidadeId);
