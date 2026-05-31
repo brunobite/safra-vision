@@ -4,6 +4,7 @@ const CRITICAL_ROUTES_PRELOADERS = [
   () => import("@/pages/ClienteFicha360"),
   () => import("@/pages/Lancamentos"),
   () => import("@/pages/ProximasAcoes"),
+  () => import("@/pages/Agenda"),
   () => import("@/pages/FunilVendas"),
   () => import("@/pages/Orcamentos"),
   () => import("@/pages/Configuracoes"),

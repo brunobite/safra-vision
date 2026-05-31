@@ -1,5 +1,5 @@
 import { Outlet, NavLink } from "react-router-dom";
-import { LayoutDashboard, FilePlus2, Target, FileBarChart, Users, Route, Star, CalendarDays, Settings, Sprout, GitBranch, Package, Warehouse, FileText, ListTodo } from "lucide-react";
+import { LayoutDashboard, FilePlus2, Target, FileBarChart, Users, Route, Star, CalendarDays, Settings, Sprout, GitBranch, Package, Warehouse, FileText, ListTodo, ClipboardList } from "lucide-react";
 import {
   Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel,
   SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger,
@@ -14,6 +14,7 @@ const items = [
   { group: "Visão geral", title: "Dashboard", url: "/", icon: LayoutDashboard },
   { group: "Comercial", title: "Lançamentos", url: "/lancamentos", icon: FilePlus2 },
   { group: "Comercial", title: "Próximas ações", url: "/proximas-acoes", icon: ListTodo },
+  { group: "Comercial", title: "Agenda", url: "/agenda", icon: ClipboardList },
   { group: "Comercial", title: "Funil de Vendas", url: "/funil", icon: GitBranch },
   { group: "Comercial", title: "Orçamentos", url: "/orcamentos", icon: FileText },
   { group: "Cadastros", title: "Clientes", url: "/clientes", icon: Users },
@@ -122,6 +123,7 @@ export default function AppLayout() {
             {open && <div className="mt-2 w-48 rounded border bg-card p-2 text-sm shadow">
               <NavLink className="block rounded px-2 py-1 hover:bg-accent" to="/lancamentos">Nova visita</NavLink>
               <NavLink className="block rounded px-2 py-1 hover:bg-accent" to="/proximas-acoes">Nova ação</NavLink>
+              <NavLink className="block rounded px-2 py-1 hover:bg-accent" to="/agenda">Agenda</NavLink>
               <NavLink className="block rounded px-2 py-1 hover:bg-accent" to="/clientes">Novo cliente</NavLink>
               <NavLink className="block rounded px-2 py-1 hover:bg-accent" to="/funil">Nova oportunidade</NavLink>
               <NavLink className="block rounded px-2 py-1 hover:bg-accent" to="/orcamentos">Novo orçamento</NavLink>

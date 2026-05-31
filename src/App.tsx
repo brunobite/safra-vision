@@ -24,6 +24,7 @@ const Produtos = lazy(() => import("./pages/Produtos"));
 const PrecosEstoque = lazy(() => import("./pages/PrecosEstoque"));
 const Orcamentos = lazy(() => import("./pages/Orcamentos"));
 const ProximasAcoes = lazy(() => import("./pages/ProximasAcoes"));
+const Agenda = lazy(() => import("./pages/Agenda"));
 const ClienteFicha360 = lazy(() => import("./pages/ClienteFicha360"));
 const Login = lazy(() => import("./pages/Login"));
 
@@ -67,6 +68,7 @@ const App = () => {
                 <Route path="/prioridades" element={<PrioridadesP1 />} />
                 <Route path="/eventos" element={<Eventos />} />
                 <Route path="/proximas-acoes" element={<ProximasAcoes />} />
+                <Route path="/agenda" element={<Agenda />} />
                 <Route path="/configuracoes" element={<Configuracoes />} />
               </Route>
               <Route path="/login" element={<Login />} />

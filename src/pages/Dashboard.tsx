@@ -5,6 +5,7 @@ import { KpiCard } from "@/components/dashboard/KpiCard";
 import { useAppStore } from "@/store/AppStore";
 import { calcDashboard, fmtBRL, fmtNum, fmtPct } from "@/utils/calculations";
 import { montarDashboardComercialSafra } from "@/utils/businessRules";
+import { calcularResumoAgenda, montarItensAgenda } from "@/utils/agenda";
 import {
   TrendingUp, AlertTriangle, FileText, CalendarDays, Layers, Clock, Percent, Award,
 } from "lucide-react";
@@ -76,6 +77,8 @@ export default function Dashboard() {
   const realizado = gestaoComercial.realizado;
   const pct = gestaoComercial.percentualAtingido;
   const gapParaMeta = gestaoComercial.gap;
+  const agendaResumo = useMemo(() => calcularResumoAgenda(montarItensAgenda({ clientes, proximasAcoes, oportunidades, orcamentos, negocios, vendedores, hojeIso: hoje })), [clientes, proximasAcoes, oportunidades, orcamentos, negocios, vendedores, hoje]);
+
   const operacionais = useMemo(() => ({
     atrasados: clientes.filter(c => c.statusAtual !== "Inativo" && ((c.dataProximaAcao && c.dataProximaAcao < hoje) || (c.retorno && c.retorno < hoje))).length,
     proximasSemana: proximasAcoes.filter(a=>a.status==="Pendente" && a.data >= hoje).length,
@@ -309,7 +312,10 @@ export default function Dashboard() {
       </Card>
 
       <Card className="p-4">
-        <h2 className="mb-3 text-sm font-semibold text-foreground">Operação comercial</h2>
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold text-foreground">Operação comercial</h2>
+          <button className="text-xs text-primary hover:underline" onClick={() => nav("/agenda")}>Abrir Agenda</button>
+        </div>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
         <KpiCard label="Pipeline aberto" value={fmtBRL(kpis.pipelineAberto)} icon={Layers} tone="muted" />
         <KpiCard label="Clientes atrasados" value={fmtNum(operacionais.atrasados)} icon={AlertTriangle} tone="destructive" />
@@ -318,6 +324,10 @@ export default function Dashboard() {
         <KpiCard label="Orçamentos abertos" value={fmtNum(operacionais.orcamentosAbertos)} icon={FileText} />
         <KpiCard label="Negócios abertos" value={fmtNum(operacionais.negociosAbertos)} icon={Layers} />
         <KpiCard label="Visitas do mês" value={fmtNum(operacionais.visitasMes)} icon={TrendingUp} />
+        <KpiCard label="Agenda atrasada" value={fmtNum(agendaResumo.atrasadas)} icon={AlertTriangle} tone="destructive" />
+        <KpiCard label="Agenda hoje" value={fmtNum(agendaResumo.hoje)} icon={Clock} />
+        <KpiCard label="A/P1 sem ação" value={fmtNum(agendaResumo.clientesAP1SemProximaAcao)} icon={CalendarDays} tone="warning" />
+        <KpiCard label="Próximos 7 dias" value={fmtNum(agendaResumo.proximos7Dias)} icon={CalendarDays} />
         </div>
       </Card>
 
