@@ -77,7 +77,7 @@ export default function Dashboard() {
   const realizado = gestaoComercial.realizado;
   const pct = gestaoComercial.percentualAtingido;
   const gapParaMeta = gestaoComercial.gap;
-  const agendaResumo = useMemo(() => calcularResumoAgenda(montarItensAgenda({ clientes, proximasAcoes, oportunidades, orcamentos, negocios, vendedores, hojeIso: hoje })), [clientes, proximasAcoes, oportunidades, orcamentos, negocios, vendedores, hoje]);
+  const agendaResumo = useMemo(() => calcularResumoAgenda(montarItensAgenda({ clientes, proximasAcoes, oportunidades, orcamentos, negocios, vendedores, hojeIso: hoje }), hoje), [clientes, proximasAcoes, oportunidades, orcamentos, negocios, vendedores, hoje]);
 
   const operacionais = useMemo(() => ({
     atrasados: clientes.filter(c => c.statusAtual !== "Inativo" && ((c.dataProximaAcao && c.dataProximaAcao < hoje) || (c.retorno && c.retorno < hoje))).length,

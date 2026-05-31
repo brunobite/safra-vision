@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buscarClientesAgenda,
   calcularResumoAgenda,
   classificarAgenda,
   concluirAcaoAgenda,
@@ -89,11 +90,11 @@ function negocio(overrides: Partial<Negocio>): Negocio {
 
 describe("classificação da agenda", () => {
   it("classifica ações vencidas, de hoje, semana, sem data e concluídas", () => {
-    expect(classificarAgenda("2026-05-30", "Pendente", hoje)).toBe("Atrasado");
-    expect(classificarAgenda(hoje, "Pendente", hoje)).toBe("Hoje");
-    expect(classificarAgenda("2026-06-06", "Pendente", hoje)).toBe("Próximos 7 dias");
-    expect(classificarAgenda("", "Pendente", hoje)).toBe("Sem data");
-    expect(classificarAgenda("2026-05-30", "Concluída", hoje)).toBe("Concluído");
+    expect(classificarAgenda("2026-05-30", "Pendente", hoje)).toBe("Atrasada");
+    expect(classificarAgenda(hoje, "Pendente", hoje)).toBe("Pendente hoje");
+    expect(classificarAgenda("2026-06-06", "Pendente", hoje)).toBe("Agendada");
+    expect(classificarAgenda("", "Pendente", hoje)).toBe("Sem agendamento");
+    expect(classificarAgenda("2026-05-30", "Concluída", hoje)).toBe("Concluída");
   });
 
   it("não conta ação concluída como pendente no resumo", () => {
@@ -103,9 +104,9 @@ describe("classificação da agenda", () => {
       vendedores,
       hojeIso: hoje,
     });
-    const resumo = calcularResumoAgenda(itens);
+    const resumo = calcularResumoAgenda(itens, hoje);
     expect(resumo.atrasadas).toBe(1);
-    expect(itens.find((item) => item.sourceId === "a2")?.classificacao).toBe("Concluído");
+    expect(itens.find((item) => item.sourceId === "a2")?.classificacao).toBe("Concluída");
   });
 });
 
@@ -154,6 +155,30 @@ describe("alertas operacionais", () => {
   });
 });
 
+describe("busca ativa de cliente", () => {
+  const clientesBusca = [
+    cliente({ id: "c1", nome: "Luiz Reinaldo Bredow", localidade: "Granja Bredow", cidade: "Cachoeira do Sul", vendedor: "bruno" }),
+    cliente({ id: "c2", nome: "Maria Oliveira", localidade: "Estância Bela", cidade: "Rio Pardo", vendedor: "DOUGLAS" }),
+  ];
+
+  it("busca por nome retorna cliente", () => {
+    expect(buscarClientesAgenda(clientesBusca, "bredow", vendedores).map((item) => item.id)).toEqual(["c1"]);
+  });
+
+  it("busca por fazenda retorna cliente", () => {
+    expect(buscarClientesAgenda(clientesBusca, "granja", vendedores).map((item) => item.id)).toEqual(["c1"]);
+  });
+
+  it("busca por cidade retorna cliente", () => {
+    expect(buscarClientesAgenda(clientesBusca, "cachoeira", vendedores).map((item) => item.id)).toEqual(["c1"]);
+  });
+
+  it("seleção preenche cliente correto e herda vendedor canônico", () => {
+    const [selecionado] = buscarClientesAgenda(clientesBusca, "bredow", vendedores);
+    expect(selecionado).toMatchObject({ id: "c1", nome: "Luiz Reinaldo Bredow", fazenda: "Granja Bredow", cidade: "Cachoeira do Sul", vendedor: "BRUNO" });
+  });
+});
+
 describe("ações da agenda", () => {
   it("concluir ação altera status e registra data de conclusão", () => {
     const resultado = concluirAcaoAgenda([acao({ id: "a1" })], "a1", "2026-05-31T12:00:00.000Z");
@@ -174,6 +199,25 @@ describe("ações da agenda", () => {
     expect(novo.clienteId).toBe("c9");
     expect(novo.responsavel).toBe("BRUNO");
   });
+
+  it("ação criada sem horário continua válida", () => {
+    const novo = criarAcaoRapidaAgenda({ cliente: cliente({ id: "c9", vendedor: "DOUGLAS" }), tipo: "Visita", data: hoje, descricao: "Pegar KML", now: "2026-05-31T12:00:00.000Z", id: "sem-horario", vendedores });
+    expect((novo as ProximaAcao & { horario?: string }).horario).toBeUndefined();
+    expect(novo.data).toBe(hoje);
+  });
+
+  it("ação criada com data/hora aparece na agenda", () => {
+    const novo = criarAcaoRapidaAgenda({ cliente: cliente({ id: "c9", vendedor: "BRUNO" }), tipo: "Visita", data: hoje, horario: "13:30", descricao: "Pegar KML", now: "2026-05-31T12:00:00.000Z", id: "com-agendamento", vendedores });
+    const [item] = montarItensAgenda({ clientes: [cliente({ id: "c9", nome: "Luiz Reinaldo Bredow" })], proximasAcoes: [novo], vendedores, hojeIso: hoje });
+    expect(item).toMatchObject({ cliente: "Luiz Reinaldo Bredow", descricao: "Pegar KML", horario: "13:30", classificacao: "Pendente hoje" });
+  });
+
+  it("ação sem data aparece como Sem agendamento", () => {
+    const novo = criarAcaoRapidaAgenda({ cliente: cliente({ id: "c9", vendedor: "BRUNO" }), tipo: "Visita", descricao: "Pegar KML", now: "2026-05-31T12:00:00.000Z", id: "sem-data", vendedores });
+    const [item] = montarItensAgenda({ clientes: [cliente({ id: "c9" })], proximasAcoes: [novo], vendedores, hojeIso: hoje });
+    expect(novo.data).toBe("");
+    expect(item.classificacao).toBe("Sem agendamento");
+  });
 });
 
 describe("resumo da agenda para dashboard", () => {
@@ -192,6 +236,30 @@ describe("resumo da agenda para dashboard", () => {
       vendedores,
       hojeIso: hoje,
     });
-    expect(calcularResumoAgenda(itens)).toMatchObject({ atrasadas: 1, hoje: 1, proximos7Dias: 1 });
+    expect(calcularResumoAgenda(itens, hoje)).toMatchObject({ atrasadas: 1, hoje: 1, proximos7Dias: 2 });
+  });
+});
+
+
+describe("fluxo comercial na agenda", () => {
+  it("item da agenda mostra cliente, objetivo, vendedor e status", () => {
+    const [item] = montarItensAgenda({
+      clientes: [cliente({ id: "c1", nome: "Luiz Reinaldo Bredow", vendedor: "bruno" })],
+      proximasAcoes: [acao({ id: "a1", clienteId: "c1", descricao: "Pegar KML das áreas para orçamento", data: hoje })],
+      vendedores,
+      hojeIso: hoje,
+    });
+    expect(item).toMatchObject({ cliente: "Luiz Reinaldo Bredow", descricao: "Pegar KML das áreas para orçamento", vendedor: "BRUNO", classificacao: "Pendente hoje" });
+  });
+
+  it("cliente sem próxima ação aparece em alerta próprio", () => {
+    const itens = montarItensAgenda({ clientes: [cliente({ id: "c1", abc: "A", prioridade: "P2", proximaAcao: undefined })], proximasAcoes: [], vendedores, hojeIso: hoje });
+    expect(itens.some((item) => item.status === "Sem próxima ação" && item.alertaTipo === "cliente-a-sem-proxima-acao")).toBe(true);
+  });
+
+  it("ação sem agendamento não é tratada como cliente sem ação", () => {
+    const itens = montarItensAgenda({ clientes: [cliente({ id: "c1", abc: "A", prioridade: "P1" })], proximasAcoes: [acao({ id: "a1", clienteId: "c1", data: "" })], vendedores, hojeIso: hoje });
+    expect(itens.some((item) => item.classificacao === "Sem agendamento" && item.sourceId === "a1")).toBe(true);
+    expect(itens.some((item) => item.status === "Sem próxima ação")).toBe(false);
   });
 });
