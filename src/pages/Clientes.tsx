@@ -1,5 +1,5 @@
-import { useCallback, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -37,6 +37,7 @@ export default function Clientes() {
   const [form, setForm] = useState<Omit<Cliente, "id">>(empty);
   const [view, setView] = useState<Cliente | null>(null);
   const nav = useNavigate();
+  const [params, setParams] = useSearchParams();
 
   const cidades = useMemo(() => Array.from(new Set(clientes.map(c => c.cidade))), [clientes]);
   const statuses = useMemo(() => Array.from(new Set(clientes.map(c => c.statusAtual))), [clientes]);
@@ -82,6 +83,7 @@ export default function Clientes() {
 
 
   const openNew = () => { setEdit(null); setForm(empty); setOpen(true); };
+  useEffect(() => { if (params.get("new")) { openNew(); setParams({}); } }, [params, setParams]);
   const openEdit = (c: Cliente) => { setEdit(c); const { id, ...rest } = c; void id; setForm(rest); setOpen(true); };
   const calcStatus = (clienteId: string, inativoManual?: boolean) => {
     if (inativoManual) return "Inativo";

@@ -12,9 +12,9 @@ import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 
 const items = [
   { group: "Visão geral", title: "Dashboard", url: "/", icon: LayoutDashboard },
-  { group: "Comercial", title: "Lançamentos", url: "/lancamentos", icon: FilePlus2 },
+  { group: "Comercial", title: "Agenda e Visitas", url: "/agenda", icon: ClipboardList },
   { group: "Comercial", title: "Próximas ações", url: "/proximas-acoes", icon: ListTodo },
-  { group: "Comercial", title: "Agenda", url: "/agenda", icon: ClipboardList },
+  { group: "Comercial", title: "Lançamentos", url: "/lancamentos", icon: FilePlus2 },
   { group: "Comercial", title: "Funil de Vendas", url: "/funil", icon: GitBranch },
   { group: "Comercial", title: "Orçamentos", url: "/orcamentos", icon: FileText },
   { group: "Cadastros", title: "Clientes", url: "/clientes", icon: Users },
@@ -121,12 +121,12 @@ export default function AppLayout() {
           <div className="fixed bottom-5 right-5 z-40">
             <Button className="h-12 w-12 rounded-full text-xl" onClick={() => setOpen((v) => !v)}>+</Button>
             {open && <div className="mt-2 w-48 rounded border bg-card p-2 text-sm shadow">
-              <NavLink className="block rounded px-2 py-1 hover:bg-accent" to="/lancamentos">Nova visita</NavLink>
-              <NavLink className="block rounded px-2 py-1 hover:bg-accent" to="/proximas-acoes">Nova ação</NavLink>
-              <NavLink className="block rounded px-2 py-1 hover:bg-accent" to="/agenda">Agenda</NavLink>
-              <NavLink className="block rounded px-2 py-1 hover:bg-accent" to="/clientes">Novo cliente</NavLink>
-              <NavLink className="block rounded px-2 py-1 hover:bg-accent" to="/funil">Nova oportunidade</NavLink>
-              <NavLink className="block rounded px-2 py-1 hover:bg-accent" to="/orcamentos">Novo orçamento</NavLink>
+              <NavLink onClick={() => setOpen(false)} className="block rounded px-2 py-1 hover:bg-accent" to="/agenda?action=agendar-visita">Agendar visita</NavLink>
+              <NavLink onClick={() => setOpen(false)} className="block rounded px-2 py-1 hover:bg-accent" to="/agenda?action=visita-concluida">Lançar visita concluída</NavLink>
+              <NavLink onClick={() => setOpen(false)} className="block rounded px-2 py-1 hover:bg-accent" to="/funil?new=1">Criar oportunidade</NavLink>
+              <NavLink onClick={() => setOpen(false)} className="block rounded px-2 py-1 hover:bg-accent" to="/orcamentos?new=1">Criar orçamento</NavLink>
+              <NavLink onClick={() => setOpen(false)} className="block rounded px-2 py-1 hover:bg-accent" to="/agenda?action=nova-acao">Marcar próxima ação</NavLink>
+              <NavLink onClick={() => setOpen(false)} className="block rounded px-2 py-1 hover:bg-accent" to="/clientes?new=1">Cadastrar cliente</NavLink>
             </div>}
           </div>
         </div>
