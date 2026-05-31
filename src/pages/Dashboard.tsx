@@ -15,7 +15,7 @@ import {
 } from "recharts";
 
 export default function Dashboard() {
-  const { clientes, metasEmpresa, metasPessoais, filtered, lancamentos, negocios, regras, orcamentos, oportunidades, proximasAcoes, appConfig, clienteById, ticketsMedios } = useAppStore();
+  const { clientes, metasEmpresa, metasPessoais, filtered, lancamentos, negocios, regras, orcamentos, oportunidades, proximasAcoes, appConfig, clienteById, ticketsMedios, metasVendedor } = useAppStore();
   const [acaoFiltro, setAcaoFiltro] = useState<"hoje"|"semana"|"mes"|"atrasadas"|"todas">("hoje");
   const nav = useNavigate();
 
@@ -63,12 +63,13 @@ export default function Dashboard() {
     clientes,
     ticketsMedios,
     percentualAcertoEsperado: taxa,
+    metasVendedor,
     negocios,
     orcamentos,
     oportunidades,
     proximasAcoes,
     hojeIso: hoje,
-  }), [clientes, ticketsMedios, taxa, negocios, orcamentos, oportunidades, proximasAcoes, hoje]);
+  }), [clientes, ticketsMedios, taxa, metasVendedor, negocios, orcamentos, oportunidades, proximasAcoes, hoje]);
   const potencialCarteira = gestaoComercial.potencialCarteira;
   const metaCarteira = gestaoComercial.metaCarteira;
   const realizado = gestaoComercial.realizado;
@@ -150,6 +151,7 @@ export default function Dashboard() {
         <KpiCard label="Gap para meta" value={fmtBRL(gapParaMeta)} icon={AlertTriangle} tone={gapParaMeta <= 0 ? "success" : "destructive"} />
         </div>
         {potencialCarteira === 0 && <p className="mt-3 text-xs text-muted-foreground">Potencial da carteira ainda não configurado.</p>}
+        {gestaoComercial.alertasConfiguracao.length > 0 && <div className="mt-3 grid gap-2 md:grid-cols-2">{gestaoComercial.alertasConfiguracao.map((alerta) => <div key={alerta} className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{alerta}</div>)}</div>}
       </Card>
 
       <Card className="p-4">
@@ -173,7 +175,7 @@ export default function Dashboard() {
           <div className="overflow-auto">
             <table className="w-full min-w-[760px] text-left text-xs">
               <thead className="border-b text-muted-foreground">
-                <tr><th className="py-2">Vendedor</th><th>Clientes</th><th>Área</th><th>Potencial</th><th>Realizado</th><th>Gap</th><th>%</th><th>Opp.</th><th>Ações críticas</th></tr>
+                <tr><th className="py-2">Vendedor</th><th>Clientes</th><th>Área</th><th>Potencial</th><th>Meta</th><th>Origem</th><th>Realizado</th><th>Gap</th><th>%</th><th>Opp.</th><th>Ações críticas</th></tr>
               </thead>
               <tbody>
                 {gestaoComercial.porVendedor.map((linha) => (
@@ -182,6 +184,8 @@ export default function Dashboard() {
                     <td>{fmtNum(linha.clientes)}</td>
                     <td>{fmtNum(linha.areaHa)} ha</td>
                     <td>{fmtBRL(linha.potencial)}</td>
+                    <td>{fmtBRL(linha.meta)}</td>
+                    <td><span className={`rounded px-2 py-0.5 ${linha.origemMeta === "manual" ? "bg-emerald-100 text-emerald-700" : "bg-blue-100 text-blue-700"}`}>{linha.origemMeta === "manual" ? "manual" : "automática"}</span></td>
                     <td>{fmtBRL(linha.realizado)}</td>
                     <td className={linha.gap <= 0 ? "text-emerald-700" : "text-red-700"}>{fmtBRL(linha.gap)}</td>
                     <td>{fmtPct(linha.percentualAtingido)}</td>

@@ -239,7 +239,16 @@ export interface MetaPessoal {
 }
 
 export interface MetaVendedor {
-  id: string; vendedor: string; mes: string; meta: number;
+  id: string;
+  vendedor: string;
+  mes?: string;
+  meta?: number;
+  metaManual?: number;
+  percentualMetaCarteira?: number;
+  metaCalculada?: number;
+  observacao?: string;
+  ativo?: boolean;
+  origemMeta?: "manual" | "proporcional";
 }
 export interface MetaCategoria {
   id: string; categoria: CategoriaProduto; mes: string; meta: number;
@@ -318,7 +327,18 @@ export interface RegraComissao {
 }
 
 
-export interface TicketMedioRegra { id: string; categoria: CategoriaProduto; valorMedioHa: number; ativo: boolean; }
+export interface TicketMedioRegra {
+  id: string;
+  categoria: CategoriaProduto;
+  nome?: string;
+  descricao?: string;
+  valorMedioHa: number;
+  ativo: boolean;
+  ordem?: number;
+  observacao?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
 
 export interface FormaPagamento {
   id: string;

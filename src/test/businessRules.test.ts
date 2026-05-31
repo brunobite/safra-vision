@@ -179,3 +179,97 @@ describe("regras comerciais do Sprint 21", () => {
     expect(painel.alertas.map((alerta) => alerta.tipo)).toContain("orcamento-aprovado-sem-negocio");
   });
 });
+
+describe("configuração comercial do Sprint 22", () => {
+  it("considera apenas tickets ativos e ignora valor negativo", () => {
+    const regras: TicketMedioRegra[] = [
+      { id: "t1", categoria: "Nutrição", valorMedioHa: 100, ativo: true },
+      { id: "t2", categoria: "Sementes", valorMedioHa: 25, ativo: false },
+      { id: "t3", categoria: "Biológicos", valorMedioHa: 50, ativo: true },
+      { id: "t4", categoria: "Outros", valorMedioHa: -999, ativo: true },
+    ];
+
+    expect(calcularPotencialCliente(cliente({ areaHa: 2 }), regras)).toBe(300);
+  });
+
+  it("limita percentual de acerto, aceita decimal e permite meta zero", () => {
+    const clientes = [cliente({ id: "c1", areaHa: 10 })];
+
+    expect(calcularMetaCarteira(clientes, tickets, 12.5)).toBe(187.5);
+    expect(calcularMetaCarteira(clientes, tickets, 0)).toBe(0);
+    expect(calcularMetaCarteira(clientes, tickets, 150)).toBe(1500);
+  });
+
+  it("usa meta manual do vendedor quando configurada", () => {
+    const painel = montarDashboardComercialSafra({
+      clientes: [cliente({ id: "c1", vendedor: "Ana", areaHa: 10 })],
+      ticketsMedios: tickets,
+      percentualAcertoEsperado: 10,
+      metasVendedor: [{ id: "mv1", vendedor: "Ana", metaManual: 500, ativo: true, origemMeta: "manual" }],
+      negocios: [negocio({ id: "n1", clienteId: "c1", status: "Fechado ganho", valorFechado: 200 })],
+      orcamentos: [],
+      oportunidades: [],
+      proximasAcoes: [],
+      hojeIso: "2026-05-30",
+    });
+
+    expect(painel.porVendedor[0].meta).toBe(500);
+    expect(painel.porVendedor[0].gap).toBe(300);
+    expect(painel.porVendedor[0].percentualAtingido).toBe(0.4);
+    expect(painel.porVendedor[0].origemMeta).toBe("manual");
+  });
+
+  it("usa meta proporcional como fallback e mantém vendedor sem nome como Não definido", () => {
+    const painel = montarDashboardComercialSafra({
+      clientes: [
+        cliente({ id: "c1", vendedor: "Ana", areaHa: 10 }),
+        cliente({ id: "c2", vendedor: "", areaHa: 30 }),
+      ],
+      ticketsMedios: tickets,
+      percentualAcertoEsperado: 10,
+      negocios: [],
+      orcamentos: [],
+      oportunidades: [],
+      proximasAcoes: [],
+      hojeIso: "2026-05-30",
+    });
+
+    const semVendedor = painel.porVendedor.find((linha) => linha.vendedor === "Não definido");
+    expect(semVendedor?.meta).toBe(450);
+    expect(semVendedor?.origemMeta).toBe("calculada");
+  });
+
+  it("distribui automaticamente a meta por potencial e soma com a meta da carteira", async () => {
+    const { distribuirMetaPorPotencial } = await import("@/utils/businessRules");
+    const distribuicao = distribuirMetaPorPotencial({
+      clientes: [
+        cliente({ id: "c1", vendedor: "Ana", areaHa: 10 }),
+        cliente({ id: "c2", vendedor: "Bia", areaHa: 30 }),
+        cliente({ id: "c3", vendedor: "Caio", areaHa: 0 }),
+      ],
+      ticketsMedios: tickets,
+      percentualAcertoEsperado: 10,
+    });
+
+    expect(distribuicao.reduce((soma, meta) => soma + (meta.metaCalculada || 0), 0)).toBe(600);
+    expect((distribuicao.find((meta) => meta.vendedor === "Bia")?.metaCalculada || 0)).toBeGreaterThan(distribuicao.find((meta) => meta.vendedor === "Ana")?.metaCalculada || 0);
+    expect(distribuicao.find((meta) => meta.vendedor === "Caio")?.metaCalculada).toBe(0);
+  });
+
+  it("dashboard expõe alertas de configuração incompleta", () => {
+    const painel = montarDashboardComercialSafra({
+      clientes: [cliente({ id: "c1", vendedor: "Ana", areaHa: 10, potencialTotal: 1000 })],
+      ticketsMedios: [],
+      percentualAcertoEsperado: 10,
+      negocios: [],
+      orcamentos: [],
+      oportunidades: [],
+      proximasAcoes: [],
+      hojeIso: "2026-05-30",
+    });
+
+    expect(painel.alertasConfiguracao).toContain("Ticket médio/ha não configurado.");
+    expect(painel.alertasConfiguracao).toContain("Metas por vendedor ainda não configuradas.");
+    expect(painel.alertasConfiguracao).toContain("Usando distribuição automática por potencial.");
+  });
+});
