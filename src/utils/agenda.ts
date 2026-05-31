@@ -12,9 +12,9 @@ import type {
 } from "@/types";
 import { resolverVendedorCanonico } from "@/utils/businessRules";
 
-export type AgendaClassificacao = "Atrasado" | "Hoje" | "Próximos 7 dias" | "Futuro" | "Sem data" | "Concluído";
-export type AgendaOrigem = "Próxima ação" | "Cliente" | "Oportunidade" | "Orçamento" | "Negócio" | "Alerta";
-export type AgendaVisao = "hoje" | "semana" | "atrasadas" | "sem-proxima-acao" | "todas";
+export type AgendaClassificacao = "Atrasada" | "Pendente hoje" | "Agendada" | "Sem agendamento" | "Concluída";
+export type AgendaOrigem = "Ação comercial" | "Cliente" | "Oportunidade" | "Orçamento" | "Negócio" | "Alerta";
+export type AgendaVisao = "hoje" | "semana" | "atrasadas" | "sem-agendamento" | "todas";
 export type AgendaAlertaTipo =
   | "cliente-a-sem-proxima-acao"
   | "cliente-p1-sem-proxima-acao"
@@ -75,6 +75,43 @@ export interface AgendaResumo {
   hoje: number;
   proximos7Dias: number;
   clientesAP1SemProximaAcao: number;
+  semAgendamento: number;
+}
+
+
+export interface ClienteBuscaAgenda {
+  id: string;
+  nome: string;
+  fazenda: string;
+  cidade: string;
+  vendedor: string;
+}
+
+function normalizarBuscaAgenda(valor: string | undefined): string {
+  return (valor || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase("pt-BR")
+    .trim();
+}
+
+export function buscarClientesAgenda(clientes: Cliente[], termo: string, vendedores: Pick<Vendedor, "nome">[] = [], limite = 8): ClienteBuscaAgenda[] {
+  const termoNormalizado = normalizarBuscaAgenda(termo);
+  if (!termoNormalizado) return [];
+
+  return clientes
+    .map((cliente) => ({
+      id: cliente.id,
+      nome: cliente.nome,
+      fazenda: cliente.localidade || cliente.rota || "—",
+      cidade: cliente.cidade || "—",
+      vendedor: resolverVendedorCanonico(cliente.vendedor, vendedores),
+      textoBusca: normalizarBuscaAgenda([cliente.nome, cliente.localidade, cliente.rota, cliente.cidade].filter(Boolean).join(" ")),
+    }))
+    .filter((cliente) => cliente.textoBusca.includes(termoNormalizado))
+    .sort((a, b) => a.nome.localeCompare(b.nome))
+    .slice(0, limite)
+    .map(({ textoBusca: _textoBusca, ...cliente }) => cliente);
 }
 
 export const STATUS_ACAO_CONCLUIDA: StatusProximaAcao[] = ["Realizada", "Concluída", "Cancelada"];
@@ -101,12 +138,11 @@ export function isAcaoAtiva(status?: string): boolean {
 }
 
 export function classificarAgenda(data: string | undefined, status: string | undefined, hojeIso = toIsoDate(new Date())): AgendaClassificacao {
-  if (isAcaoConcluida(status)) return "Concluído";
-  if (!data) return "Sem data";
-  if (data < hojeIso) return "Atrasado";
-  if (data === hojeIso) return "Hoje";
-  if (data <= addDaysIso(hojeIso, 7)) return "Próximos 7 dias";
-  return "Futuro";
+  if (isAcaoConcluida(status)) return "Concluída";
+  if (!data) return "Sem agendamento";
+  if (data < hojeIso) return "Atrasada";
+  if (data === hojeIso) return "Pendente hoje";
+  return "Agendada";
 }
 
 function clienteDaAcao(acao: ProximaAcao, clientes: Cliente[]) {
@@ -168,7 +204,7 @@ export function montarItensAgenda(params: {
       tipo: acao.tipo,
       descricao: acao.descricao || acao.objetivo || "Ação comercial",
       status: acao.status,
-      origem: "Próxima ação",
+      origem: "Ação comercial",
       classificacao: classificarAgenda(acao.data, acao.status, hojeIso),
       oportunidadeId: acao.oportunidadeId,
       oportunidadeNome: oportunidade?.necessidade || oportunidade?.segmento,
@@ -176,7 +212,7 @@ export function montarItensAgenda(params: {
       orcamentoCodigo: orcamento?.codigo,
       negocioId: acao.negocioId,
       negocioNome: negocio?.nome,
-      alertaTipo: classificarAgenda(acao.data, acao.status, hojeIso) === "Atrasado" ? "proxima-acao-vencida" : undefined,
+      alertaTipo: classificarAgenda(acao.data, acao.status, hojeIso) === "Atrasada" ? "proxima-acao-vencida" : undefined,
     });
   });
 
@@ -279,10 +315,10 @@ export function montarItensAgenda(params: {
         ...montarClienteInfo(cliente),
         vendedor: obterVendedor(cliente, undefined, vendedores),
         tipo: "Sem próxima ação",
-        descricao: "Cliente prioritário sem próxima ação registrada",
+        descricao: "Cliente prioritário sem ação comercial registrada",
         status: "Sem próxima ação",
         origem: "Alerta",
-        classificacao: "Sem data",
+        classificacao: "Sem agendamento",
         alertaTipo: cliente.abc === "A" ? "cliente-a-sem-proxima-acao" : "cliente-p1-sem-proxima-acao",
       });
     });
@@ -306,10 +342,10 @@ export function montarAlertasAgenda(params: {
     const vendedor = resolverVendedorCanonico(cliente.vendedor, vendedores);
     const semAcaoAtiva = !temAcaoAtiva(cliente.id, proximasAcoes) && !cliente.proximaAcao;
     if (cliente.abc === "A" && semAcaoAtiva) {
-      alertas.push({ id: `cliente-a-sem-proxima-acao-${cliente.id}`, tipo: "cliente-a-sem-proxima-acao", severidade: "alta", titulo: "Cliente A sem próxima ação", detalhe: cliente.nome, clienteId: cliente.id });
+      alertas.push({ id: `cliente-a-sem-proxima-acao-${cliente.id}`, tipo: "cliente-a-sem-proxima-acao", severidade: "alta", titulo: "Cliente A sem ação comercial", detalhe: cliente.nome, clienteId: cliente.id });
     }
     if (cliente.prioridade === "P1" && semAcaoAtiva) {
-      alertas.push({ id: `cliente-p1-sem-proxima-acao-${cliente.id}`, tipo: "cliente-p1-sem-proxima-acao", severidade: "alta", titulo: "Cliente P1 sem próxima ação", detalhe: cliente.nome, clienteId: cliente.id });
+      alertas.push({ id: `cliente-p1-sem-proxima-acao-${cliente.id}`, tipo: "cliente-p1-sem-proxima-acao", severidade: "alta", titulo: "Cliente P1 sem ação comercial", detalhe: cliente.nome, clienteId: cliente.id });
     }
     if (vendedor === "Não definido") {
       alertas.push({ id: `cliente-sem-vendedor-${cliente.id}`, tipo: "cliente-sem-vendedor", severidade: "media", titulo: "Cliente sem vendedor", detalhe: cliente.nome, clienteId: cliente.id });
@@ -358,11 +394,11 @@ export function filtrarItensAgenda(items: AgendaItem[], filtros: AgendaFiltros):
   });
 }
 
-export function filtrarPorVisaoAgenda(items: AgendaItem[], visao: AgendaVisao): AgendaItem[] {
-  if (visao === "hoje") return items.filter((item) => item.classificacao === "Hoje");
-  if (visao === "semana") return items.filter((item) => item.classificacao === "Próximos 7 dias" || item.classificacao === "Hoje");
-  if (visao === "atrasadas") return items.filter((item) => item.classificacao === "Atrasado");
-  if (visao === "sem-proxima-acao") return items.filter((item) => item.status === "Sem próxima ação" || item.alertaTipo === "cliente-a-sem-proxima-acao" || item.alertaTipo === "cliente-p1-sem-proxima-acao");
+export function filtrarPorVisaoAgenda(items: AgendaItem[], visao: AgendaVisao, hojeIso = toIsoDate(new Date())): AgendaItem[] {
+  if (visao === "hoje") return items.filter((item) => item.classificacao === "Pendente hoje");
+  if (visao === "semana") return items.filter((item) => item.data && item.data >= hojeIso && item.data <= addDaysIso(hojeIso, 7) && !isAcaoConcluida(item.status));
+  if (visao === "atrasadas") return items.filter((item) => item.classificacao === "Atrasada");
+  if (visao === "sem-agendamento") return items.filter((item) => item.classificacao === "Sem agendamento" && item.status !== "Sem próxima ação");
   return items;
 }
 
@@ -377,7 +413,7 @@ export function reagendarAcaoAgenda(acoes: ProximaAcao[], acaoId: string, novaDa
 export function criarAcaoRapidaAgenda(params: {
   cliente: Cliente;
   tipo: TipoProximaAcao;
-  data: string;
+  data?: string;
   observacao?: string;
   descricao?: string;
   vendedor?: string;
@@ -395,7 +431,7 @@ export function criarAcaoRapidaAgenda(params: {
     objetivo: params.descricao || "Rotina diária",
     observacoes: params.observacao,
     tipo: params.tipo,
-    data: params.data,
+    data: params.data || "",
     status: "Pendente",
     origem: "Avulsa",
     createdAt: now,
@@ -404,12 +440,13 @@ export function criarAcaoRapidaAgenda(params: {
   } as ProximaAcao & { horario?: string };
 }
 
-export function calcularResumoAgenda(items: AgendaItem[]): AgendaResumo {
+export function calcularResumoAgenda(items: AgendaItem[], hojeIso = toIsoDate(new Date())): AgendaResumo {
   return {
-    atrasadas: items.filter((item) => item.classificacao === "Atrasado").length,
-    hoje: items.filter((item) => item.classificacao === "Hoje").length,
-    proximos7Dias: items.filter((item) => item.classificacao === "Próximos 7 dias").length,
+    atrasadas: items.filter((item) => item.classificacao === "Atrasada").length,
+    hoje: items.filter((item) => item.classificacao === "Pendente hoje").length,
+    proximos7Dias: items.filter((item) => item.data && item.data >= hojeIso && item.data <= addDaysIso(hojeIso, 7) && item.classificacao !== "Concluída").length,
     clientesAP1SemProximaAcao: items.filter((item) => item.alertaTipo === "cliente-a-sem-proxima-acao" || item.alertaTipo === "cliente-p1-sem-proxima-acao").length,
+    semAgendamento: items.filter((item) => item.classificacao === "Sem agendamento" && item.status !== "Sem próxima ação").length,
   };
 }
 
