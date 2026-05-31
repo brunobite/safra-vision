@@ -15,7 +15,7 @@ import {
 } from "recharts";
 
 export default function Dashboard() {
-  const { clientes, metasEmpresa, metasPessoais, filtered, lancamentos, negocios, regras, orcamentos, oportunidades, proximasAcoes, appConfig, clienteById, ticketsMedios, metasVendedor } = useAppStore();
+  const { clientes, metasEmpresa, metasPessoais, filtered, lancamentos, negocios, regras, orcamentos, oportunidades, proximasAcoes, appConfig, clienteById, ticketsMedios, metasVendedor, vendedores } = useAppStore();
   const [acaoFiltro, setAcaoFiltro] = useState<"hoje"|"semana"|"mes"|"atrasadas"|"todas">("hoje");
   const nav = useNavigate();
 
@@ -64,12 +64,13 @@ export default function Dashboard() {
     ticketsMedios,
     percentualAcertoEsperado: taxa,
     metasVendedor,
+    vendedores,
     negocios,
     orcamentos,
     oportunidades,
     proximasAcoes,
     hojeIso: hoje,
-  }), [clientes, ticketsMedios, taxa, metasVendedor, negocios, orcamentos, oportunidades, proximasAcoes, hoje]);
+  }), [clientes, ticketsMedios, taxa, metasVendedor, vendedores, negocios, orcamentos, oportunidades, proximasAcoes, hoje]);
   const potencialCarteira = gestaoComercial.potencialCarteira;
   const metaCarteira = gestaoComercial.metaCarteira;
   const realizado = gestaoComercial.realizado;
