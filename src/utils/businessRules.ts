@@ -5,6 +5,7 @@ import {
   OportunidadeComercial,
   Orcamento,
   ProximaAcao,
+  MetaVendedor,
   TicketMedioRegra,
 } from "@/types";
 
@@ -30,8 +31,10 @@ export interface VisaoVendedorComercial {
   areaHa: number;
   potencial: number;
   realizado: number;
+  meta: number;
   gap: number;
   percentualAtingido: number;
+  origemMeta: "manual" | "calculada";
   oportunidadesAbertas: number;
   proximasAcoesCriticas: number;
 }
@@ -47,6 +50,7 @@ export interface VisaoClienteComercial {
   areaHa: number;
   potencial: number;
   realizado: number;
+  meta: number;
   gap: number;
   percentualAtingido: number;
   statusComercial: string;
@@ -59,6 +63,7 @@ export interface VisaoAbcComercial {
   areaHa: number;
   potencial: number;
   realizado: number;
+  meta: number;
   gap: number;
   prioritariosSemProximaAcao: number;
 }
@@ -98,9 +103,10 @@ export interface DashboardComercialSafra {
   porCliente: VisaoClienteComercial[];
   porAbc: VisaoAbcComercial[];
   alertas: AlertaGerencialComercial[];
+  alertasConfiguracao: string[];
 }
 
-function normalizarVendedor(vendedor?: string): string {
+export function normalizarVendedor(vendedor?: string): string {
   const nome = vendedor?.trim();
   return nome || "Não definido";
 }
@@ -122,8 +128,16 @@ function obterProximaAcao(cliente: Cliente, proximasAcoes: ProximaAcao[], hojeIs
   return "Sem próxima ação";
 }
 
+export function limitarPercentualAcerto(percentual: number): number {
+  return Math.min(100, Math.max(0, Number.isFinite(percentual) ? percentual : 0));
+}
+
+export function normalizarValorNaoNegativo(valor: number): number {
+  return Math.max(0, Number.isFinite(valor) ? valor : 0);
+}
+
 export function calcularValorMedioHaSegmentosAtivos(ticketsMedios: TicketMedioRegra[]): number {
-  return ticketsMedios.filter((t) => t.ativo).reduce((s, t) => s + (t.valorMedioHa || 0), 0);
+  return ticketsMedios.filter((t) => t.ativo).reduce((s, t) => s + normalizarValorNaoNegativo(t.valorMedioHa || 0), 0);
 }
 
 export function calcularPotencialCliente(cliente: Cliente, ticketsMedios: TicketMedioRegra[]): number {
@@ -138,7 +152,7 @@ export function calcularPotencialCarteira(clientes: Cliente[], ticketsMedios: Ti
 }
 
 export function calcularMetaCarteira(clientes: Cliente[], ticketsMedios: TicketMedioRegra[], percentualAcertoEsperado: number): number {
-  const taxa = Math.min(100, Math.max(0, percentualAcertoEsperado || 0));
+  const taxa = limitarPercentualAcerto(percentualAcertoEsperado || 0);
   return calcularPotencialCarteira(clientes, ticketsMedios) * taxa / 100;
 }
 
@@ -185,6 +199,7 @@ export function montarDashboardComercialSafra(params: {
   clientes: Cliente[];
   ticketsMedios: TicketMedioRegra[];
   percentualAcertoEsperado: number;
+  metasVendedor?: MetaVendedor[];
   negocios: Negocio[];
   orcamentos: Orcamento[];
   oportunidades: OportunidadeComercial[];
@@ -192,6 +207,7 @@ export function montarDashboardComercialSafra(params: {
   hojeIso?: string;
 }): DashboardComercialSafra {
   const { clientes, ticketsMedios, percentualAcertoEsperado, negocios, orcamentos, oportunidades, proximasAcoes } = params;
+  const metasVendedor = params.metasVendedor || [];
   const hojeIso = params.hojeIso || new Date().toISOString().slice(0, 10);
   const potencialCarteira = calcularPotencialCarteira(clientes, ticketsMedios);
   const metaCarteira = calcularMetaCarteira(clientes, ticketsMedios, percentualAcertoEsperado);
@@ -208,7 +224,7 @@ export function montarDashboardComercialSafra(params: {
   const porCliente = clientes.map((cliente) => {
     const potencial = potenciais.get(cliente.id) || 0;
     const realizadoCliente = realizadoMap.get(cliente.id) || 0;
-    const metaCliente = potencial * Math.min(100, Math.max(0, percentualAcertoEsperado || 0)) / 100;
+    const metaCliente = potencial * limitarPercentualAcerto(percentualAcertoEsperado || 0) / 100;
     const percentualCliente = metaCliente > 0 ? realizadoCliente / metaCliente : 0;
     return {
       clienteId: cliente.id,
@@ -221,6 +237,7 @@ export function montarDashboardComercialSafra(params: {
       areaHa: cliente.areaHa || 0,
       potencial,
       realizado: realizadoCliente,
+      meta: metaCliente,
       gap: metaCliente - realizadoCliente,
       percentualAtingido: percentualCliente,
       statusComercial: obterStatusAtingimento(percentualCliente),
@@ -235,8 +252,10 @@ export function montarDashboardComercialSafra(params: {
       areaHa: 0,
       potencial: 0,
       realizado: 0,
+      meta: 0,
       gap: 0,
       percentualAtingido: 0,
+      origemMeta: "calculada" as const,
       oportunidadesAbertas: 0,
       proximasAcoesCriticas: 0,
     };
@@ -248,7 +267,12 @@ export function montarDashboardComercialSafra(params: {
     return mapa;
   }, new Map<string, VisaoVendedorComercial>()).values()).map((vendedor) => {
     const clientesDoVendedor = clientes.filter((cliente) => normalizarVendedor(cliente.vendedor) === vendedor.vendedor);
-    const metaVendedor = vendedor.potencial * Math.min(100, Math.max(0, percentualAcertoEsperado || 0)) / 100;
+    const metaConfigurada = metasVendedor.find((meta) => (meta.ativo ?? true) && normalizarVendedor(meta.vendedor) === vendedor.vendedor);
+    const metaManual = metaConfigurada?.metaManual ?? (metaConfigurada?.origemMeta === "proporcional" ? undefined : metaConfigurada?.meta);
+    const metaAutomatica = metaConfigurada?.metaCalculada ?? metaCarteira * (potencialCarteira > 0 ? vendedor.potencial / potencialCarteira : 0);
+    const metaVendedor = metaManual !== undefined ? normalizarValorNaoNegativo(metaManual) : normalizarValorNaoNegativo(metaAutomatica);
+    vendedor.meta = metaVendedor;
+    vendedor.origemMeta = metaManual !== undefined ? "manual" : "calculada";
     vendedor.gap = metaVendedor - vendedor.realizado;
     vendedor.percentualAtingido = metaVendedor > 0 ? vendedor.realizado / metaVendedor : 0;
     vendedor.oportunidadesAbertas = oportunidades.filter((oportunidade) => OPORTUNIDADE_ABERTA_ETAPAS.includes(oportunidade.etapa) && clientesDoVendedor.some((cliente) => cliente.id === oportunidade.clienteId)).length;
@@ -260,13 +284,14 @@ export function montarDashboardComercialSafra(params: {
     const clientesAbc = porCliente.filter((cliente) => cliente.abc === abc);
     const potencial = clientesAbc.reduce((s, cliente) => s + cliente.potencial, 0);
     const realizadoAbc = clientesAbc.reduce((s, cliente) => s + cliente.realizado, 0);
-    const metaAbc = potencial * Math.min(100, Math.max(0, percentualAcertoEsperado || 0)) / 100;
+    const metaAbc = potencial * limitarPercentualAcerto(percentualAcertoEsperado || 0) / 100;
     return {
       abc,
       clientes: clientesAbc.length,
       areaHa: clientesAbc.reduce((s, cliente) => s + cliente.areaHa, 0),
       potencial,
       realizado: realizadoAbc,
+      meta: metaAbc,
       gap: metaAbc - realizadoAbc,
       prioritariosSemProximaAcao: clientes.filter((cliente) => cliente.abc === abc && cliente.prioridade === "P1" && !temProximaAcaoAtiva(cliente.id, proximasAcoes, hojeIso)).length,
     };
@@ -298,6 +323,15 @@ export function montarDashboardComercialSafra(params: {
   ];
 
   const areaTotalHa = clientes.reduce((s, cliente) => s + Math.max(0, cliente.areaHa || 0), 0);
+  const regrasAtivas = ticketsMedios.filter((ticket) => ticket.ativo && normalizarValorNaoNegativo(ticket.valorMedioHa) > 0);
+  const vendedoresCarteira = new Set(porVendedor.map((vendedor) => vendedor.vendedor));
+  const metasAtivas = metasVendedor.filter((meta) => (meta.ativo ?? true) && vendedoresCarteira.has(normalizarVendedor(meta.vendedor)));
+  const alertasConfiguracao = [
+    ...(regrasAtivas.length === 0 ? ["Ticket médio/ha não configurado."] : []),
+    ...(percentualAcertoEsperado === undefined || percentualAcertoEsperado === null ? ["Percentual de acerto esperado não configurado."] : []),
+    ...(metasAtivas.length === 0 ? ["Metas por vendedor ainda não configuradas."] : []),
+    ...(porVendedor.some((vendedor) => vendedor.origemMeta === "calculada") ? ["Usando distribuição automática por potencial."] : []),
+  ];
 
   return {
     potencialCarteira,
@@ -317,5 +351,34 @@ export function montarDashboardComercialSafra(params: {
     porCliente: porCliente.sort((a, b) => b.potencial - a.potencial),
     porAbc,
     alertas,
+    alertasConfiguracao,
   };
+}
+
+export function distribuirMetaPorPotencial(params: {
+  clientes: Cliente[];
+  ticketsMedios: TicketMedioRegra[];
+  percentualAcertoEsperado: number;
+}): MetaVendedor[] {
+  const potencialCarteira = calcularPotencialCarteira(params.clientes, params.ticketsMedios);
+  const metaCarteira = calcularMetaCarteira(params.clientes, params.ticketsMedios, params.percentualAcertoEsperado);
+  const potenciaisPorVendedor = params.clientes.reduce((mapa, cliente) => {
+    const vendedor = normalizarVendedor(cliente.vendedor);
+    mapa.set(vendedor, (mapa.get(vendedor) || 0) + calcularPotencialCliente(cliente, params.ticketsMedios));
+    return mapa;
+  }, new Map<string, number>());
+
+  return Array.from(potenciaisPorVendedor.entries()).map(([vendedor, potencial], index) => {
+    const percentualMetaCarteira = potencialCarteira > 0 ? (potencial / potencialCarteira) * 100 : 0;
+    const metaCalculada = metaCarteira * (percentualMetaCarteira / 100);
+    return {
+      id: `mv-auto-${index}-${vendedor.toLowerCase().replace(/[^a-z0-9]+/gi, "-")}`,
+      vendedor,
+      percentualMetaCarteira,
+      metaCalculada,
+      meta: metaCalculada,
+      ativo: true,
+      origemMeta: "proporcional",
+    };
+  });
 }
