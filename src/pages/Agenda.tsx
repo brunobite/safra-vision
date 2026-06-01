@@ -15,7 +15,7 @@ import {
   reagendarAcaoAgenda,
   vendedoresCanonicosAgenda,
 } from "@/utils/agenda";
-import type { ABC, CategoriaProduto, Prioridade, StatusProximaAcao, TipoProximaAcao } from "@/types";
+import type { ABC, CategoriaProduto, Prioridade, ProximaAcao, StatusProximaAcao, TipoProximaAcao } from "@/types";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,10 +23,11 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { buildAgendaItemIcs, buildCalendarEventFromAgendaItem, getGoogleCalendarClientId, hasGoogleCalendarAccess, metadataAfterGoogleCalendarDelete, metadataAfterGoogleCalendarError, metadataAfterGoogleCalendarReschedule, metadataAfterGoogleCalendarSuccess, requestGoogleCalendarAccess, upsertGoogleCalendarEventForAgendaItem } from "@/lib/googleCalendar";
+import { buildAgendaItemIcs, buildCalendarEventFromAgendaItem, ensureGoogleCalendarAccess, getGoogleCalendarClientId, isGoogleCalendarPreferenceEnabled, metadataAfterGoogleCalendarDelete, metadataAfterGoogleCalendarError, metadataAfterGoogleCalendarReschedule, metadataAfterGoogleCalendarSuccess, setGoogleCalendarPreferenceEnabled, upsertGoogleCalendarEventForAgendaItem } from "@/lib/googleCalendar";
 
 const TIPOS: TipoProximaAcao[] = ["Visita", "Ligação", "WhatsApp", "Reunião", "Follow-up", "Enviar orçamento", "Cobrar retorno", "Pós-venda", "Renovação", "Outro"];
 const STATUS: StatusProximaAcao[] = ["Pendente", "Em andamento", "Realizada", "Reagendada", "Cancelada", "Concluída"];
@@ -65,6 +66,7 @@ export default function Agenda() {
   const [oppForm, setOppForm] = useState({ descricao: "", previsaoFechamento: "" });
   const [oppItems, setOppItems] = useState<OportunidadeItemForm[]>([{ produtoId: "", quantidade: 1, unidade: "", precoUnitario: 0 }]);
   const [reschedule, setReschedule] = useState<Record<string, { data: string; horario: string }>>({});
+  const [enviarGoogleCalendarNoSalvar, setEnviarGoogleCalendarNoSalvar] = useState(false);
 
   const itens = useMemo(() => montarItensAgenda({ clientes, proximasAcoes, oportunidades, orcamentos, negocios, vendedores, hojeIso: hoje }), [clientes, proximasAcoes, oportunidades, orcamentos, negocios, vendedores, hoje]);
   const alertas = useMemo(() => montarAlertasAgenda({ clientes, proximasAcoes, orcamentos, negocios, vendedores, hojeIso: hoje }), [clientes, proximasAcoes, orcamentos, negocios, vendedores, hoje]);
@@ -78,6 +80,8 @@ export default function Agenda() {
   const itensFiltrados = useMemo(() => filtrarItensAgenda(filtrarPorVisaoAgenda(itens, visao, hoje), filtros), [itens, visao, filtros, hoje]);
   const filtrosAtivos = useMemo(() => Object.values(filtros).filter((valor) => valor && valor !== "__all__").length, [filtros]);
   const valorEstimadoTotal = useMemo(() => oppItems.reduce((total, item) => total + (Number(item.quantidade) || 0) * (Number(item.precoUnitario) || 0), 0), [oppItems]);
+  const googleCalendarClientIdConfigurado = Boolean(getGoogleCalendarClientId());
+  const googleCalendarPreferenciaAtiva = isGoogleCalendarPreferenceEnabled();
 
   useEffect(() => {
     const action = params.get("action");
@@ -98,11 +102,13 @@ export default function Agenda() {
   const abrirAgendamento = (clienteId?: string) => {
     const cliente = clientes.find((item) => item.id === clienteId);
     setFlowForm({ ...emptyFlowForm("Visita"), clienteId: cliente?.id || "", clienteBusca: cliente?.nome || "", vendedor: cliente?.vendedor || "", data: hoje, descricao: "Visita agendada" });
+    setEnviarGoogleCalendarNoSalvar(googleCalendarClientIdConfigurado && isGoogleCalendarPreferenceEnabled());
     setContexto(null);
     setModal("agendar");
   };
 
   const abrirVisitaConcluida = (clienteId?: string) => {
+    setEnviarGoogleCalendarNoSalvar(false);
     const agora = nowParts();
     const cliente = clientes.find((item) => item.id === clienteId);
     setFlowForm({ ...emptyFlowForm("Visita"), clienteId: cliente?.id || "", clienteBusca: cliente?.nome || "", vendedor: cliente?.vendedor || "", data: agora.data, horario: agora.horario, descricao: "Visita concluída" });
@@ -113,6 +119,7 @@ export default function Agenda() {
   const abrirNovaAcaoAvulsa = (clienteId?: string, tipo: TipoProximaAcao = "Follow-up") => {
     const cliente = clientes.find((item) => item.id === clienteId);
     setFlowForm({ ...emptyFlowForm(tipo), clienteId: cliente?.id || "", clienteBusca: cliente?.nome || "", vendedor: cliente?.vendedor || "", data: hoje, descricao: tipo === "Follow-up" ? "Nova ação comercial" : tipo });
+    setEnviarGoogleCalendarNoSalvar(googleCalendarClientIdConfigurado && isGoogleCalendarPreferenceEnabled());
     setContexto(null);
     setModal("novaAcao");
   };
@@ -137,14 +144,19 @@ export default function Agenda() {
     return acao;
   };
 
-  const salvarAgendamento = () => {
+  const salvarAgendamento = async () => {
     if (!flowForm.clienteId || !flowForm.data) return toast.error("Selecione cliente e data da visita.");
     if (!flowForm.vendedor) return toast.error("Selecione o vendedor responsável pela visita.");
     const acao = criarAcaoAgenda("Pendente", "Avulsa", { descricao: flowForm.descricao || "Visita agendada", tipo: "Visita" });
     if (!acao) return;
-    setProximasAcoes((atuais) => [{ ...acao, observacoes: flowForm.observacao || "Status Agenda e Visitas: Agendada" }, ...atuais]);
+    const acaoLocal = { ...acao, observacoes: flowForm.observacao || "Status Agenda e Visitas: Agendada" };
+    setProximasAcoes((atuais) => [acaoLocal, ...atuais]);
     setModal(null);
-    toast.success("Visita futura agendada sem entrar no funil de vendas.");
+    if (!enviarGoogleCalendarNoSalvar || !googleCalendarClientIdConfigurado) {
+      toast.success("Visita futura agendada sem entrar no funil de vendas.");
+      return;
+    }
+    await sincronizarAcaoCriadaNoGoogleCalendar(acaoLocal, "Visita agendada e enviada ao Google Calendar.", "Visita salva no Safra Vision, mas houve erro ao enviar ao Google Calendar.");
   };
 
   const salvarVisitaConcluida = () => {
@@ -239,17 +251,22 @@ export default function Agenda() {
   const prepararNovaAcaoDoContexto = () => {
     const cliente = clientes.find((item) => item.id === contexto?.clienteId);
     setFlowForm({ ...emptyFlowForm("Follow-up"), clienteId: contexto?.clienteId || "", clienteBusca: cliente?.nome || "", vendedor: contexto?.vendedor || cliente?.vendedor || "", data: hoje, descricao: "Próxima ação comercial" });
+    setEnviarGoogleCalendarNoSalvar(googleCalendarClientIdConfigurado && isGoogleCalendarPreferenceEnabled());
     setModal("novaAcao");
   };
 
-  const salvarNovaAcao = () => {
+  const salvarNovaAcao = async () => {
     if (!flowForm.data) return toast.error("Informe a data da nova ação.");
     if (!flowForm.vendedor) return toast.error("Selecione o vendedor responsável pela ação.");
     const acao = criarAcaoAgenda("Pendente", contexto?.oportunidadeId ? "Negócio" : "Avulsa", { oportunidadeId: contexto?.oportunidadeId, negocioId: contexto?.negocioId, lancamentoId: contexto?.lancamentoId });
     if (!acao) return toast.error("Selecione um cliente para a nova ação.");
     setProximasAcoes((atuais) => [acao, ...atuais]);
     setModal(null);
-    toast.success("Próxima ação salva na Agenda e Visitas e vinculada ao fluxo atual.");
+    if (!enviarGoogleCalendarNoSalvar || !googleCalendarClientIdConfigurado) {
+      toast.success("Próxima ação salva na Agenda e Visitas e vinculada ao fluxo atual.");
+      return;
+    }
+    await sincronizarAcaoCriadaNoGoogleCalendar(acao, "Próxima ação salva e enviada ao Google Calendar.", "Próxima ação salva no Safra Vision, mas houve erro ao enviar ao Google Calendar.");
   };
 
   const concluir = (acaoId?: string) => {
@@ -301,9 +318,7 @@ export default function Agenda() {
     }
   };
 
-  const agendaItemGooglePayload = (acaoId?: string) => {
-    const acao = proximasAcoes.find((item) => item.id === acaoId);
-    if (!acao) throw new Error("Ação comercial não encontrada para sincronizar.");
+  const montarGoogleCalendarPayload = (acao: ProximaAcao) => {
     const cliente = clientes.find((item) => item.id === acao.clienteId);
     return {
       ...acao,
@@ -314,13 +329,37 @@ export default function Agenda() {
     };
   };
 
+  const agendaItemGooglePayload = (acaoId?: string) => {
+    const acao = proximasAcoes.find((item) => item.id === acaoId);
+    if (!acao) throw new Error("Ação comercial não encontrada para sincronizar.");
+    return montarGoogleCalendarPayload(acao);
+  };
+
+  const sincronizarAcaoCriadaNoGoogleCalendar = async (acao: ProximaAcao, mensagemSucesso: string, mensagemErro: string) => {
+    try {
+      const payload = montarGoogleCalendarPayload(acao);
+      buildCalendarEventFromAgendaItem(payload);
+      await ensureGoogleCalendarAccess({ interactive: !isGoogleCalendarPreferenceEnabled() });
+      const event = await upsertGoogleCalendarEventForAgendaItem(payload);
+      const metadata = metadataAfterGoogleCalendarSuccess(event, payload.googleCalendarCalendarId);
+      setGoogleCalendarPreferenceEnabled(true);
+      setProximasAcoes((atuais) => atuais.map((item) => item.id === acao.id ? { ...item, ...metadata, googleCalendarSyncStatus: "synced" } : item));
+      toast.success(mensagemSucesso);
+    } catch (error) {
+      const metadata = metadataAfterGoogleCalendarError(error);
+      setProximasAcoes((atuais) => atuais.map((item) => item.id === acao.id ? { ...item, ...metadata, googleCalendarSyncStatus: "error" } : item));
+      toast.error(mensagemErro);
+    }
+  };
+
   const sincronizarGoogleCalendar = async (acaoId?: string) => {
     if (!acaoId) return;
     try {
       const payload = agendaItemGooglePayload(acaoId);
       buildCalendarEventFromAgendaItem(payload);
-      if (!hasGoogleCalendarAccess()) await requestGoogleCalendarAccess();
+      await ensureGoogleCalendarAccess({ interactive: !isGoogleCalendarPreferenceEnabled() });
       const event = await upsertGoogleCalendarEventForAgendaItem(payload);
+      setGoogleCalendarPreferenceEnabled(true);
       const metadata = metadataAfterGoogleCalendarSuccess(event, payload.googleCalendarCalendarId);
       setProximasAcoes((atuais) => atuais.map((acao) => acao.id === acaoId ? { ...acao, ...metadata, googleCalendarSyncStatus: "synced" } : acao));
       toast.success(event.operation === "created" ? "Evento criado no Google Calendar." : "Evento atualizado no Google Calendar.");
@@ -543,6 +582,17 @@ export default function Agenda() {
           {modal === "novaAcao" && <div><Label>Tipo de ação</Label><Select value={flowForm.tipo} onValueChange={(v: TipoProximaAcao) => setFlowForm((atual) => ({ ...atual, tipo: v }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{TIPOS.map((tipo) => <SelectItem key={tipo} value={tipo}>{tipo}</SelectItem>)}</SelectContent></Select></div>}
           <div className="md:col-span-2"><Label>{modal === "novaAcao" ? "Descrição" : "Objetivo da visita"}</Label><Textarea value={flowForm.descricao} onChange={(event) => setFlowForm((atual) => ({ ...atual, descricao: event.target.value }))} /></div>
           <div className="md:col-span-2"><Label>Observações</Label><Textarea value={flowForm.observacao} onChange={(event) => setFlowForm((atual) => ({ ...atual, observacao: event.target.value }))} /></div>
+          {googleCalendarClientIdConfigurado && modal !== "visita" && <div className="md:col-span-2 rounded-md border p-3">
+            <div className="flex items-start gap-3">
+              <Checkbox id="enviar-google-calendar" checked={enviarGoogleCalendarNoSalvar} onCheckedChange={(checked) => setEnviarGoogleCalendarNoSalvar(checked === true)} />
+              <div className="space-y-1 leading-none">
+                <Label htmlFor="enviar-google-calendar" className="cursor-pointer">Enviar também para Google Calendar</Label>
+                <p className="text-xs text-muted-foreground">
+                  {googleCalendarPreferenciaAtiva ? "Preferência ativa neste dispositivo; tentaremos reutilizar a autorização sem novo consentimento completo." : "Você pode conectar o Google Calendar ao salvar."}
+                </p>
+              </div>
+            </div>
+          </div>}
         </div>
         <DialogFooter><Button variant="outline" onClick={() => setModal(null)}>Cancelar</Button><Button onClick={modal === "agendar" ? salvarAgendamento : modal === "visita" ? salvarVisitaConcluida : salvarNovaAcao}>{modal === "agendar" ? "Salvar como Agendada" : modal === "visita" ? "Salvar visita concluída" : "Salvar próxima ação"}</Button></DialogFooter>
       </DialogContent>

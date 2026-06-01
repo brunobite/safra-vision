@@ -35,7 +35,7 @@ import { getAccountSyncUserMessage, getAccountSyncVisualState, SYNC_HOMOLOGATION
 import { calcularMetaCarteira, calcularPotencialCarteira, calcularPotencialCliente, distribuirMetaPorPotencial, limitarPercentualAcerto, normalizarValorNaoNegativo, resolverVendedorCanonico } from "@/utils/businessRules";
 import { fmtBRL } from "@/utils/calculations";
 import * as XLSX from "xlsx";
-import { disconnectGoogleCalendar, getGoogleCalendarAuthStatus, getGoogleCalendarClientId, getGoogleCalendarLastAuthError, hasGoogleCalendarAccess, initGoogleCalendarClient, isGoogleIdentityServicesLoaded, requestGoogleCalendarAccess, type GoogleCalendarAuthStatus } from "@/lib/googleCalendar";
+import { disconnectGoogleCalendar, getGoogleCalendarAuthStatus, getGoogleCalendarClientId, getGoogleCalendarLastAuthError, hasGoogleCalendarAccess, initGoogleCalendarClient, isGoogleCalendarPreferenceEnabled, isGoogleIdentityServicesLoaded, requestGoogleCalendarAccess, setGoogleCalendarPreferenceEnabled, type GoogleCalendarAuthStatus } from "@/lib/googleCalendar";
 
 const APLICAR: { v: AplicarSobre; label: string }[] = [
   { v: "realizado_empresa", label: "Realizado empresa" }, { v: "realizado_pessoal", label: "Realizado pessoal" },
@@ -752,30 +752,32 @@ export default function Configuracoes() {
   const googleCalendarClientId = getGoogleCalendarClientId();
   const googleCalendarClientIdLoaded = Boolean(googleCalendarClientId);
   const googleCalendarAccessInMemory = hasGoogleCalendarAccess();
+  const googleCalendarPreferenceEnabled = isGoogleCalendarPreferenceEnabled();
   const googleCalendarLastFriendlyError = googleCalendarError || getGoogleCalendarLastAuthError();
   const googleCalendarDisplayStatus: GoogleCalendarAuthStatus = !googleCalendarClientIdLoaded
     ? "not_configured"
     : googleCalendarStatus === "auth_error" || googleCalendarLastFriendlyError
       ? "auth_error"
-      : googleCalendarStatus === "token_expired"
-        ? "token_expired"
-        : googleCalendarAccessInMemory
-          ? "connected"
+      : googleCalendarAccessInMemory
+        ? "connected"
+        : googleCalendarPreferenceEnabled || googleCalendarStatus === "token_expired"
+          ? "token_expired"
           : "not_connected";
   const googleCalendarStatusLabel: Record<GoogleCalendarAuthStatus, string> = {
     not_configured: "Não configurado",
     not_connected: "Não conectado",
-    connected: "Conectado nesta sessão",
-    token_expired: "Token expirado",
-    auth_error: "Erro de autorização",
+    connected: "Conectado neste dispositivo",
+    token_expired: "Precisa renovar autorização",
+    auth_error: "Precisa renovar autorização",
   };
 
   const conectarGoogleCalendar = async () => {
     setGoogleCalendarError(null);
     try {
-      await requestGoogleCalendarAccess();
+      await requestGoogleCalendarAccess({ prompt: "consent" });
+      setGoogleCalendarPreferenceEnabled(true);
       refreshGoogleCalendarStatus();
-      toast.success("Google Calendar conectado nesta sessão.");
+      toast.success("Google Calendar conectado neste dispositivo.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Erro de autorização do Google Calendar.";
       setGoogleCalendarError(message);
@@ -788,7 +790,7 @@ export default function Configuracoes() {
     disconnectGoogleCalendar();
     refreshGoogleCalendarStatus();
     setGoogleCalendarError(null);
-    toast.success("Google Calendar desconectado desta sessão.");
+    toast.success("Google Calendar desconectado deste dispositivo.");
   };
 
   const testarGoogleCalendar = async () => {
@@ -894,6 +896,7 @@ export default function Configuracoes() {
               <div>Client ID: {googleCalendarClientIdLoaded ? "carregado" : "não carregado"}</div>
               <div>Script Google Identity Services: {isGoogleIdentityServicesLoaded() ? "carregado" : "não carregado"}</div>
               <div>Token em memória: {googleCalendarAccessInMemory ? "sim" : "não"}</div>
+              <div>Preferência local: {googleCalendarPreferenceEnabled ? "ativa neste dispositivo" : "inativa"}</div>
               <div>Status atual: {googleCalendarStatusLabel[googleCalendarDisplayStatus]}</div>
               <div className="md:col-span-2">Último erro amigável: {googleCalendarLastFriendlyError || "nenhum"}</div>
             </div>
