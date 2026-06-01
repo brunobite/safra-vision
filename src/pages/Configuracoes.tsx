@@ -35,7 +35,7 @@ import { getAccountSyncUserMessage, getAccountSyncVisualState, SYNC_HOMOLOGATION
 import { calcularMetaCarteira, calcularPotencialCarteira, calcularPotencialCliente, distribuirMetaPorPotencial, limitarPercentualAcerto, normalizarValorNaoNegativo, resolverVendedorCanonico } from "@/utils/businessRules";
 import { fmtBRL } from "@/utils/calculations";
 import * as XLSX from "xlsx";
-import { disconnectGoogleCalendar, getGoogleCalendarAuthStatus, getGoogleCalendarClientId, hasGoogleCalendarAccess, initGoogleCalendarClient, requestGoogleCalendarAccess } from "@/lib/googleCalendar";
+import { disconnectGoogleCalendar, getGoogleCalendarAuthStatus, getGoogleCalendarClientId, getGoogleCalendarLastAuthError, hasGoogleCalendarAccess, initGoogleCalendarClient, isGoogleIdentityServicesLoaded, requestGoogleCalendarAccess, type GoogleCalendarAuthStatus } from "@/lib/googleCalendar";
 
 const APLICAR: { v: AplicarSobre; label: string }[] = [
   { v: "realizado_empresa", label: "Realizado empresa" }, { v: "realizado_pessoal", label: "Realizado pessoal" },
@@ -112,6 +112,11 @@ export default function Configuracoes() {
   const [activeTab, setActiveTab] = useState("comissao");
   const [googleCalendarStatus, setGoogleCalendarStatus] = useState(getGoogleCalendarAuthStatus());
   const [googleCalendarError, setGoogleCalendarError] = useState<string | null>(null);
+  const refreshGoogleCalendarStatus = () => {
+    const currentStatus = getGoogleCalendarAuthStatus();
+    setGoogleCalendarStatus(currentStatus);
+    return currentStatus;
+  };
   const [dadosEmpresa, setDadosEmpresa] = useState<Empresa>(defaultEmpresa);
   const categoriasTicket = [...new Set([...CATEGORIAS_PRODUTO_PADRAO, ...ticketsMedios.map((t) => t.categoria)])];
   const vendedoresComerciais = useMemo(() => [...new Set([...vendedores.map((v) => resolverVendedorCanonico(v.nome, vendedores)), ...clientes.map((c) => resolverVendedorCanonico(c.vendedor, vendedores))])].filter(Boolean).sort(), [vendedores, clientes]);
@@ -744,23 +749,44 @@ export default function Configuracoes() {
     event.target.value = "";
   };
 
+  const googleCalendarClientId = getGoogleCalendarClientId();
+  const googleCalendarClientIdLoaded = Boolean(googleCalendarClientId);
+  const googleCalendarAccessInMemory = hasGoogleCalendarAccess();
+  const googleCalendarLastFriendlyError = googleCalendarError || getGoogleCalendarLastAuthError();
+  const googleCalendarDisplayStatus: GoogleCalendarAuthStatus = !googleCalendarClientIdLoaded
+    ? "not_configured"
+    : googleCalendarStatus === "auth_error" || googleCalendarLastFriendlyError
+      ? "auth_error"
+      : googleCalendarStatus === "token_expired"
+        ? "token_expired"
+        : googleCalendarAccessInMemory
+          ? "connected"
+          : "not_connected";
+  const googleCalendarStatusLabel: Record<GoogleCalendarAuthStatus, string> = {
+    not_configured: "Não configurado",
+    not_connected: "Não conectado",
+    connected: "Conectado nesta sessão",
+    token_expired: "Token expirado",
+    auth_error: "Erro de autorização",
+  };
+
   const conectarGoogleCalendar = async () => {
     setGoogleCalendarError(null);
     try {
       await requestGoogleCalendarAccess();
-      setGoogleCalendarStatus(getGoogleCalendarAuthStatus());
+      refreshGoogleCalendarStatus();
       toast.success("Google Calendar conectado nesta sessão.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Erro de autorização do Google Calendar.";
       setGoogleCalendarError(message);
-      setGoogleCalendarStatus(getGoogleCalendarAuthStatus());
+      refreshGoogleCalendarStatus();
       toast.error(message);
     }
   };
 
   const desconectarGoogleCalendar = () => {
     disconnectGoogleCalendar();
-    setGoogleCalendarStatus(getGoogleCalendarAuthStatus());
+    refreshGoogleCalendarStatus();
     setGoogleCalendarError(null);
     toast.success("Google Calendar desconectado desta sessão.");
   };
@@ -769,12 +795,12 @@ export default function Configuracoes() {
     setGoogleCalendarError(null);
     try {
       await initGoogleCalendarClient();
-      setGoogleCalendarStatus(hasGoogleCalendarAccess() ? "connected" : getGoogleCalendarAuthStatus());
+      refreshGoogleCalendarStatus();
       toast.success(hasGoogleCalendarAccess() ? "Token do Google Calendar válido nesta sessão." : "Client ID carregado. Clique em conectar para autorizar.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Erro ao testar Google Calendar.";
       setGoogleCalendarError(message);
-      setGoogleCalendarStatus(getGoogleCalendarAuthStatus());
+      refreshGoogleCalendarStatus();
       toast.error(message);
     }
   };
@@ -842,23 +868,38 @@ export default function Configuracoes() {
               <div className="flex items-center gap-2 text-sm font-semibold"><CalendarClock className="h-4 w-4" />Google Calendar</div>
               <p className="text-xs text-muted-foreground">O Safra Vision continua sendo a fonte comercial. O Google Calendar é apenas espelho operacional dos agendamentos e o access token fica somente em memória da sessão.</p>
             </div>
-            <Badge variant={googleCalendarStatus === "connected" ? "default" : googleCalendarStatus === "auth_error" ? "destructive" : "outline"}>
-              {googleCalendarStatus === "connected" ? "Conectado nesta sessão" : googleCalendarStatus === "token_expired" ? "Token expirado" : googleCalendarStatus === "auth_error" ? "Erro de autorização" : "Não configurado"}
+            <Badge variant={googleCalendarDisplayStatus === "connected" ? "default" : googleCalendarDisplayStatus === "auth_error" ? "destructive" : "outline"}>
+              {googleCalendarStatusLabel[googleCalendarDisplayStatus]}
             </Badge>
           </div>
           <div className="grid gap-3 md:grid-cols-2">
             <div>
               <Label>Google Client ID</Label>
-              <Input value={getGoogleCalendarClientId() || "VITE_GOOGLE_CLIENT_ID não configurado"} readOnly />
+              <Input value={googleCalendarClientId || "VITE_GOOGLE_CLIENT_ID não configurado"} readOnly />
               <p className="mt-1 text-xs text-muted-foreground">Configure preferencialmente via variável de ambiente VITE_GOOGLE_CLIENT_ID. Nunca informe client secret no frontend.</p>
             </div>
             <div className="rounded border p-3 text-xs text-muted-foreground">
               Escopo solicitado: https://www.googleapis.com/auth/calendar.events. A autorização só é disparada por clique do usuário em “Conectar Google Calendar”.
             </div>
           </div>
+          {googleCalendarClientIdLoaded && googleCalendarDisplayStatus !== "connected" && (
+            <div className="rounded border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
+              Client ID carregado. Clique em Conectar Google Calendar e conclua a permissão na tela do Google.
+            </div>
+          )}
           {googleCalendarError && <div className="rounded border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">{googleCalendarError}</div>}
+          <div className="rounded border bg-muted/20 p-3 text-xs text-muted-foreground">
+            <div className="mb-2 font-semibold text-foreground">Diagnóstico seguro</div>
+            <div className="grid gap-1 md:grid-cols-2">
+              <div>Client ID: {googleCalendarClientIdLoaded ? "carregado" : "não carregado"}</div>
+              <div>Script Google Identity Services: {isGoogleIdentityServicesLoaded() ? "carregado" : "não carregado"}</div>
+              <div>Token em memória: {googleCalendarAccessInMemory ? "sim" : "não"}</div>
+              <div>Status atual: {googleCalendarStatusLabel[googleCalendarDisplayStatus]}</div>
+              <div className="md:col-span-2">Último erro amigável: {googleCalendarLastFriendlyError || "nenhum"}</div>
+            </div>
+          </div>
           <div className="flex flex-wrap gap-2">
-            <Button onClick={conectarGoogleCalendar} disabled={!getGoogleCalendarClientId()}>Conectar Google Calendar</Button>
+            <Button onClick={conectarGoogleCalendar} disabled={!googleCalendarClientIdLoaded}>Conectar Google Calendar</Button>
             <Button variant="outline" onClick={desconectarGoogleCalendar}>Desconectar Google Calendar</Button>
             <Button variant="secondary" onClick={testarGoogleCalendar}>Testar conexão</Button>
           </div>
