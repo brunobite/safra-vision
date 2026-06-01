@@ -2,13 +2,18 @@ name: Deploy Supabase Google Calendar
 
 on:
   workflow_dispatch:
+    inputs:
+      deploy_migrations:
+        description: "Apply database migrations with supabase db push"
+        required: false
+        default: "false"
 
 permissions:
   contents: read
 
 jobs:
   deploy:
-    name: Deploy Supabase migration and Edge Functions
+    name: Deploy Supabase Edge Functions
     runs-on: ubuntu-latest
 
     env:
@@ -31,18 +36,27 @@ jobs:
           set -euo pipefail
 
           missing=0
-          for secret_name in SUPABASE_ACCESS_TOKEN SUPABASE_PROJECT_ID SUPABASE_DB_PASSWORD; do
+          for secret_name in SUPABASE_ACCESS_TOKEN SUPABASE_PROJECT_ID; do
             if [ -z "${!secret_name:-}" ]; then
               echo "::error::Required GitHub secret ${secret_name} is not configured."
               missing=1
             fi
           done
 
+          if [ "${{ inputs.deploy_migrations }}" = "true" ] && [ -z "${SUPABASE_DB_PASSWORD:-}" ]; then
+            echo "::error::Required GitHub secret SUPABASE_DB_PASSWORD is not configured for deploy_migrations=true."
+            missing=1
+          fi
+
           if [ "$missing" -ne 0 ]; then
             exit 1
           fi
 
+      # Database migrations are not applied by default in this workflow.
+      # Apply the migration manually in the Supabase SQL Editor using:
+      # supabase/migrations/20260601090000_google_calendar_connections.sql
       - name: Apply Supabase database migrations
+        if: ${{ inputs.deploy_migrations == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
