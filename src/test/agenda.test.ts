@@ -93,8 +93,10 @@ describe("classificação da agenda", () => {
     expect(classificarAgenda("2026-05-30", "Pendente", hoje)).toBe("Atrasada");
     expect(classificarAgenda(hoje, "Pendente", hoje)).toBe("Pendente hoje");
     expect(classificarAgenda("2026-06-06", "Pendente", hoje)).toBe("Agendada");
+    expect(classificarAgenda("2026-06-06", "Reagendada", hoje)).toBe("Reagendada");
     expect(classificarAgenda("", "Pendente", hoje)).toBe("Sem agendamento");
     expect(classificarAgenda("2026-05-30", "Concluída", hoje)).toBe("Concluída");
+    expect(classificarAgenda("2026-06-06", "Cancelada", hoje)).toBe("Cancelada");
   });
 
   it("não conta ação concluída como pendente no resumo", () => {
@@ -138,7 +140,7 @@ describe("filtros por vendedor canônico", () => {
 });
 
 describe("alertas operacionais", () => {
-  it("gera alertas para cliente A/P1 sem próxima ação, orçamento aberto e negócio ganho sem pós-venda", () => {
+  it("prioriza apenas alertas operacionais da rotina de campo", () => {
     const alertas = montarAlertasAgenda({
       clientes: [cliente({ id: "c1", abc: "A", prioridade: "P2" }), cliente({ id: "c2", abc: "B", prioridade: "P1" })],
       proximasAcoes: [],
@@ -150,8 +152,8 @@ describe("alertas operacionais", () => {
     const tipos = alertas.map((alerta) => alerta.tipo);
     expect(tipos).toContain("cliente-a-sem-proxima-acao");
     expect(tipos).toContain("cliente-p1-sem-proxima-acao");
-    expect(tipos).toContain("orcamento-aberto-sem-retorno");
-    expect(tipos).toContain("negocio-ganho-sem-pos-venda");
+    expect(tipos).not.toContain("orcamento-aberto-sem-retorno");
+    expect(tipos).not.toContain("negocio-ganho-sem-pos-venda");
   });
 });
 
@@ -191,6 +193,7 @@ describe("ações da agenda", () => {
     expect(resultado[0].data).toBe("2026-06-10");
     expect((resultado[0] as ProximaAcao & { horario: string }).horario).toBe("09:30");
     expect(resultado[0].status).toBe("Reagendada");
+    expect(classificarAgenda(resultado[0].data, resultado[0].status, hoje)).toBe("Reagendada");
   });
 
   it("criar ação rápida vincula ao cliente correto e herda vendedor", () => {
