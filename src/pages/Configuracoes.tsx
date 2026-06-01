@@ -790,8 +790,26 @@ export default function Configuracoes() {
       </div>
     </Card>
     {dbError && <Card className="border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{dbError}</Card>}
-    <Tabs value={activeTab} onValueChange={setActiveTab}>
-      <TabsList>
+    <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
+      <div className="md:hidden">
+        <Label htmlFor="config-section" className="text-xs font-medium text-muted-foreground">Seção de configurações</Label>
+        <Select value={activeTab} onValueChange={setActiveTab}>
+          <SelectTrigger id="config-section" className="mt-1 h-11 w-full">
+            <SelectValue placeholder="Escolha uma seção" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="comissao">Regras de comissão</SelectItem>
+            <SelectItem value="vendedores">Vendedores</SelectItem>
+            <SelectItem value="tickets">Regras comerciais</SelectItem>
+            <SelectItem value="metas-comerciais">Metas comerciais</SelectItem>
+            <SelectItem value="integracoes">Integrações</SelectItem>
+            <SelectItem value="dados-empresa">Empresas</SelectItem>
+            <SelectItem value="banco-local">Banco local</SelectItem>
+            <SelectItem value="sync-cloud">Sincronização em nuvem</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      <TabsList className="hidden h-auto flex-wrap justify-start gap-1 md:inline-flex">
         <TabsTrigger value="comissao">Regras de comissão</TabsTrigger>
         <TabsTrigger value="vendedores">Vendedores</TabsTrigger>
         <TabsTrigger value="tickets">Regras comerciais</TabsTrigger>
@@ -802,9 +820,12 @@ export default function Configuracoes() {
         <TabsTrigger value="sync-cloud">Sincronização em nuvem</TabsTrigger>
       </TabsList>
 
-      <TabsContent value="comissao" className="space-y-3">{/* unchanged table */}
-        <div className="flex justify-end"><Button onClick={openNew}><Plus className="mr-1 h-4 w-4" /> Nova regra</Button></div>
-        <Card className="overflow-x-auto p-0"><Table><TableHeader><TableRow><TableHead>Nome</TableHead><TableHead>Tipo</TableHead><TableHead>Aplicar sobre</TableHead><TableHead>Alvo</TableHead><TableHead>Percentual / Faixas</TableHead><TableHead>Ativo</TableHead><TableHead className="text-right">Ações</TableHead></TableRow></TableHeader><TableBody>{regras.map(r => <TableRow key={r.id}><TableCell className="font-medium">{r.nome}</TableCell><TableCell><Badge variant="outline">{r.tipo}</Badge></TableCell><TableCell>{APLICAR.find(a => a.v === r.aplicarSobre)?.label}</TableCell><TableCell>{r.alvo || "—"}</TableCell><TableCell className="text-xs">{r.tipo === "fixa" ? `${r.percentual}%` : r.faixas?.map(f => `${f.min}-${f.max}%: ${f.percentual}%`).join(" | ")}</TableCell><TableCell>{r.ativo ? <Badge className="bg-success/15 text-success">Sim</Badge> : <Badge variant="outline">Não</Badge>}</TableCell><TableCell className="text-right"><Button size="icon" variant="ghost" onClick={() => openEdit(r)}><Pencil className="h-3.5 w-3.5" /></Button><Button size="icon" variant="ghost" onClick={() => { if (!window.confirm("Esta ação não pode ser desfeita nesta versão. Deseja continuar?")) return; setRegras(prev => prev.filter(x => x.id !== r.id)); toast.success("Excluída."); void loadStats(); }}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button></TableCell></TableRow>)}</TableBody></Table></Card>
+      <TabsContent value="comissao" className="space-y-3">
+        <div className="flex justify-end"><Button className="w-full sm:w-auto" onClick={openNew}><Plus className="mr-1 h-4 w-4" /> Nova regra</Button></div>
+        <Card className="hidden overflow-x-auto p-0 md:block"><Table><TableHeader><TableRow><TableHead>Nome</TableHead><TableHead>Tipo</TableHead><TableHead>Aplicar sobre</TableHead><TableHead>Alvo</TableHead><TableHead>Percentual / Faixas</TableHead><TableHead>Ativo</TableHead><TableHead className="text-right">Ações</TableHead></TableRow></TableHeader><TableBody>{regras.map(r => <TableRow key={r.id}><TableCell className="font-medium">{r.nome}</TableCell><TableCell><Badge variant="outline">{r.tipo}</Badge></TableCell><TableCell>{APLICAR.find(a => a.v === r.aplicarSobre)?.label}</TableCell><TableCell>{r.alvo || "—"}</TableCell><TableCell className="text-xs">{r.tipo === "fixa" ? `${r.percentual}%` : r.faixas?.map(f => `${f.min}-${f.max}%: ${f.percentual}%`).join(" | ")}</TableCell><TableCell>{r.ativo ? <Badge className="bg-success/15 text-success">Sim</Badge> : <Badge variant="outline">Não</Badge>}</TableCell><TableCell className="text-right"><Button size="icon" variant="ghost" onClick={() => openEdit(r)}><Pencil className="h-3.5 w-3.5" /></Button><Button size="icon" variant="ghost" onClick={() => { if (!window.confirm("Esta ação não pode ser desfeita nesta versão. Deseja continuar?")) return; setRegras(prev => prev.filter(x => x.id !== r.id)); toast.success("Excluída."); void loadStats(); }}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button></TableCell></TableRow>)}</TableBody></Table></Card>
+        <div className="space-y-3 md:hidden">
+          {regras.map(r => <Card key={r.id} className="space-y-3 p-3"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="break-words text-sm font-semibold">{r.nome}</div><div className="mt-1 flex flex-wrap gap-1.5"><Badge variant="outline">{r.tipo}</Badge>{r.ativo ? <Badge className="bg-success/15 text-success">Ativa</Badge> : <Badge variant="outline">Inativa</Badge>}</div></div><div className="flex shrink-0 gap-1"><Button size="icon" variant="ghost" onClick={() => openEdit(r)} aria-label={`Editar regra ${r.nome}`}><Pencil className="h-3.5 w-3.5" /></Button><Button size="icon" variant="ghost" onClick={() => { if (!window.confirm("Esta ação não pode ser desfeita nesta versão. Deseja continuar?")) return; setRegras(prev => prev.filter(x => x.id !== r.id)); toast.success("Excluída."); void loadStats(); }} aria-label={`Excluir regra ${r.nome}`}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button></div></div><div className="grid gap-2 text-xs text-muted-foreground"><div><span className="font-medium text-foreground">Aplicar sobre: </span>{APLICAR.find(a => a.v === r.aplicarSobre)?.label}</div><div><span className="font-medium text-foreground">Alvo: </span>{r.alvo || "—"}</div><div><span className="font-medium text-foreground">Percentual / Faixas: </span>{r.tipo === "fixa" ? `${r.percentual}%` : r.faixas?.map(f => `${f.min}-${f.max}%: ${f.percentual}%`).join(" | ")}</div></div></Card>)}
+        </div>
       </TabsContent>
 
       <TabsContent value="vendedores" className="space-y-3"><Card className="p-4"><div className="grid gap-2 md:grid-cols-4"><Input placeholder="Nome" value={novoVend} onChange={e => setNovoVend(e.target.value)} /><Input placeholder="Telefone" value={novoTel} onChange={e => setNovoTel(e.target.value)} /><Input placeholder="E-mail" value={novoEmail} onChange={e => setNovoEmail(e.target.value)} /><Button onClick={() => { if (!novoVend) return; setVendedores(prev => [...prev, { id: `v${Date.now()}`, nome: novoVend, telefone: novoTel, email: novoEmail, ativo: true }]); setNovoVend("");setNovoTel("");setNovoEmail(""); toast.success("Vendedor adicionado."); void loadStats(); }}><Plus className="mr-1 h-4 w-4" />Adicionar</Button></div><div className="mt-4 space-y-2">{vendedores.map(v => <div key={v.id} className="flex items-center justify-between rounded border p-2 text-sm"><div>{v.nome} • {v.telefone||"-"} • {v.email||"-"} • {v.ativo?"Ativo":"Inativo"}</div><button className="ml-2 text-destructive" onClick={() => { if (!window.confirm("Esta ação não pode ser desfeita nesta versão. Deseja continuar?")) return; setVendedores(prev => prev.filter(x => x.id !== v.id)); void loadStats(); }}>Excluir</button></div>)}</div></Card></TabsContent>
