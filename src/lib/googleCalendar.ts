@@ -70,6 +70,7 @@ let tokenClient: TokenClient | null = null;
 let currentConfig: GoogleCalendarConfig | null = null;
 let accessToken: string | null = null;
 let accessTokenExpiresAt = 0;
+let authStatus: GoogleCalendarAuthStatus = "not_configured";
 let lastAuthError: string | null = null;
 let pendingTokenRequest: { resolve: (token: string) => void; reject: (error: Error) => void } | null = null;
 
@@ -81,27 +82,56 @@ function friendlyGoogleError(error: unknown): string {
   return "Erro ao comunicar com o Google Calendar.";
 }
 
+function markGoogleCalendarAuthError(message: string): void {
+  accessToken = null;
+  accessTokenExpiresAt = 0;
+  authStatus = "auth_error";
+  lastAuthError = message;
+}
+
+function markGoogleCalendarTokenExpired(): void {
+  accessToken = null;
+  accessTokenExpiresAt = 0;
+  authStatus = "token_expired";
+}
+
+function normalizeGoogleCalendarAuthState(): GoogleCalendarAuthStatus {
+  if (accessToken && Date.now() >= accessTokenExpiresAt) markGoogleCalendarTokenExpired();
+  return authStatus;
+}
+
 export function getGoogleCalendarClientId(): string {
   return import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
 }
 
 export function getGoogleCalendarAuthStatus(): GoogleCalendarAuthStatus {
-  if (!currentConfig?.clientId && !getGoogleCalendarClientId()) return "not_configured";
+  normalizeGoogleCalendarAuthState();
   if (lastAuthError) return "auth_error";
-  if (accessToken && Date.now() < accessTokenExpiresAt) return "connected";
-  if (accessToken) return "token_expired";
-  return "not_configured";
+  if (authStatus === "not_configured" && (currentConfig?.clientId || getGoogleCalendarClientId())) return "not_configured";
+  return authStatus;
 }
 
 export function disconnectGoogleCalendar(): void {
   accessToken = null;
   accessTokenExpiresAt = 0;
+  authStatus = "not_configured";
+  lastAuthError = null;
+  pendingTokenRequest = null;
+}
+
+export function resetGoogleCalendarAuthForTests(): void {
+  tokenClient = null;
+  currentConfig = null;
+  accessToken = null;
+  accessTokenExpiresAt = 0;
+  authStatus = "not_configured";
   lastAuthError = null;
   pendingTokenRequest = null;
 }
 
 export function hasGoogleCalendarAccess(): boolean {
-  return Boolean(accessToken && Date.now() < accessTokenExpiresAt);
+  normalizeGoogleCalendarAuthState();
+  return Boolean(accessToken && Date.now() < accessTokenExpiresAt && authStatus === "connected");
 }
 
 function ensureBrowser(): void {
@@ -130,7 +160,10 @@ export function loadGoogleIdentityScript(): Promise<void> {
 export async function initGoogleCalendarClient(config: GoogleCalendarConfig = {}): Promise<void> {
   const clientId = config.clientId || getGoogleCalendarClientId();
   currentConfig = { clientId, scope: config.scope || GOOGLE_CALENDAR_SCOPE };
-  if (!clientId) throw new Error("Configure VITE_GOOGLE_CLIENT_ID para conectar o Google Calendar.");
+  if (!clientId) {
+    authStatus = "not_configured";
+    throw new Error("Configure VITE_GOOGLE_CLIENT_ID para conectar o Google Calendar.");
+  }
   await loadGoogleIdentityScript();
   const initTokenClient = window.google?.accounts?.oauth2?.initTokenClient;
   if (!initTokenClient) throw new Error("Google Identity Services indisponível no navegador.");
@@ -138,22 +171,24 @@ export async function initGoogleCalendarClient(config: GoogleCalendarConfig = {}
     client_id: clientId,
     scope: currentConfig.scope || GOOGLE_CALENDAR_SCOPE,
     callback: (response) => {
-      if (response.error || !response.access_token) {
-        const message = friendlyGoogleError(response);
-        lastAuthError = message;
+      if (response.error || response.error_description || !response.access_token) {
+        const message = friendlyGoogleError(response) || "Autorização do Google Calendar não concluída.";
+        markGoogleCalendarAuthError(message);
         pendingTokenRequest?.reject(new Error(message));
         pendingTokenRequest = null;
         return;
       }
+      const expiresIn = response.expires_in ?? 3600;
       accessToken = response.access_token;
-      accessTokenExpiresAt = Date.now() + Math.max(0, (response.expires_in || 3600) - 60) * 1000;
+      accessTokenExpiresAt = expiresIn <= 0 ? Date.now() : Date.now() + Math.max(0, expiresIn - 60) * 1000;
+      authStatus = expiresIn <= 0 ? "token_expired" : "connected";
       lastAuthError = null;
-      pendingTokenRequest?.resolve(accessToken);
+      pendingTokenRequest?.resolve(response.access_token);
       pendingTokenRequest = null;
     },
     error_callback: (error) => {
       const message = friendlyGoogleError(error) || "Autorização do Google Calendar cancelada ou negada.";
-      lastAuthError = message;
+      markGoogleCalendarAuthError(message);
       pendingTokenRequest?.reject(new Error(message));
       pendingTokenRequest = null;
     },
@@ -161,7 +196,9 @@ export async function initGoogleCalendarClient(config: GoogleCalendarConfig = {}
 }
 
 export async function requestGoogleCalendarAccess(config: GoogleCalendarConfig = {}): Promise<string> {
-  if (!tokenClient) await initGoogleCalendarClient(config);
+  const requestedClientId = config.clientId || getGoogleCalendarClientId();
+  const requestedScope = config.scope || GOOGLE_CALENDAR_SCOPE;
+  if (!tokenClient || currentConfig?.clientId !== requestedClientId || currentConfig?.scope !== requestedScope) await initGoogleCalendarClient(config);
   if (!tokenClient) throw new Error("Cliente OAuth do Google Calendar não inicializado.");
   return new Promise((resolve, reject) => {
     pendingTokenRequest = { resolve, reject };
@@ -176,7 +213,7 @@ async function fetchGoogleCalendar(path: string, init: RequestInit): Promise<Goo
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}`, ...(init.headers || {}) },
   });
   if (response.status === 401) {
-    accessTokenExpiresAt = 0;
+    markGoogleCalendarTokenExpired();
     throw new Error("Autorização expirada. Conecte novamente o Google Calendar.");
   }
   if (!response.ok) throw new Error(`Erro do Google Calendar (${response.status}).`);

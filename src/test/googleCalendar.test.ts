@@ -4,6 +4,7 @@ import {
   buildCalendarEventFromAgendaItem,
   createGoogleCalendarEvent,
   disconnectGoogleCalendar,
+  resetGoogleCalendarAuthForTests,
   getGoogleCalendarAgendaActionState,
   getGoogleCalendarAuthStatus,
   hasGoogleCalendarAccess,
@@ -31,6 +32,7 @@ const item = {
 };
 
 beforeEach(() => {
+  resetGoogleCalendarAuthForTests();
   disconnectGoogleCalendar();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
