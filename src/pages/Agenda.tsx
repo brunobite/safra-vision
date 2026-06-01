@@ -39,7 +39,7 @@ const VISOES: Array<{ value: AgendaVisao; label: string }> = [
   { value: "todas", label: "Todas" },
 ];
 
-type AgendaFlowForm = { clienteId: string; clienteBusca: string; data: string; horario: string; descricao: string; tipo: TipoProximaAcao; observacao: string };
+type AgendaFlowForm = { clienteId: string; clienteBusca: string; data: string; horario: string; descricao: string; tipo: TipoProximaAcao; observacao: string; vendedor: string };
 type OportunidadeItemForm = { produtoId: string; quantidade: number; unidade: string; precoUnitario: number };
 
 const nowParts = () => {
@@ -47,10 +47,10 @@ const nowParts = () => {
   return { iso: now.toISOString(), data: now.toISOString().slice(0, 10), horario: now.toTimeString().slice(0, 5) };
 };
 
-const emptyFlowForm = (tipo: TipoProximaAcao = "Visita"): AgendaFlowForm => ({ clienteId: "", clienteBusca: "", data: "", horario: "", descricao: "", tipo, observacao: "" });
+const emptyFlowForm = (tipo: TipoProximaAcao = "Visita"): AgendaFlowForm => ({ clienteId: "", clienteBusca: "", data: "", horario: "", descricao: "", tipo, observacao: "", vendedor: "" });
 
 export default function Agenda() {
-  const { clientes, vendedores, proximasAcoes, setProximasAcoes, oportunidades, setOportunidades, orcamentos, negocios, setNegocios, setLancamentos, produtos } = useAppStore();
+  const { clientes, vendedores, proximasAcoes, setProximasAcoes, oportunidades, setOportunidades, orcamentos, negocios, setNegocios, lancamentos, setLancamentos, produtos } = useAppStore();
   const nav = useNavigate();
   const [params, setParams] = useSearchParams();
   const hoje = new Date().toISOString().slice(0, 10);
@@ -71,7 +71,9 @@ export default function Agenda() {
   const vendedoresCanonicos = useMemo(() => vendedoresCanonicosAgenda(clientes, vendedores), [clientes, vendedores]);
   const clientesEncontrados = useMemo(() => buscarClientesAgenda(clientes, flowForm.clienteBusca, vendedores), [clientes, flowForm.clienteBusca, vendedores]);
   const clienteSelecionado = useMemo(() => clientes.find((cliente) => cliente.id === flowForm.clienteId), [clientes, flowForm.clienteId]);
-  const vendedorSelecionado = useMemo(() => clienteSelecionado ? buscarClientesAgenda([clienteSelecionado], clienteSelecionado.nome, vendedores, 1)[0]?.vendedor || clienteSelecionado.vendedor || "Não definido" : "Selecione um cliente", [clienteSelecionado, vendedores]);
+  const vendedorSelecionado = useMemo(() => flowForm.vendedor || (clienteSelecionado ? buscarClientesAgenda([clienteSelecionado], clienteSelecionado.nome, vendedores, 1)[0]?.vendedor || clienteSelecionado.vendedor || "" : ""), [clienteSelecionado, flowForm.vendedor, vendedores]);
+  const vendedoresAtivos = useMemo(() => Array.from(new Set(vendedores.filter((vendedor) => vendedor.ativo).map((vendedor) => vendedor.nome).filter(Boolean))), [vendedores]);
+  const vendedoresOpcoes = useMemo(() => Array.from(new Set([...vendedoresAtivos, ...vendedoresCanonicos.filter((vendedor) => vendedor !== "Não definido"), flowForm.vendedor, contexto?.vendedor].filter(Boolean))), [contexto?.vendedor, flowForm.vendedor, vendedoresAtivos, vendedoresCanonicos]);
   const itensFiltrados = useMemo(() => filtrarItensAgenda(filtrarPorVisaoAgenda(itens, visao, hoje), filtros), [itens, visao, filtros, hoje]);
   const filtrosAtivos = useMemo(() => Object.values(filtros).filter((valor) => valor && valor !== "__all__").length, [filtros]);
   const valorEstimadoTotal = useMemo(() => oppItems.reduce((total, item) => total + (Number(item.quantidade) || 0) * (Number(item.precoUnitario) || 0), 0), [oppItems]);
@@ -79,32 +81,37 @@ export default function Agenda() {
   useEffect(() => {
     const action = params.get("action");
     if (!action) return;
-    if (action === "agendar-visita") abrirAgendamento();
-    if (action === "visita-concluida") abrirVisitaConcluida();
-    if (action === "nova-acao") abrirNovaAcaoAvulsa();
+    const clienteId = params.get("clienteId") || undefined;
+    if (action === "agendar-visita") abrirAgendamento(clienteId);
+    if (action === "visita-concluida") abrirVisitaConcluida(clienteId);
+    if (action === "nova-acao") abrirNovaAcaoAvulsa(clienteId, (params.get("tipo") as TipoProximaAcao) || undefined);
     setParams({});
   }, [params, setParams]);
 
   const preencherCliente = (clienteId: string) => {
     const cliente = clientes.find((item) => item.id === clienteId);
-    setFlowForm((atual) => ({ ...atual, clienteId, clienteBusca: cliente?.nome || atual.clienteBusca }));
+    const vendedor = cliente?.vendedor ? buscarClientesAgenda([cliente], cliente.nome, vendedores, 1)[0]?.vendedor || cliente.vendedor : "";
+    setFlowForm((atual) => ({ ...atual, clienteId, clienteBusca: cliente?.nome || atual.clienteBusca, vendedor }));
   };
 
-  const abrirAgendamento = () => {
-    setFlowForm({ ...emptyFlowForm("Visita"), data: hoje, descricao: "Visita agendada" });
+  const abrirAgendamento = (clienteId?: string) => {
+    const cliente = clientes.find((item) => item.id === clienteId);
+    setFlowForm({ ...emptyFlowForm("Visita"), clienteId: cliente?.id || "", clienteBusca: cliente?.nome || "", vendedor: cliente?.vendedor || "", data: hoje, descricao: "Visita agendada" });
     setContexto(null);
     setModal("agendar");
   };
 
-  const abrirVisitaConcluida = () => {
+  const abrirVisitaConcluida = (clienteId?: string) => {
     const agora = nowParts();
-    setFlowForm({ ...emptyFlowForm("Visita"), data: agora.data, horario: agora.horario, descricao: "Visita concluída" });
+    const cliente = clientes.find((item) => item.id === clienteId);
+    setFlowForm({ ...emptyFlowForm("Visita"), clienteId: cliente?.id || "", clienteBusca: cliente?.nome || "", vendedor: cliente?.vendedor || "", data: agora.data, horario: agora.horario, descricao: "Visita concluída" });
     setContexto(null);
     setModal("visita");
   };
 
-  const abrirNovaAcaoAvulsa = () => {
-    setFlowForm({ ...emptyFlowForm("Follow-up"), data: hoje, descricao: "Nova ação comercial" });
+  const abrirNovaAcaoAvulsa = (clienteId?: string, tipo: TipoProximaAcao = "Follow-up") => {
+    const cliente = clientes.find((item) => item.id === clienteId);
+    setFlowForm({ ...emptyFlowForm(tipo), clienteId: cliente?.id || "", clienteBusca: cliente?.nome || "", vendedor: cliente?.vendedor || "", data: hoje, descricao: tipo === "Follow-up" ? "Nova ação comercial" : tipo });
     setContexto(null);
     setModal("novaAcao");
   };
@@ -114,10 +121,10 @@ export default function Agenda() {
     if (!cliente) return null;
     const dataHoraInicio = `${flowForm.data || hoje}T${flowForm.horario || "00:00"}:00`;
     const acao = {
-      ...criarAcaoRapidaAgenda({ cliente, tipo: flowForm.tipo, data: flowForm.data || hoje, horario: flowForm.horario, descricao: flowForm.descricao, observacao: flowForm.observacao, vendedores }),
+      ...criarAcaoRapidaAgenda({ cliente, tipo: flowForm.tipo, data: flowForm.data || hoje, horario: flowForm.horario, descricao: flowForm.descricao, observacao: flowForm.observacao, vendedor: flowForm.vendedor, vendedores }),
       status,
       origem,
-      responsavel: cliente.vendedor || vendedorSelecionado,
+      responsavel: flowForm.vendedor || vendedorSelecionado,
       objetivo: flowForm.descricao,
       googleCalendarSyncStatus: "pending",
       googleCalendarEventId: "",
@@ -130,6 +137,7 @@ export default function Agenda() {
 
   const salvarAgendamento = () => {
     if (!flowForm.clienteId || !flowForm.data) return toast.error("Selecione cliente e data da visita.");
+    if (!flowForm.vendedor) return toast.error("Selecione o vendedor responsável pela visita.");
     const acao = criarAcaoAgenda("Pendente", "Avulsa", { descricao: flowForm.descricao || "Visita agendada", tipo: "Visita" });
     if (!acao) return;
     setProximasAcoes((atuais) => [{ ...acao, observacoes: flowForm.observacao || "Status Agenda e Visitas: Agendada" }, ...atuais]);
@@ -140,6 +148,7 @@ export default function Agenda() {
   const salvarVisitaConcluida = () => {
     const cliente = clientes.find((item) => item.id === flowForm.clienteId);
     if (!cliente || !flowForm.data) return toast.error("Selecione cliente e data da visita concluída.");
+    if (!flowForm.vendedor) return toast.error("Selecione o vendedor responsável pela visita.");
     const agora = nowParts();
     const lancamentoId = `lan${Date.now()}`;
     const dataHoraInicio = `${flowForm.data}T${flowForm.horario || agora.horario}:00`;
@@ -150,7 +159,7 @@ export default function Agenda() {
       tipo: "Visita",
       frente: "Venda Direta",
       status: "Concluído",
-      vendedor: cliente.vendedor || vendedorSelecionado,
+      vendedor: flowForm.vendedor || vendedorSelecionado,
       geraOportunidade: false,
       observacao: flowForm.observacao,
       oQueFoiRealizado: flowForm.descricao || "Visita concluída",
@@ -159,7 +168,7 @@ export default function Agenda() {
       dataHoraInicio,
       dataHoraFim: dataHoraInicio,
     }, ...atuais]);
-    setContexto({ clienteId: cliente.id, vendedor: cliente.vendedor || vendedorSelecionado, lancamentoId });
+    setContexto({ clienteId: cliente.id, vendedor: flowForm.vendedor || vendedorSelecionado, lancamentoId });
     setModal("pergunta");
   };
 
@@ -176,6 +185,7 @@ export default function Agenda() {
 
   const salvarOportunidade = () => {
     if (!contexto?.clienteId) return toast.error("Fluxo de visita não encontrado.");
+    if (!contexto.vendedor) return toast.error("Selecione o vendedor responsável pela oportunidade.");
     const now = new Date().toISOString();
     const oportunidadeId = `op${Date.now()}`;
     const itensEstimados = oppItems.filter((item) => item.produtoId).map((item) => {
@@ -190,14 +200,16 @@ export default function Agenda() {
       valorEstimado: valorEstimadoTotal,
       responsavel: contexto.vendedor,
       etapa: "Identificada",
+      lancamentoId: contexto.lancamentoId,
       previsaoFechamento: oppForm.previsaoFechamento,
       observacoes: `Origem: Visita concluída${contexto.lancamentoId ? ` • lançamento ${contexto.lancamentoId}` : ""}`,
       itensEstimados,
       createdAt: now,
       updatedAt: now,
     }, ...atuais]);
+    const negocioId = `neg${Date.now()}`;
     setNegocios((atuais) => [{
-      id: `neg${Date.now()}`,
+      id: negocioId,
       oportunidadeId,
       nome: oppForm.descricao || "Oportunidade criada",
       clienteId: contexto.clienteId,
@@ -213,20 +225,24 @@ export default function Agenda() {
       itensEstimados,
       lancamentoId: contexto.lancamentoId,
     }, ...atuais]);
-    setContexto((atual) => atual ? { ...atual, oportunidadeId } : atual);
+    if (contexto.lancamentoId) {
+      setLancamentos((atuais) => atuais.map((lancamento) => lancamento.id === contexto.lancamentoId ? { ...lancamento, oportunidadeId, negocioId, geraOportunidade: true } : lancamento));
+    }
+    setContexto((atual) => atual ? { ...atual, oportunidadeId, negocioId } : atual);
     setModal("marcarPergunta");
     toast.success("Oportunidade criada no funil a partir da visita concluída.");
   };
 
   const prepararNovaAcaoDoContexto = () => {
     const cliente = clientes.find((item) => item.id === contexto?.clienteId);
-    setFlowForm({ ...emptyFlowForm("Follow-up"), clienteId: contexto?.clienteId || "", clienteBusca: cliente?.nome || "", data: hoje, descricao: "Próxima ação comercial" });
+    setFlowForm({ ...emptyFlowForm("Follow-up"), clienteId: contexto?.clienteId || "", clienteBusca: cliente?.nome || "", vendedor: contexto?.vendedor || cliente?.vendedor || "", data: hoje, descricao: "Próxima ação comercial" });
     setModal("novaAcao");
   };
 
   const salvarNovaAcao = () => {
     if (!flowForm.data) return toast.error("Informe a data da nova ação.");
-    const acao = criarAcaoAgenda("Pendente", contexto?.oportunidadeId ? "Negócio" : "Avulsa", { oportunidadeId: contexto?.oportunidadeId, negocioId: contexto?.negocioId });
+    if (!flowForm.vendedor) return toast.error("Selecione o vendedor responsável pela ação.");
+    const acao = criarAcaoAgenda("Pendente", contexto?.oportunidadeId ? "Negócio" : "Avulsa", { oportunidadeId: contexto?.oportunidadeId, negocioId: contexto?.negocioId, lancamentoId: contexto?.lancamentoId });
     if (!acao) return toast.error("Selecione um cliente para a nova ação.");
     setProximasAcoes((atuais) => [acao, ...atuais]);
     setModal(null);
@@ -236,14 +252,47 @@ export default function Agenda() {
   const concluir = (acaoId?: string) => {
     if (!acaoId) return;
     const acao = proximasAcoes.find((item) => item.id === acaoId);
-    setProximasAcoes((atuais) => concluirAcaoAgenda(atuais, acaoId));
+    const concluidaEm = new Date().toISOString();
     if (acao?.tipo === "Visita") {
       const cliente = clientes.find((item) => item.id === acao.clienteId);
       const agora = nowParts();
-      setFlowForm({ clienteId: acao.clienteId || "", clienteBusca: cliente?.nome || "", data: hoje, horario: agora.horario, descricao: acao.descricao, tipo: "Visita", observacao: acao.observacoes || "" });
-      setContexto({ clienteId: acao.clienteId || "", vendedor: acao.responsavel });
+      const existente = lancamentos.find((lancamento) => lancamento.id === acao.lancamentoId || lancamento.proximaAcaoId === acao.id || lancamento.origemAcaoId === acao.id || lancamento.acaoAgendaId === acao.id);
+      const lancamentoId = existente?.id || acao.lancamentoId || `lan${Date.now()}`;
+      const vendedor = acao.responsavel || cliente?.vendedor || "";
+      const dataConclusao = agora.data || acao.data || hoje;
+      const dataHoraInicio = acao.dataHoraInicio || `${acao.data || dataConclusao}T${acao.horario || agora.horario}:00`;
+      const dataHoraFim = `${dataConclusao}T${agora.horario}:00`;
+
+      if (!existente) {
+        setLancamentos((atuais) => [{
+          id: lancamentoId,
+          clienteId: acao.clienteId || "",
+          data: dataConclusao,
+          tipo: "Visita",
+          frente: "Venda Direta",
+          status: "Concluído",
+          vendedor,
+          observacao: acao.observacoes,
+          oQueFoiRealizado: acao.descricao,
+          dataHoraInicio,
+          dataHoraFim,
+          googleCalendarSyncStatus: "not_required",
+          googleCalendarEventId: "",
+          oportunidadeId: acao.oportunidadeId,
+          negocioId: acao.negocioId,
+          orcamentoId: acao.orcamentoId,
+          proximaAcaoId: acao.id,
+          origemAcaoId: acao.id,
+          acaoAgendaId: acao.id,
+        }, ...atuais]);
+      }
+
+      setProximasAcoes((atuais) => atuais.map((item) => item.id === acaoId ? { ...item, status: "Concluída", dataConclusao: concluidaEm, updatedAt: concluidaEm, lancamentoId } : item));
+      setFlowForm({ clienteId: acao.clienteId || "", clienteBusca: cliente?.nome || "", vendedor, data: dataConclusao, horario: agora.horario, descricao: acao.descricao, tipo: "Visita", observacao: acao.observacoes || "" });
+      setContexto({ clienteId: acao.clienteId || "", vendedor, lancamentoId, oportunidadeId: acao.oportunidadeId, negocioId: acao.negocioId });
       setModal("pergunta");
     } else {
+      setProximasAcoes((atuais) => concluirAcaoAgenda(atuais, acaoId, concluidaEm));
       abrirNovaAcaoAvulsa();
     }
   };
@@ -377,10 +426,10 @@ export default function Agenda() {
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
         <DialogHeader><DialogTitle>{modal === "agendar" ? "Agendar visita futura" : modal === "visita" ? "VISITA CONCLUÍDA" : "Marcar nova ação"}</DialogTitle></DialogHeader>
         <div className="grid gap-3 md:grid-cols-2">
-          <div className="relative md:col-span-2"><Label>Cliente</Label><Input value={flowForm.clienteBusca} onChange={(event) => setFlowForm((atual) => ({ ...atual, clienteBusca: event.target.value, clienteId: "" }))} placeholder="Buscar por nome, fazenda, cidade, rota ou vendedor" />{flowForm.clienteBusca && !flowForm.clienteId && <div className="mt-1 max-h-48 overflow-y-auto rounded-md border bg-popover p-1 text-sm shadow">{clientesEncontrados.map((cliente) => <button key={cliente.id} type="button" className="w-full rounded-sm px-3 py-2 text-left hover:bg-accent" onClick={() => preencherCliente(cliente.id)}><div className="font-medium">{cliente.nome}</div><div className="text-xs text-muted-foreground">{cliente.fazenda} — {cliente.cidade} — {cliente.vendedor || "Sem vendedor"}</div></button>)}{clientesEncontrados.length === 0 && <div className="px-3 py-2 text-muted-foreground">Nenhum cliente encontrado.</div>}</div>}</div>
+          <div className="relative md:col-span-2"><Label>Cliente</Label><Input value={flowForm.clienteBusca} onChange={(event) => setFlowForm((atual) => ({ ...atual, clienteBusca: event.target.value, clienteId: "", vendedor: "" }))} placeholder="Buscar por nome, fazenda, cidade, rota ou vendedor" />{flowForm.clienteBusca && !flowForm.clienteId && <div className="mt-1 max-h-48 overflow-y-auto rounded-md border bg-popover p-1 text-sm shadow">{clientesEncontrados.map((cliente) => <button key={cliente.id} type="button" className="w-full rounded-sm px-3 py-2 text-left hover:bg-accent" onClick={() => preencherCliente(cliente.id)}><div className="font-medium">{cliente.nome}</div><div className="text-xs text-muted-foreground">{cliente.fazenda} — {cliente.cidade} — {cliente.vendedor || "Sem vendedor"}</div></button>)}{clientesEncontrados.length === 0 && <div className="px-3 py-2 text-muted-foreground">Nenhum cliente encontrado.</div>}</div>}</div>
           <div><Label>Data</Label><Input type="date" value={flowForm.data} onChange={(event) => setFlowForm((atual) => ({ ...atual, data: event.target.value }))} /></div>
           <div><Label>Hora</Label><Input type="time" value={flowForm.horario} onChange={(event) => setFlowForm((atual) => ({ ...atual, horario: event.target.value }))} /></div>
-          <div><Label>Vendedor herdado</Label><Input value={vendedorSelecionado} readOnly /></div>
+          <div><Label>Vendedor</Label><Select value={flowForm.vendedor || "__none__"} onValueChange={(value) => setFlowForm((atual) => ({ ...atual, vendedor: value === "__none__" ? "" : value }))}><SelectTrigger><SelectValue placeholder="Selecione o vendedor" /></SelectTrigger><SelectContent><SelectItem value="__none__">Selecione</SelectItem>{vendedoresOpcoes.map((vendedor) => <SelectItem key={vendedor} value={vendedor}>{vendedor}</SelectItem>)}</SelectContent></Select></div>
           {modal === "novaAcao" && <div><Label>Tipo de ação</Label><Select value={flowForm.tipo} onValueChange={(v: TipoProximaAcao) => setFlowForm((atual) => ({ ...atual, tipo: v }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{TIPOS.map((tipo) => <SelectItem key={tipo} value={tipo}>{tipo}</SelectItem>)}</SelectContent></Select></div>}
           <div className="md:col-span-2"><Label>{modal === "novaAcao" ? "Descrição" : "Objetivo da visita"}</Label><Textarea value={flowForm.descricao} onChange={(event) => setFlowForm((atual) => ({ ...atual, descricao: event.target.value }))} /></div>
           <div className="md:col-span-2"><Label>Observações</Label><Textarea value={flowForm.observacao} onChange={(event) => setFlowForm((atual) => ({ ...atual, observacao: event.target.value }))} /></div>
@@ -402,7 +451,7 @@ export default function Agenda() {
         <DialogHeader><DialogTitle>OPORTUNIDADE DE NEGÓCIO</DialogTitle></DialogHeader>
         <div className="grid gap-3 md:grid-cols-2">
           <div><Label>Cliente herdado</Label><Input value={clientes.find((cliente) => cliente.id === contexto?.clienteId)?.nome || ""} readOnly /></div>
-          <div><Label>Vendedor herdado</Label><Input value={contexto?.vendedor || "Não definido"} readOnly /></div>
+          <div><Label>Vendedor</Label><Select value={contexto?.vendedor || "__none__"} onValueChange={(value) => setContexto((atual) => atual ? { ...atual, vendedor: value === "__none__" ? "" : value } : atual)}><SelectTrigger><SelectValue placeholder="Selecione o vendedor" /></SelectTrigger><SelectContent><SelectItem value="__none__">Selecione</SelectItem>{vendedoresOpcoes.map((vendedor) => <SelectItem key={vendedor} value={vendedor}>{vendedor}</SelectItem>)}</SelectContent></Select></div>
           <div className="md:col-span-2"><Label>Descrição da oportunidade</Label><Textarea value={oppForm.descricao} onChange={(event) => setOppForm((atual) => ({ ...atual, descricao: event.target.value }))} /></div>
           <div><Label>Previsão de fechamento</Label><Input type="date" value={oppForm.previsaoFechamento} onChange={(event) => setOppForm((atual) => ({ ...atual, previsaoFechamento: event.target.value }))} /></div>
           <div><Label>Valor estimado total</Label><Input value={valorEstimadoTotal.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} readOnly /></div>

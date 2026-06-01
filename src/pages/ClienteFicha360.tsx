@@ -7,6 +7,7 @@ import { useAppStore } from "@/store/AppStore";
 import { fmtBRL, fmtNum } from "@/utils/calculations";
 import { formatDateBR } from "@/utils/dateUtils";
 import { gerarPdfOrcamento } from "@/lib/orcamentoPdf";
+import type { Lancamento, ProximaAcao } from "@/types";
 
 interface TimelineItem {
   id: string;
@@ -17,16 +18,36 @@ interface TimelineItem {
   status?: string;
 }
 
+type VisitaConsolidada = { id: string; data: string; origem: "lancamento" | "acao"; lancamento?: Lancamento; acao?: ProximaAcao };
+
+const STATUS_ATIVOS = ["Pendente", "Em andamento", "Reagendada"];
+const STATUS_VISITA_REALIZADA = ["Concluída", "Realizada"];
+
+function isLancamentoCancelado(status?: string) {
+  return ["Cancelado", "Cancelada"].includes(status || "");
+}
+
+function acaoTemLancamento(acao: ProximaAcao, lancamentos: Lancamento[]) {
+  return !!acao.lancamentoId || lancamentos.some((lancamento) => lancamento.proximaAcaoId === acao.id || lancamento.origemAcaoId === acao.id || lancamento.acaoAgendaId === acao.id);
+}
+
 export default function ClienteFicha360() {
   const nav = useNavigate();
   const { id } = useParams();
   const { clienteById, lancamentos, proximasAcoes, orcamentos, negocios, empresas, oportunidades } = useAppStore();
   const cliente = clienteById(id || "");
 
-  const visitas = useMemo(() => lancamentos.filter((l) => l.clienteId === id && l.tipo === "Visita"), [lancamentos, id]);
-  const ultimaVisita = useMemo(() => [...visitas].sort((a, b) => b.data.localeCompare(a.data))[0]?.data, [visitas]);
+  const lancamentosVisita = useMemo(() => lancamentos.filter((l) => l.clienteId === id && l.tipo === "Visita" && !isLancamentoCancelado(l.status)), [lancamentos, id]);
   const acoesCliente = useMemo(() => proximasAcoes.filter((a) => a.clienteId === id), [proximasAcoes, id]);
-  const proximaPendente = useMemo(() => acoesCliente.filter((a) => a.status === "Pendente").sort((a, b) => a.data.localeCompare(b.data))[0], [acoesCliente]);
+  const visitas = useMemo<VisitaConsolidada[]>(() => {
+    const visitasLancadas = lancamentosVisita.map((lancamento) => ({ id: `l-${lancamento.id}`, data: lancamento.data, origem: "lancamento" as const, lancamento }));
+    const visitasDeAcoes = acoesCliente
+      .filter((acao) => acao.tipo === "Visita" && STATUS_VISITA_REALIZADA.includes(acao.status) && !acaoTemLancamento(acao, lancamentosVisita))
+      .map((acao) => ({ id: `a-visita-${acao.id}`, data: acao.dataConclusao?.slice(0, 10) || acao.data, origem: "acao" as const, acao }));
+    return [...visitasLancadas, ...visitasDeAcoes].sort((a, b) => b.data.localeCompare(a.data));
+  }, [acoesCliente, lancamentosVisita]);
+  const ultimaVisita = useMemo(() => visitas[0]?.data, [visitas]);
+  const proximaPendente = useMemo(() => acoesCliente.filter((a) => STATUS_ATIVOS.includes(a.status)).sort((a, b) => a.data.localeCompare(b.data))[0], [acoesCliente]);
 
   const realizadoCliente = useMemo(() => {
     const lancado = lancamentos.filter((l) => l.clienteId === id).reduce((acc, l) => acc + (l.vendaRs || 0), 0);
@@ -39,18 +60,25 @@ export default function ClienteFicha360() {
   const orcamentosCliente = useMemo(() => orcamentos.filter((o) => o.clienteId === id).sort((a,b)=> (b.data || "").localeCompare(a.data || "")), [orcamentos, id]);
   const timeline = useMemo<TimelineItem[]>(() => {
     const itens: TimelineItem[] = [];
-    proximasAcoes.filter((a) => a.clienteId === id).forEach((a) => itens.push({ id: `a-${a.id}`, data: a.data, tipo: "Próxima ação", titulo: `${a.tipo}: ${a.descricao}`, detalhe: a.objetivo, status: a.status }));
-    lancamentos.filter((l) => l.clienteId === id).forEach((l) => itens.push({ id: `l-${l.id}`, data: l.data, tipo: l.tipo, titulo: l.oQueFoiRealizado || l.eventoAcao || l.tipo, detalhe: l.observacao, status: l.status }));
+    acoesCliente.forEach((a) => {
+      if (a.tipo === "Visita" && STATUS_VISITA_REALIZADA.includes(a.status) && !acaoTemLancamento(a, lancamentosVisita)) {
+        itens.push({ id: `a-visita-${a.id}`, data: a.dataConclusao?.slice(0, 10) || a.data, tipo: "Visita", titulo: a.descricao || "Visita concluída", detalhe: a.observacoes || a.objetivo, status: a.status });
+        return;
+      }
+      itens.push({ id: `a-${a.id}`, data: a.data, tipo: "Próxima ação", titulo: `${a.tipo}: ${a.descricao}`, detalhe: a.objetivo, status: a.status });
+    });
+    lancamentos.filter((l) => l.clienteId === id && !isLancamentoCancelado(l.status)).forEach((l) => itens.push({ id: `l-${l.id}`, data: l.data, tipo: l.tipo, titulo: l.oQueFoiRealizado || l.eventoAcao || l.tipo, detalhe: l.observacao, status: l.status }));
+    oportunidades.filter((o) => o.clienteId === id).forEach((o) => itens.push({ id: `op-${o.id}`, data: o.updatedAt || o.createdAt, tipo: "Oportunidade", titulo: o.necessidade || o.segmento || "Oportunidade comercial", detalhe: fmtBRL(o.valorFinal || o.valorEstimado || 0), status: o.etapa }));
     orcamentos.filter((o) => o.clienteId === id).forEach((o) => itens.push({ id: `o-${o.id}`, data: o.data, tipo: "Orçamento", titulo: `Orçamento ${o.codigo}`, detalhe: fmtBRL(o.valorTotal), status: o.status }));
     negocios.filter((n) => n.clienteId === id).forEach((n) => itens.push({ id: `n-${n.id}`, data: n.ultimaAtualizacao || n.dataCriacao, tipo: "Negócio", titulo: n.nome || n.categoria, detalhe: fmtBRL(n.valorFechado || n.valorPotencial), status: n.status }));
     return itens.sort((a, b) => b.data.localeCompare(a.data));
-  }, [id, proximasAcoes, lancamentos, orcamentos, negocios]);
+  }, [id, acoesCliente, lancamentos, lancamentosVisita, oportunidades, orcamentos, negocios]);
 
   if (!cliente) return <Card className="p-4">Cliente não encontrado.</Card>;
 
   const diasSemContato = ultimaVisita ? Math.floor((Date.now() - new Date(ultimaVisita).getTime()) / 86400000) : "—";
-  const acoesAbertas = acoesCliente.filter((a) => ["Pendente", "Em andamento", "Reagendada"].includes(a.status)).length;
-  const acoesVencidas = acoesCliente.filter((a) => a.status === "Pendente" && a.data < new Date().toISOString().slice(0, 10)).length;
+  const acoesAbertas = acoesCliente.filter((a) => STATUS_ATIVOS.includes(a.status)).length;
+  const acoesVencidas = acoesCliente.filter((a) => STATUS_ATIVOS.includes(a.status) && a.data < new Date().toISOString().slice(0, 10)).length;
   const orcAbertos = orcamentos.filter((o) => o.clienteId === id && ["Aberto", "Rascunho", "Em negociação"].includes(o.status)).length;
   const orcEnviados = orcamentos.filter((o) => o.clienteId === id && o.status === "Enviado").length;
   const orcAprovados = orcamentos.filter((o) => o.clienteId === id && o.status === "Aprovado").length;
@@ -90,10 +118,10 @@ export default function ClienteFicha360() {
     <Card className="p-4">
       <h2 className="mb-3 text-sm font-semibold">Ações rápidas</h2>
       <div className="flex flex-wrap gap-2">
-        <Button size="sm" onClick={() => nav(`/proximas-acoes?clienteId=${cliente.id}`)}>Criar próxima ação</Button>
-        <Button size="sm" variant="outline" onClick={() => nav(`/lancamentos?clienteId=${cliente.id}&tipo=Visita`)}>Registrar visita</Button>
-        <Button size="sm" variant="outline" onClick={() => nav(`/lancamentos?clienteId=${cliente.id}&tipo=WhatsApp`)}>Registrar WhatsApp</Button>
-        <Button size="sm" variant="outline" onClick={() => nav(`/lancamentos?clienteId=${cliente.id}&tipo=Ligação`)}>Registrar ligação</Button>
+        <Button size="sm" onClick={() => nav(`/agenda?action=nova-acao&clienteId=${cliente.id}`)}>Criar próxima ação</Button>
+        <Button size="sm" variant="outline" onClick={() => nav(`/agenda?action=visita-concluida&clienteId=${cliente.id}`)}>Registrar visita</Button>
+        <Button size="sm" variant="outline" onClick={() => nav(`/agenda?action=nova-acao&tipo=WhatsApp&clienteId=${cliente.id}`)}>Registrar WhatsApp</Button>
+        <Button size="sm" variant="outline" onClick={() => nav(`/agenda?action=nova-acao&tipo=Ligação&clienteId=${cliente.id}`)}>Registrar ligação</Button>
         <Button size="sm" variant="outline" onClick={() => nav(`/orcamentos?clienteId=${cliente.id}`)}>Criar orçamento</Button>
         <Button size="sm" variant="outline" onClick={() => nav(`/clientes?edit=${cliente.id}`)}>Editar cliente</Button>
       </div>

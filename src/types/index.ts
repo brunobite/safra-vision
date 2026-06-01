@@ -43,7 +43,10 @@ export interface ProximaAcao {
   itensEstimados?: OportunidadeItemEstimado[];
   segmento?: string;
   responsavel?: string;
+  lancamentoId?: string;
   proximaAcaoId?: string;
+  dataConclusao?: string;
+  horario?: string;
   dataPrevistaFechamento?: string;
   dataDecisao?: string;
   motivoPerda?: string;
@@ -152,6 +155,10 @@ export interface Lancamento {
   proximaAcao?: string;
   dataProximaAcao?: string;
   tipoProximaAcao?: TipoProximaAcao;
+  proximaAcaoId?: string;
+  origemAcaoId?: string;
+  acaoAgendaId?: string;
+  orcamentoId?: string;
   googleCalendarSyncStatus?: "pending" | "synced" | "error" | "not_required";
   googleCalendarEventId?: string;
   dataHoraInicio?: string;
@@ -219,6 +226,8 @@ export interface OportunidadeComercial {
   probabilidade?: number;
   observacoes?: string;
   itensEstimados?: OportunidadeItemEstimado[];
+  lancamentoId?: string;
+  negocioId?: string;
   dataFechamento?: string;
   valorFinal?: number;
   motivoPerda?: MotivoPerdaOportunidade;
