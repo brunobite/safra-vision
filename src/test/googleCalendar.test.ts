@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   buildAgendaItemIcs,
   buildCalendarEventFromAgendaItem,
+  buildGoogleCalendarReminders,
+  buildGoogleCalendarSummary,
   createGoogleCalendarEvent,
   disconnectGoogleCalendar,
   resetGoogleCalendarAuthForTests,
@@ -41,7 +43,7 @@ beforeEach(() => {
 describe("payload do Google Calendar", () => {
   it("cria título e descrição com dados comerciais", () => {
     const payload = buildCalendarEventFromAgendaItem(item);
-    expect(payload.summary).toBe("Safra Vision — Visita — Luiz Reinaldo Bredow");
+    expect(payload.summary).toBe("Luiz Reinaldo Bredow - Visita");
     expect(payload.description).toContain("Cliente: Luiz Reinaldo Bredow");
     expect(payload.description).toContain("Fazenda: Fazenda Boa Vista");
     expect(payload.description).toContain("Vendedor: BRUNO");
@@ -65,6 +67,42 @@ describe("payload do Google Calendar", () => {
     expect(payload.start).toEqual({ date: "2026-06-10" });
     expect(payload.end).toEqual({ date: "2026-06-11" });
   });
+
+  it("gera summary limpo com cliente LAURI HEIDERICH e tipo Visita", () => {
+    expect(buildGoogleCalendarSummary({ ...item, cliente: "LAURI HEIDERICH", tipo: "Visita" })).toBe("LAURI HEIDERICH - Visita");
+  });
+
+  it("usa Ação comercial no summary quando tipo está vazio", () => {
+    expect(buildGoogleCalendarSummary({ ...item, cliente: "LAURI HEIDERICH", tipo: "" })).toBe("LAURI HEIDERICH - Ação comercial");
+  });
+
+  it("gera lembretes popup para 09:30 do dia anterior e 30 minutos antes quando há horário", () => {
+    expect(buildGoogleCalendarReminders({ ...item, data: "2026-06-12", horario: "08:00" })).toEqual({
+      useDefault: false,
+      overrides: [
+        { method: "popup", minutes: 1350 },
+        { method: "popup", minutes: 30 },
+      ],
+    });
+  });
+
+  it("gera somente lembrete popup para 09:30 do dia anterior quando não há horário", () => {
+    expect(buildGoogleCalendarReminders({ ...item, data: "2026-06-12", horario: "" })).toEqual({
+      useDefault: false,
+      overrides: [{ method: "popup", minutes: 870 }],
+    });
+  });
+
+  it("inclui lembretes no payload do evento", () => {
+    const payload = buildCalendarEventFromAgendaItem({ ...item, data: "2026-06-12", horario: "08:00" });
+    expect(payload.reminders).toEqual({
+      useDefault: false,
+      overrides: [
+        { method: "popup", minutes: 1350 },
+        { method: "popup", minutes: 30 },
+      ],
+    });
+  });
 });
 
 describe("duplicidade e vínculo", () => {
@@ -75,6 +113,13 @@ describe("duplicidade e vínculo", () => {
     const result = await upsertGoogleCalendarEventForAgendaItem(item);
     expect(result.operation).toBe("created");
     expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("/primary/events"), expect.objectContaining({ method: "POST" }));
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body as string).reminders).toEqual({
+      useDefault: false,
+      overrides: [
+        { method: "popup", minutes: 1440 },
+        { method: "popup", minutes: 30 },
+      ],
+    });
   });
 
   it("item com googleCalendarEventId atualiza evento e não cria duplicado", async () => {
@@ -85,6 +130,13 @@ describe("duplicidade e vínculo", () => {
     expect(result.operation).toBe("updated");
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("/primary/events/evt1"), expect.objectContaining({ method: "PUT" }));
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body as string).reminders).toEqual({
+      useDefault: false,
+      overrides: [
+        { method: "popup", minutes: 1440 },
+        { method: "popup", minutes: 30 },
+      ],
+    });
   });
 });
 
@@ -109,6 +161,13 @@ describe("status de sincronização", () => {
 describe("token e autorização", () => {
   it("sem token bloqueia chamada à API", async () => {
     await expect(createGoogleCalendarEvent(buildCalendarEventFromAgendaItem(item))).rejects.toThrow("Conecte o Google Calendar antes de sincronizar");
+  });
+
+  it("não imprime access token em logs", async () => {
+    const debugSpy = vi.spyOn(console, "debug").mockImplementation(() => undefined);
+    mockGoogleIdentity({ access_token: "secret-access-token", expires_in: 3600 });
+    await requestGoogleCalendarAccess({ clientId: "client-id" });
+    expect(JSON.stringify(debugSpy.mock.calls)).not.toContain("secret-access-token");
   });
 
   it("token expirado exige nova autorização", async () => {
@@ -145,7 +204,7 @@ describe("UI da agenda e fallback", () => {
   it("gera ICS para ambiente sem OAuth configurado", () => {
     const ics = buildAgendaItemIcs(item);
     expect(ics).toContain("BEGIN:VCALENDAR");
-    expect(ics).toContain("SUMMARY:Safra Vision — Visita — Luiz Reinaldo Bredow");
+    expect(ics).toContain("SUMMARY:Luiz Reinaldo Bredow - Visita");
   });
 });
 

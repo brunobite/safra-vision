@@ -32,12 +32,21 @@ export interface GoogleCalendarAgendaItem {
   horario?: string;
 }
 
+export interface GoogleCalendarReminderOverride {
+  method: "popup" | "email";
+  minutes: number;
+}
+
 export interface GoogleCalendarEventPayload {
   summary: string;
   description: string;
   location?: string;
   start: { dateTime?: string; date?: string; timeZone?: string };
   end: { dateTime?: string; date?: string; timeZone?: string };
+  reminders?: {
+    useDefault: boolean;
+    overrides?: GoogleCalendarReminderOverride[];
+  };
 }
 
 export interface GoogleCalendarApiEvent {
@@ -296,15 +305,49 @@ function addOneDay(dateIso: string): string {
   return date.toISOString().slice(0, 10);
 }
 
+export function buildGoogleCalendarSummary(item: GoogleCalendarAgendaItem): string {
+  const cliente = item.cliente?.trim() || item.clienteNome?.trim() || "Cliente não informado";
+  const tipo = item.tipo?.trim() || "Ação comercial";
+  return `${cliente} - ${tipo}`;
+}
+
+function buildLocalDateTime(dateIso: string, time?: string): Date {
+  const normalizedTime = time?.trim() || "00:00";
+  return new Date(`${dateIso}T${normalizedTime}:00`);
+}
+
+export function minutesBeforePreviousDayAt0930(startDate: string, startTime?: string): number {
+  const eventStart = buildLocalDateTime(startDate, startTime);
+  const previousDayAt0930 = buildLocalDateTime(startDate, "09:30");
+  previousDayAt0930.setDate(previousDayAt0930.getDate() - 1);
+  return Math.round((eventStart.getTime() - previousDayAt0930.getTime()) / 60_000);
+}
+
+export function buildGoogleCalendarReminders(item: GoogleCalendarAgendaItem): GoogleCalendarEventPayload["reminders"] {
+  if (!item.data) return undefined;
+  const horario = item.horario?.trim();
+  const overrides: GoogleCalendarReminderOverride[] = [
+    { method: "popup", minutes: minutesBeforePreviousDayAt0930(item.data, horario) },
+  ];
+  if (horario) overrides.push({ method: "popup", minutes: 30 });
+  return { useDefault: false, overrides };
+}
+
+export function hasScheduledFutureDate(item: GoogleCalendarAgendaItem, now = new Date()): boolean {
+  if (!item.data) return false;
+  return buildLocalDateTime(item.data, item.horario?.trim()).getTime() > now.getTime();
+}
+
 export function buildCalendarEventFromAgendaItem(item: GoogleCalendarAgendaItem): GoogleCalendarEventPayload {
   if (!item.data) throw new Error("Defina um agendamento antes de enviar ao Google Calendar.");
-  const cliente = item.cliente || item.clienteNome || "Cliente não informado";
-  const tipo = item.tipo || "Ação comercial";
-  const fazenda = item.fazenda || item.localidade || "";
-  const cidade = item.cidade || "";
-  const vendedor = item.vendedor || item.responsavel || "Não definido";
-  const objetivo = item.objetivo || item.descricao || "";
-  const summary = `Safra Vision — ${tipo} — ${cliente}`;
+  const cliente = item.cliente?.trim() || item.clienteNome?.trim() || "Cliente não informado";
+  const tipo = item.tipo?.trim() || "Ação comercial";
+  const fazenda = item.fazenda?.trim() || item.localidade?.trim() || "";
+  const cidade = item.cidade?.trim() || "";
+  const vendedor = item.vendedor?.trim() || item.responsavel?.trim() || "Não definido";
+  const objetivo = item.objetivo?.trim() || item.descricao?.trim() || "";
+  const summary = buildGoogleCalendarSummary(item);
+  const reminders = buildGoogleCalendarReminders(item);
   const description = [
     `Cliente: ${cliente}`,
     `Fazenda: ${fazenda || "—"}`,
@@ -312,17 +355,18 @@ export function buildCalendarEventFromAgendaItem(item: GoogleCalendarAgendaItem)
     `Vendedor: ${vendedor}`,
     `Ação comercial: ${tipo}`,
     `Objetivo: ${objetivo || "—"}`,
-    `Observações: ${item.observacoes || "—"}`,
-    `Status no Safra Vision: ${item.status || "—"}`,
+    `Observações: ${item.observacoes?.trim() || "—"}`,
+    `Status no Safra Vision: ${item.status?.trim() || "—"}`,
     `ID interno do item: ${item.id}`,
     "Evento criado pelo Safra Vision. Alterações comerciais devem ser feitas no app.",
   ].join("\n");
   const location = [fazenda, cidade].filter(Boolean).join(" — ");
-  if (item.horario) {
-    const dateTime = `${item.data}T${item.horario}:00`;
-    return { summary, description, location, start: { dateTime }, end: { dateTime: addMinutes(dateTime, DEFAULT_EVENT_DURATION_MINUTES) } };
+  const horario = item.horario?.trim();
+  if (horario) {
+    const dateTime = `${item.data}T${horario}:00`;
+    return { summary, description, location, start: { dateTime }, end: { dateTime: addMinutes(dateTime, DEFAULT_EVENT_DURATION_MINUTES) }, reminders };
   }
-  return { summary, description, location, start: { date: item.data }, end: { date: addOneDay(item.data) } };
+  return { summary, description, location, start: { date: item.data }, end: { date: addOneDay(item.data) }, reminders };
 }
 
 export async function upsertGoogleCalendarEventForAgendaItem(item: GoogleCalendarAgendaItem & { googleCalendarEventId?: string; googleCalendarCalendarId?: string }): Promise<GoogleCalendarApiEvent & { operation: "created" | "updated" }> {
