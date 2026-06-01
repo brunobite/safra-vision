@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { AlertTriangle, CalendarClock, CheckCircle2, Clock, Filter, Plus, RotateCcw } from "lucide-react";
+import { AlertTriangle, CalendarClock, CheckCircle2, Clock, ExternalLink, Filter, Plus, RotateCcw } from "lucide-react";
 import { useAppStore } from "@/store/AppStore";
 import type { AgendaVisao } from "@/utils/agenda";
 import {
@@ -26,6 +26,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
+import { buildAgendaItemIcs, buildCalendarEventFromAgendaItem, getGoogleCalendarClientId, hasGoogleCalendarAccess, metadataAfterGoogleCalendarDelete, metadataAfterGoogleCalendarError, metadataAfterGoogleCalendarReschedule, metadataAfterGoogleCalendarSuccess, requestGoogleCalendarAccess, upsertGoogleCalendarEventForAgendaItem } from "@/lib/googleCalendar";
 
 const TIPOS: TipoProximaAcao[] = ["Visita", "Ligação", "WhatsApp", "Reunião", "Follow-up", "Enviar orçamento", "Cobrar retorno", "Pós-venda", "Renovação", "Outro"];
 const STATUS: StatusProximaAcao[] = ["Pendente", "Em andamento", "Realizada", "Reagendada", "Cancelada", "Concluída"];
@@ -127,6 +128,7 @@ export default function Agenda() {
       responsavel: flowForm.vendedor || vendedorSelecionado,
       objetivo: flowForm.descricao,
       googleCalendarSyncStatus: "pending",
+      googleCalendarStatus: "not_synced",
       googleCalendarEventId: "",
       dataHoraInicio,
       dataHoraFim: dataHoraInicio,
@@ -164,6 +166,7 @@ export default function Agenda() {
       observacao: flowForm.observacao,
       oQueFoiRealizado: flowForm.descricao || "Visita concluída",
       googleCalendarSyncStatus: "not_required",
+      googleCalendarStatus: "not_synced",
       googleCalendarEventId: "",
       dataHoraInicio,
       dataHoraFim: dataHoraInicio,
@@ -277,6 +280,7 @@ export default function Agenda() {
           dataHoraInicio,
           dataHoraFim,
           googleCalendarSyncStatus: "not_required",
+          googleCalendarStatus: "not_synced",
           googleCalendarEventId: "",
           oportunidadeId: acao.oportunidadeId,
           negocioId: acao.negocioId,
@@ -297,11 +301,63 @@ export default function Agenda() {
     }
   };
 
+  const agendaItemGooglePayload = (acaoId?: string) => {
+    const acao = proximasAcoes.find((item) => item.id === acaoId);
+    if (!acao) throw new Error("Ação comercial não encontrada para sincronizar.");
+    const cliente = clientes.find((item) => item.id === acao.clienteId);
+    return {
+      ...acao,
+      cliente: cliente?.nome,
+      fazenda: cliente?.localidade || cliente?.rota,
+      cidade: cliente?.cidade,
+      vendedor: acao.responsavel || cliente?.vendedor,
+    };
+  };
+
+  const sincronizarGoogleCalendar = async (acaoId?: string) => {
+    if (!acaoId) return;
+    try {
+      const payload = agendaItemGooglePayload(acaoId);
+      buildCalendarEventFromAgendaItem(payload);
+      if (!hasGoogleCalendarAccess()) await requestGoogleCalendarAccess();
+      const event = await upsertGoogleCalendarEventForAgendaItem(payload);
+      const metadata = metadataAfterGoogleCalendarSuccess(event, payload.googleCalendarCalendarId);
+      setProximasAcoes((atuais) => atuais.map((acao) => acao.id === acaoId ? { ...acao, ...metadata, googleCalendarSyncStatus: "synced" } : acao));
+      toast.success(event.operation === "created" ? "Evento criado no Google Calendar." : "Evento atualizado no Google Calendar.");
+    } catch (error) {
+      const metadata = metadataAfterGoogleCalendarError(error);
+      setProximasAcoes((atuais) => atuais.map((acao) => acao.id === acaoId ? { ...acao, ...metadata, googleCalendarSyncStatus: "error" } : acao));
+      toast.error(metadata.googleCalendarLastError || "Erro ao sincronizar Google Calendar.");
+    }
+  };
+
+  const removerVinculoGoogleCalendar = async (acaoId?: string) => {
+    if (!acaoId) return;
+    const metadata = metadataAfterGoogleCalendarDelete();
+    setProximasAcoes((atuais) => atuais.map((acao) => acao.id === acaoId ? { ...acao, ...metadata, googleCalendarSyncStatus: "not_required" } : acao));
+    toast.success("Vínculo com Google Calendar removido do Safra Vision.");
+  };
+
+  const exportarIcsGoogleCalendar = (acaoId?: string) => {
+    try {
+      const payload = agendaItemGooglePayload(acaoId);
+      const ics = buildAgendaItemIcs(payload);
+      const url = URL.createObjectURL(new Blob([ics], { type: "text/calendar;charset=utf-8" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `safra-vision-${payload.id}.ics`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Erro ao exportar ICS.");
+    }
+  };
+
   const reagendar = (acaoId?: string) => {
     if (!acaoId) return;
     const dados = reschedule[acaoId];
     if (!dados?.data) return;
-    setProximasAcoes((atuais) => reagendarAcaoAgenda(atuais, acaoId, dados.data, dados.horario));
+    setProximasAcoes((atuais) => reagendarAcaoAgenda(atuais, acaoId, dados.data, dados.horario).map((acao) => acao.id === acaoId ? { ...acao, ...metadataAfterGoogleCalendarReschedule(acao) } : acao));
     setReschedule((atual) => ({ ...atual, [acaoId]: { data: "", horario: "" } }));
   };
 
@@ -382,6 +438,26 @@ export default function Agenda() {
                 <span><b className="text-foreground">Vínculos:</b> {[item.oportunidadeId ? `Opp. ${item.oportunidadeNome || item.oportunidadeId}` : "", item.orcamentoId ? `Orç. ${item.orcamentoCodigo || item.orcamentoId}` : "", item.negocioId ? `Neg. ${item.negocioNome || item.negocioId}` : ""].filter(Boolean).join(" • ") || "—"}</span>
                 <span className="md:col-span-2 xl:col-span-3"><b className="text-foreground">Objetivo comercial:</b> {item.descricao}</span>
               </div>
+              {podeEditarAcao && (() => {
+                const acao = proximasAcoes.find((registro) => registro.id === item.sourceId);
+                const statusGoogle = acao?.googleCalendarStatus || (acao?.googleCalendarEventId ? "synced" : "not_synced");
+                const semData = !item.data;
+                const clientIdConfigurado = Boolean(getGoogleCalendarClientId());
+                const labelAcao = statusGoogle === "error" ? "Tentar novamente" : acao?.googleCalendarEventId ? "Atualizar no Google Calendar" : "Enviar para Google Calendar";
+                return <div className="mt-3 space-y-2 border-t pt-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant={statusGoogle === "synced" ? "default" : statusGoogle === "error" ? "destructive" : "outline"}>Google Calendar: {statusGoogle === "not_synced" ? "não sincronizado" : statusGoogle === "synced" ? "sincronizado" : statusGoogle === "update_pending" ? "atualização pendente" : statusGoogle === "deleted" ? "vínculo removido" : "erro"}</Badge>
+                    {acao?.googleCalendarLastError && <span className="text-xs text-destructive">{acao.googleCalendarLastError}</span>}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button size="sm" variant={statusGoogle === "error" ? "default" : "outline"} disabled={semData} title={semData ? "Defina um agendamento antes de enviar ao Google Calendar." : undefined} onClick={() => sincronizarGoogleCalendar(item.sourceId)}>{labelAcao}</Button>
+                    {acao?.googleCalendarHtmlLink && <Button size="sm" variant="outline" onClick={() => window.open(acao.googleCalendarHtmlLink, "_blank", "noopener,noreferrer")}><ExternalLink className="mr-1 h-3 w-3" />Abrir no Google Calendar</Button>}
+                    {acao?.googleCalendarEventId && <Button size="sm" variant="ghost" onClick={() => removerVinculoGoogleCalendar(item.sourceId)}>Remover vínculo do Google Calendar</Button>}
+                    {!clientIdConfigurado && <Button size="sm" variant="secondary" disabled={semData} onClick={() => exportarIcsGoogleCalendar(item.sourceId)}>Exportar .ics</Button>}
+                    {semData && <span className="text-xs text-muted-foreground">Defina um agendamento antes de enviar ao Google Calendar.</span>}
+                  </div>
+                </div>;
+              })()}
               {podeEditarAcao && <div className="mt-3 flex flex-wrap items-end gap-2 border-t pt-3">
                 <Button size="sm" variant="outline" onClick={() => concluir(item.sourceId)}>Concluir ação comercial</Button>
                 <div><Label className="text-xs">Novo agendamento</Label><Input className="h-9 w-40" type="date" value={reprogramacao.data} onChange={(event) => setReschedule((atual) => ({ ...atual, [item.sourceId || ""]: { ...reprogramacao, data: event.target.value } }))} /></div>
