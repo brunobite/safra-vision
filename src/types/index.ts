@@ -28,6 +28,7 @@ export const CATEGORIAS_PRODUTO: CategoriaProduto[] = [...CATEGORIAS_PRODUTO_PAD
 
 export type TipoProximaAcao = "Visita" | "Ligação" | "WhatsApp" | "Reunião" | "Follow-up" | "Orçamento" | "Enviar orçamento" | "Cobrar retorno" | "Pós-venda" | "Entrega" | "Acompanhamento técnico" | "Conferir aplicação" | "Visita pós-venda" | "Cobrança comercial futura" | "Renovação" | "Outro";
 export type StatusProximaAcao = "Pendente" | "Em andamento" | "Realizada" | "Reagendada" | "Cancelada" | "Concluída";
+export type GoogleCalendarStatus = "not_synced" | "synced" | "update_pending" | "error" | "deleted";
 
 export interface ProximaAcao {
   id: string;
@@ -55,7 +56,13 @@ export interface ProximaAcao {
   status: StatusProximaAcao;
   origem?: "Cliente" | "Lançamento" | "Negócio" | "Orçamento" | "Avulsa";
   googleCalendarSyncStatus?: "pending" | "synced" | "error" | "not_required";
+  googleCalendarStatus?: GoogleCalendarStatus;
   googleCalendarEventId?: string;
+  googleCalendarHtmlLink?: string;
+  googleCalendarSyncedAt?: string;
+  googleCalendarLastError?: string;
+  googleCalendarCalendarId?: string;
+  googleCalendarUpdatedAt?: string;
   dataHoraInicio?: string;
   dataHoraFim?: string;
   createdAt: string;
@@ -160,7 +167,13 @@ export interface Lancamento {
   acaoAgendaId?: string;
   orcamentoId?: string;
   googleCalendarSyncStatus?: "pending" | "synced" | "error" | "not_required";
+  googleCalendarStatus?: GoogleCalendarStatus;
   googleCalendarEventId?: string;
+  googleCalendarHtmlLink?: string;
+  googleCalendarSyncedAt?: string;
+  googleCalendarLastError?: string;
+  googleCalendarCalendarId?: string;
+  googleCalendarUpdatedAt?: string;
   dataHoraInicio?: string;
   dataHoraFim?: string;
 }

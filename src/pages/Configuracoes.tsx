@@ -14,7 +14,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAppStore } from "@/store/AppStore";
 import { BaseMode, ImportLog, RegraComissao, AplicarSobre, FaixaComissao, CATEGORIAS_PRODUTO_PADRAO, Empresa, FormaPagamento, PrazoPagamento } from "@/types";
-import { ChevronDown, ChevronRight, Plus, Pencil, Trash2 } from "lucide-react";
+import { CalendarClock, ChevronDown, ChevronRight, Plus, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { deleteLocalItemsById, getLocalDbStats, LocalDbStats, replaceLocalDatabase, resetLocalDatabase, saveStore } from "@/lib/localRepository";
 import { clearLocalAppDeviceData } from "@/lib/clientCleanup";
@@ -35,6 +35,7 @@ import { getAccountSyncUserMessage, getAccountSyncVisualState, SYNC_HOMOLOGATION
 import { calcularMetaCarteira, calcularPotencialCarteira, calcularPotencialCliente, distribuirMetaPorPotencial, limitarPercentualAcerto, normalizarValorNaoNegativo, resolverVendedorCanonico } from "@/utils/businessRules";
 import { fmtBRL } from "@/utils/calculations";
 import * as XLSX from "xlsx";
+import { disconnectGoogleCalendar, getGoogleCalendarAuthStatus, getGoogleCalendarClientId, hasGoogleCalendarAccess, initGoogleCalendarClient, requestGoogleCalendarAccess } from "@/lib/googleCalendar";
 
 const APLICAR: { v: AplicarSobre; label: string }[] = [
   { v: "realizado_empresa", label: "Realizado empresa" }, { v: "realizado_pessoal", label: "Realizado pessoal" },
@@ -109,6 +110,8 @@ export default function Configuracoes() {
   const [isRequeueingSync, setIsRequeueingSync] = useState(false);
   const [advancedSyncOpen, setAdvancedSyncOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("comissao");
+  const [googleCalendarStatus, setGoogleCalendarStatus] = useState(getGoogleCalendarAuthStatus());
+  const [googleCalendarError, setGoogleCalendarError] = useState<string | null>(null);
   const [dadosEmpresa, setDadosEmpresa] = useState<Empresa>(defaultEmpresa);
   const categoriasTicket = [...new Set([...CATEGORIAS_PRODUTO_PADRAO, ...ticketsMedios.map((t) => t.categoria)])];
   const vendedoresComerciais = useMemo(() => [...new Set([...vendedores.map((v) => resolverVendedorCanonico(v.nome, vendedores)), ...clientes.map((c) => resolverVendedorCanonico(c.vendedor, vendedores))])].filter(Boolean).sort(), [vendedores, clientes]);
@@ -741,6 +744,41 @@ export default function Configuracoes() {
     event.target.value = "";
   };
 
+  const conectarGoogleCalendar = async () => {
+    setGoogleCalendarError(null);
+    try {
+      await requestGoogleCalendarAccess();
+      setGoogleCalendarStatus(getGoogleCalendarAuthStatus());
+      toast.success("Google Calendar conectado nesta sessão.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Erro de autorização do Google Calendar.";
+      setGoogleCalendarError(message);
+      setGoogleCalendarStatus(getGoogleCalendarAuthStatus());
+      toast.error(message);
+    }
+  };
+
+  const desconectarGoogleCalendar = () => {
+    disconnectGoogleCalendar();
+    setGoogleCalendarStatus(getGoogleCalendarAuthStatus());
+    setGoogleCalendarError(null);
+    toast.success("Google Calendar desconectado desta sessão.");
+  };
+
+  const testarGoogleCalendar = async () => {
+    setGoogleCalendarError(null);
+    try {
+      await initGoogleCalendarClient();
+      setGoogleCalendarStatus(hasGoogleCalendarAccess() ? "connected" : getGoogleCalendarAuthStatus());
+      toast.success(hasGoogleCalendarAccess() ? "Token do Google Calendar válido nesta sessão." : "Client ID carregado. Clique em conectar para autorizar.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Erro ao testar Google Calendar.";
+      setGoogleCalendarError(message);
+      setGoogleCalendarStatus(getGoogleCalendarAuthStatus());
+      toast.error(message);
+    }
+  };
+
   return <div className="space-y-4">
     <Card className="p-4">
       <div className="grid gap-2 md:grid-cols-3 items-end">
@@ -758,6 +796,7 @@ export default function Configuracoes() {
         <TabsTrigger value="vendedores">Vendedores</TabsTrigger>
         <TabsTrigger value="tickets">Regras comerciais</TabsTrigger>
         <TabsTrigger value="metas-comerciais">Metas comerciais</TabsTrigger>
+        <TabsTrigger value="integracoes">Integrações</TabsTrigger>
         <TabsTrigger value="dados-empresa">Empresas</TabsTrigger>
         <TabsTrigger value="banco-local">Banco local</TabsTrigger>
         <TabsTrigger value="sync-cloud">Sincronização em nuvem</TabsTrigger>
@@ -774,6 +813,36 @@ export default function Configuracoes() {
 
       <TabsContent value="metas-comerciais" className="space-y-3"><Card className="p-4 space-y-3"><div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between"><div><div className="text-sm font-semibold">Metas por vendedor</div><p className="text-xs text-muted-foreground">Configure metas manuais em R$ ou distribua automaticamente pela participação no potencial da carteira.</p></div><Button onClick={() => { const possuiManual = metasVendedor.some((meta) => (meta.metaManual ?? (meta.origemMeta === 'proporcional' ? undefined : meta.meta)) !== undefined && (meta.ativo ?? true)); if (possuiManual && !window.confirm('Existem metas manuais cadastradas. Deseja manter metas manuais e preencher apenas vendedores sem meta?')) return; const distribuicao = distribuirMetaPorPotencial({ clientes, ticketsMedios, percentualAcertoEsperado: appConfig.percentualAcertoEsperado, vendedores }); setMetasVendedor((prev) => { const existentes = new Map(prev.map((meta) => [resolverVendedorCanonico(meta.vendedor, vendedores), meta])); return distribuicao.map((meta) => { const atual = existentes.get(meta.vendedor); if (atual && (atual.metaManual ?? (atual.origemMeta === 'proporcional' ? undefined : atual.meta)) !== undefined) return { ...atual, vendedor: meta.vendedor }; return { ...(atual || {}), ...meta, id: atual?.id || meta.id }; }); }); toast.success('Meta distribuída automaticamente por potencial.'); }}>Distribuir meta automaticamente por potencial da carteira</Button></div><div className="grid gap-2 md:grid-cols-3"><div className="rounded border p-3"><p className="text-xs text-muted-foreground">Potencial da carteira</p><b>{fmtBRL(potencialCarteiraConfig)}</b></div><div className="rounded border p-3"><p className="text-xs text-muted-foreground">Meta da carteira</p><b>{fmtBRL(metaCarteiraConfig)}</b></div><div className="rounded border p-3"><p className="text-xs text-muted-foreground">Percentual de acerto</p><b>{limitarPercentualAcerto(appConfig.percentualAcertoEsperado).toFixed(2)}%</b></div></div><div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Vendedor</TableHead><TableHead>Meta manual (R$)</TableHead><TableHead>% meta carteira</TableHead><TableHead>Meta calculada</TableHead><TableHead>Ativo</TableHead><TableHead>Observação</TableHead></TableRow></TableHeader><TableBody>{vendedoresComerciais.map((vendedor) => { const meta = metasVendedor.find((item) => resolverVendedorCanonico(item.vendedor, vendedores) === vendedor); const potencialVendedor = clientes.filter((cliente) => resolverVendedorCanonico(cliente.vendedor, vendedores) === vendedor).reduce((soma, cliente) => soma + calcularPotencialCliente(cliente, ticketsMedios), 0); const percentual = meta?.percentualMetaCarteira ?? (potencialCarteiraConfig > 0 ? (potencialVendedor * 100) / potencialCarteiraConfig : 0); const metaCalculada = meta?.metaCalculada ?? metaCarteiraConfig * (percentual / 100); return <TableRow key={vendedor}><TableCell className="font-medium">{vendedor || 'Não definido'}</TableCell><TableCell><Input type="number" min={0} step="0.01" value={meta?.metaManual ?? (meta?.origemMeta === 'proporcional' ? undefined : meta?.meta) ?? ''} placeholder={fmtBRL(metaCalculada)} onChange={(e) => { const valor = e.target.value === '' ? undefined : normalizarValorNaoNegativo(Number(e.target.value)); setMetasVendedor((prev) => { const atual = prev.find((item) => resolverVendedorCanonico(item.vendedor, vendedores) === vendedor); if (atual) return prev.map((item) => resolverVendedorCanonico(item.vendedor, vendedores) === vendedor ? { ...item, vendedor, metaManual: valor, meta: valor, ativo: item.ativo ?? true, origemMeta: valor === undefined ? 'proporcional' : 'manual' } : item); return [...prev, { id: `mv${Date.now()}`, vendedor, metaManual: valor, meta: valor, percentualMetaCarteira: percentual, metaCalculada, ativo: true, origemMeta: valor === undefined ? 'proporcional' : 'manual' }]; }); }} /></TableCell><TableCell>{percentual.toFixed(2)}%</TableCell><TableCell>{fmtBRL(metaCalculada)}</TableCell><TableCell><Switch checked={meta?.ativo ?? true} onCheckedChange={(ativo) => setMetasVendedor((prev) => meta ? prev.map((item) => item.id === meta.id ? { ...item, vendedor, ativo } : item) : [...prev, { id: `mv${Date.now()}`, vendedor, percentualMetaCarteira: percentual, metaCalculada, ativo, origemMeta: 'proporcional' }])} /></TableCell><TableCell><Input value={meta?.observacao || ''} placeholder="Observação" onChange={(e) => setMetasVendedor((prev) => meta ? prev.map((item) => item.id === meta.id ? { ...item, vendedor, observacao: e.target.value } : item) : [...prev, { id: `mv${Date.now()}`, vendedor, percentualMetaCarteira: percentual, metaCalculada, observacao: e.target.value, ativo: true, origemMeta: 'proporcional' }])} /></TableCell></TableRow>;})}</TableBody></Table></div></Card></TabsContent>
 
+
+      <TabsContent value="integracoes" className="space-y-3">
+        <Card className="p-4 space-y-4">
+          <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+            <div>
+              <div className="flex items-center gap-2 text-sm font-semibold"><CalendarClock className="h-4 w-4" />Google Calendar</div>
+              <p className="text-xs text-muted-foreground">O Safra Vision continua sendo a fonte comercial. O Google Calendar é apenas espelho operacional dos agendamentos e o access token fica somente em memória da sessão.</p>
+            </div>
+            <Badge variant={googleCalendarStatus === "connected" ? "default" : googleCalendarStatus === "auth_error" ? "destructive" : "outline"}>
+              {googleCalendarStatus === "connected" ? "Conectado nesta sessão" : googleCalendarStatus === "token_expired" ? "Token expirado" : googleCalendarStatus === "auth_error" ? "Erro de autorização" : "Não configurado"}
+            </Badge>
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            <div>
+              <Label>Google Client ID</Label>
+              <Input value={getGoogleCalendarClientId() || "VITE_GOOGLE_CLIENT_ID não configurado"} readOnly />
+              <p className="mt-1 text-xs text-muted-foreground">Configure preferencialmente via variável de ambiente VITE_GOOGLE_CLIENT_ID. Nunca informe client secret no frontend.</p>
+            </div>
+            <div className="rounded border p-3 text-xs text-muted-foreground">
+              Escopo solicitado: https://www.googleapis.com/auth/calendar.events. A autorização só é disparada por clique do usuário em “Conectar Google Calendar”.
+            </div>
+          </div>
+          {googleCalendarError && <div className="rounded border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">{googleCalendarError}</div>}
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={conectarGoogleCalendar} disabled={!getGoogleCalendarClientId()}>Conectar Google Calendar</Button>
+            <Button variant="outline" onClick={desconectarGoogleCalendar}>Desconectar Google Calendar</Button>
+            <Button variant="secondary" onClick={testarGoogleCalendar}>Testar conexão</Button>
+          </div>
+        </Card>
+      </TabsContent>
 
       <TabsContent value="dados-empresa" className="space-y-3"><Card className="p-4 space-y-3">
         <div className="text-sm font-semibold">Cadastro de empresas</div>
