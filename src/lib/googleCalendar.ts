@@ -1,4 +1,5 @@
 import type { Cliente, ProximaAcao } from "@/types";
+import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 
 export const GOOGLE_CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.events";
 export const GOOGLE_GSI_SCRIPT_URL = "https://accounts.google.com/gsi/client";
@@ -62,6 +63,23 @@ export interface GoogleCalendarApiEvent {
   id: string;
   htmlLink?: string;
   updated?: string;
+}
+
+export interface GoogleCalendarBackendStatus {
+  connected: boolean;
+  googleAccountEmail?: string;
+  connectedAt?: string;
+  updatedAt?: string;
+  revokedAt?: string;
+  error?: string;
+}
+
+export interface GoogleCalendarBackendUpsertResponse {
+  eventId: string;
+  htmlLink?: string;
+  updated?: string;
+  calendarId: string;
+  operation: "created" | "updated";
 }
 
 export interface GoogleCalendarSyncMetadata {
@@ -357,6 +375,44 @@ export async function deleteGoogleCalendarEvent(eventId: string, calendarId = DE
   await fetchGoogleCalendar(`/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`, { method: "DELETE" });
 }
 
+
+export function isGoogleCalendarBackendAvailable(): boolean {
+  return Boolean(isSupabaseConfigured && supabase);
+}
+
+async function invokeGoogleCalendarBackend<T>(functionName: string, body?: unknown): Promise<T> {
+  if (!supabase || !isSupabaseConfigured) throw new Error("Supabase não configurado para Google Calendar persistente.");
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  if (sessionError) throw new Error(sessionError.message);
+  const accessTokenSupabase = sessionData.session?.access_token;
+  if (!accessTokenSupabase) throw new Error("Faça login no Safra Vision para usar Google Calendar persistente.");
+  const { data, error } = await supabase.functions.invoke(functionName, {
+    body,
+    headers: { Authorization: `Bearer ${accessTokenSupabase}` },
+  });
+  if (error) throw new Error(error.message);
+  const payload = data as (T & { error?: string }) | null;
+  if (payload?.error) throw new Error(payload.error);
+  if (!payload) throw new Error("Resposta vazia do backend Google Calendar.");
+  return payload as T;
+}
+
+export async function startGoogleCalendarBackendOAuth(): Promise<string> {
+  const response = await invokeGoogleCalendarBackend<{ authUrl: string }>("google-calendar-oauth-start", {});
+  if (!response.authUrl) throw new Error("Backend não retornou URL de autorização do Google Calendar.");
+  return response.authUrl;
+}
+
+export async function getGoogleCalendarBackendStatus(): Promise<GoogleCalendarBackendStatus> {
+  if (!isGoogleCalendarBackendAvailable()) return { connected: false, error: "Supabase não configurado." };
+  return invokeGoogleCalendarBackend<GoogleCalendarBackendStatus>("google-calendar-status", {})
+    .catch((error) => ({ connected: false, error: friendlyGoogleError(error) }));
+}
+
+export async function disconnectGoogleCalendarBackend(): Promise<void> {
+  await invokeGoogleCalendarBackend<{ disconnected: boolean; revokedAt?: string }>("google-calendar-disconnect", {});
+}
+
 function formatLocalDateTime(date: Date): string {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -461,6 +517,24 @@ export async function upsertGoogleCalendarEventForAgendaItem(item: GoogleCalenda
   }
   const created = await createGoogleCalendarEvent(payload, item.googleCalendarCalendarId || DEFAULT_GOOGLE_CALENDAR_ID);
   return { ...created, operation: "created" };
+}
+
+
+export async function upsertGoogleCalendarEventViaBackend(item: GoogleCalendarAgendaItem & { googleCalendarEventId?: string; googleCalendarCalendarId?: string }): Promise<GoogleCalendarApiEvent & { calendarId: string; operation: "created" | "updated" }> {
+  const event = buildCalendarEventFromAgendaItem(item);
+  const calendarId = item.googleCalendarCalendarId || DEFAULT_GOOGLE_CALENDAR_ID;
+  const response = await invokeGoogleCalendarBackend<GoogleCalendarBackendUpsertResponse>("google-calendar-upsert-event", {
+    calendarId,
+    eventId: item.googleCalendarEventId || undefined,
+    event,
+  });
+  return {
+    id: response.eventId,
+    htmlLink: response.htmlLink,
+    updated: response.updated,
+    calendarId: response.calendarId || calendarId,
+    operation: response.operation,
+  };
 }
 
 export function metadataAfterGoogleCalendarSuccess(event: GoogleCalendarApiEvent, calendarId = DEFAULT_GOOGLE_CALENDAR_ID, now = new Date().toISOString()): GoogleCalendarSyncMetadata {

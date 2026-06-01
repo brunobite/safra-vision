@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { AlertTriangle, CalendarClock, CheckCircle2, Clock, ExternalLink, Filter, Plus, RotateCcw } from "lucide-react";
 import { useAppStore } from "@/store/AppStore";
+import { useAuth } from "@/store/AuthStore";
 import type { AgendaItem, AgendaVisao } from "@/utils/agenda";
 import {
   buscarClientesAgenda,
@@ -27,7 +28,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { buildAgendaItemIcs, buildCalendarEventFromAgendaItem, ensureGoogleCalendarAccess, getGoogleCalendarClientId, isGoogleCalendarPreferenceEnabled, metadataAfterGoogleCalendarDelete, metadataAfterGoogleCalendarError, metadataAfterGoogleCalendarReschedule, metadataAfterGoogleCalendarSuccess, setGoogleCalendarPreferenceEnabled, upsertGoogleCalendarEventForAgendaItem } from "@/lib/googleCalendar";
+import { buildAgendaItemIcs, buildCalendarEventFromAgendaItem, ensureGoogleCalendarAccess, getGoogleCalendarBackendStatus, getGoogleCalendarClientId, isGoogleCalendarPreferenceEnabled, metadataAfterGoogleCalendarDelete, metadataAfterGoogleCalendarError, metadataAfterGoogleCalendarReschedule, metadataAfterGoogleCalendarSuccess, setGoogleCalendarPreferenceEnabled, upsertGoogleCalendarEventForAgendaItem, upsertGoogleCalendarEventViaBackend } from "@/lib/googleCalendar";
 
 const TIPOS: TipoProximaAcao[] = ["Visita", "Ligação", "WhatsApp", "Reunião", "Follow-up", "Enviar orçamento", "Cobrar retorno", "Pós-venda", "Renovação", "Outro"];
 const STATUS: StatusProximaAcao[] = ["Pendente", "Em andamento", "Realizada", "Reagendada", "Cancelada", "Concluída"];
@@ -52,10 +53,12 @@ const nowParts = () => {
 const emptyFlowForm = (tipo: TipoProximaAcao = "Visita"): AgendaFlowForm => ({ clienteId: "", clienteBusca: "", data: "", horario: "", descricao: "", tipo, observacao: "", vendedor: "" });
 
 export default function Agenda() {
+  const { session } = useAuth();
   const { clientes, vendedores, proximasAcoes, setProximasAcoes, oportunidades, setOportunidades, orcamentos, negocios, setNegocios, lancamentos, setLancamentos, produtos } = useAppStore();
   const nav = useNavigate();
   const [params, setParams] = useSearchParams();
   const hoje = new Date().toISOString().slice(0, 10);
+
   const [visao, setVisao] = useState<AgendaVisao>("hoje");
   const [filtros, setFiltros] = useState({ vendedor: "__all__", data: "", abc: "__all__", prioridade: "__all__", status: "__all__", tipo: "__all__", cliente: "" });
   const [draftFiltros, setDraftFiltros] = useState(filtros);
@@ -81,7 +84,20 @@ export default function Agenda() {
   const filtrosAtivos = useMemo(() => Object.values(filtros).filter((valor) => valor && valor !== "__all__").length, [filtros]);
   const valorEstimadoTotal = useMemo(() => oppItems.reduce((total, item) => total + (Number(item.quantidade) || 0) * (Number(item.precoUnitario) || 0), 0), [oppItems]);
   const googleCalendarClientIdConfigurado = Boolean(getGoogleCalendarClientId());
-  const googleCalendarPreferenciaAtiva = isGoogleCalendarPreferenceEnabled();
+  const [googleCalendarBackendConnected, setGoogleCalendarBackendConnected] = useState(false);
+  const googleCalendarPreferenciaAtiva = isGoogleCalendarPreferenceEnabled() || googleCalendarBackendConnected;
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!session?.access_token) {
+      setGoogleCalendarBackendConnected(false);
+      return;
+    }
+    void getGoogleCalendarBackendStatus()
+      .then((status) => { if (!cancelled) setGoogleCalendarBackendConnected(status.connected); })
+      .catch(() => { if (!cancelled) setGoogleCalendarBackendConnected(false); });
+    return () => { cancelled = true; };
+  }, [session?.access_token]);
 
   useEffect(() => {
     const action = params.get("action");
@@ -102,7 +118,7 @@ export default function Agenda() {
   const abrirAgendamento = (clienteId?: string) => {
     const cliente = clientes.find((item) => item.id === clienteId);
     setFlowForm({ ...emptyFlowForm("Visita"), clienteId: cliente?.id || "", clienteBusca: cliente?.nome || "", vendedor: cliente?.vendedor || "", data: hoje, descricao: "Visita agendada" });
-    setEnviarGoogleCalendarNoSalvar(googleCalendarClientIdConfigurado && isGoogleCalendarPreferenceEnabled());
+    setEnviarGoogleCalendarNoSalvar(googleCalendarBackendConnected || (googleCalendarClientIdConfigurado && isGoogleCalendarPreferenceEnabled()));
     setContexto(null);
     setModal("agendar");
   };
@@ -119,7 +135,7 @@ export default function Agenda() {
   const abrirNovaAcaoAvulsa = (clienteId?: string, tipo: TipoProximaAcao = "Follow-up") => {
     const cliente = clientes.find((item) => item.id === clienteId);
     setFlowForm({ ...emptyFlowForm(tipo), clienteId: cliente?.id || "", clienteBusca: cliente?.nome || "", vendedor: cliente?.vendedor || "", data: hoje, descricao: tipo === "Follow-up" ? "Nova ação comercial" : tipo });
-    setEnviarGoogleCalendarNoSalvar(googleCalendarClientIdConfigurado && isGoogleCalendarPreferenceEnabled());
+    setEnviarGoogleCalendarNoSalvar(googleCalendarBackendConnected || (googleCalendarClientIdConfigurado && isGoogleCalendarPreferenceEnabled()));
     setContexto(null);
     setModal("novaAcao");
   };
@@ -142,6 +158,17 @@ export default function Agenda() {
       ...extra,
     };
     return acao;
+  };
+
+  const executarUpsertGoogleCalendar = async (payload: ReturnType<typeof montarGoogleCalendarPayload>) => {
+    if (googleCalendarBackendConnected && session?.access_token) {
+      const event = await upsertGoogleCalendarEventViaBackend(payload);
+      return { ...event, calendarId: event.calendarId || payload.googleCalendarCalendarId };
+    }
+    await ensureGoogleCalendarAccess({ interactive: !isGoogleCalendarPreferenceEnabled() });
+    const event = await upsertGoogleCalendarEventForAgendaItem(payload);
+    setGoogleCalendarPreferenceEnabled(true);
+    return { ...event, calendarId: payload.googleCalendarCalendarId };
   };
 
   const salvarAgendamento = async () => {
@@ -251,7 +278,7 @@ export default function Agenda() {
   const prepararNovaAcaoDoContexto = () => {
     const cliente = clientes.find((item) => item.id === contexto?.clienteId);
     setFlowForm({ ...emptyFlowForm("Follow-up"), clienteId: contexto?.clienteId || "", clienteBusca: cliente?.nome || "", vendedor: contexto?.vendedor || cliente?.vendedor || "", data: hoje, descricao: "Próxima ação comercial" });
-    setEnviarGoogleCalendarNoSalvar(googleCalendarClientIdConfigurado && isGoogleCalendarPreferenceEnabled());
+    setEnviarGoogleCalendarNoSalvar(googleCalendarBackendConnected || (googleCalendarClientIdConfigurado && isGoogleCalendarPreferenceEnabled()));
     setModal("novaAcao");
   };
 
@@ -339,10 +366,8 @@ export default function Agenda() {
     try {
       const payload = montarGoogleCalendarPayload(acao);
       buildCalendarEventFromAgendaItem(payload);
-      await ensureGoogleCalendarAccess({ interactive: !isGoogleCalendarPreferenceEnabled() });
-      const event = await upsertGoogleCalendarEventForAgendaItem(payload);
-      const metadata = metadataAfterGoogleCalendarSuccess(event, payload.googleCalendarCalendarId);
-      setGoogleCalendarPreferenceEnabled(true);
+      const event = await executarUpsertGoogleCalendar(payload);
+      const metadata = metadataAfterGoogleCalendarSuccess(event, event.calendarId || payload.googleCalendarCalendarId);
       setProximasAcoes((atuais) => atuais.map((item) => item.id === acao.id ? { ...item, ...metadata, googleCalendarSyncStatus: "synced" } : item));
       toast.success(mensagemSucesso);
     } catch (error) {
@@ -357,10 +382,8 @@ export default function Agenda() {
     try {
       const payload = agendaItemGooglePayload(acaoId);
       buildCalendarEventFromAgendaItem(payload);
-      await ensureGoogleCalendarAccess({ interactive: !isGoogleCalendarPreferenceEnabled() });
-      const event = await upsertGoogleCalendarEventForAgendaItem(payload);
-      setGoogleCalendarPreferenceEnabled(true);
-      const metadata = metadataAfterGoogleCalendarSuccess(event, payload.googleCalendarCalendarId);
+      const event = await executarUpsertGoogleCalendar(payload);
+      const metadata = metadataAfterGoogleCalendarSuccess(event, event.calendarId || payload.googleCalendarCalendarId);
       setProximasAcoes((atuais) => atuais.map((acao) => acao.id === acaoId ? { ...acao, ...metadata, googleCalendarSyncStatus: "synced" } : acao));
       toast.success(event.operation === "created" ? "Evento criado no Google Calendar." : "Evento atualizado no Google Calendar.");
     } catch (error) {
@@ -510,7 +533,7 @@ export default function Agenda() {
                 const acao = proximasAcoes.find((registro) => registro.id === item.sourceId);
                 const statusGoogle = acao?.googleCalendarStatus || (acao?.googleCalendarEventId ? "synced" : "not_synced");
                 const semData = !item.data;
-                const clientIdConfigurado = Boolean(getGoogleCalendarClientId());
+                const googleCalendarDisponivel = googleCalendarBackendConnected || Boolean(getGoogleCalendarClientId());
                 const labelAcao = statusGoogle === "error" ? "Tentar novamente" : acao?.googleCalendarEventId ? "Atualizar no Google Calendar" : "Enviar para Google Calendar";
                 return <div className="mt-3 rounded-lg border border-dashed p-3">
                   <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -522,7 +545,7 @@ export default function Agenda() {
                     <Button size="sm" variant={statusGoogle === "error" ? "default" : "outline"} disabled={semData} title={semData ? "Defina um agendamento antes de enviar ao Google Calendar." : undefined} onClick={() => sincronizarGoogleCalendar(item.sourceId)}>{labelAcao}</Button>
                     {acao?.googleCalendarHtmlLink && <Button size="sm" variant="outline" onClick={() => window.open(acao.googleCalendarHtmlLink, "_blank", "noopener,noreferrer")}><ExternalLink className="mr-1 h-3 w-3" />Abrir no Google Calendar</Button>}
                     {acao?.googleCalendarEventId && <Button size="sm" variant="ghost" onClick={() => removerVinculoGoogleCalendar(item.sourceId)}>Remover vínculo</Button>}
-                    {!clientIdConfigurado && <Button size="sm" variant="secondary" disabled={semData} onClick={() => exportarIcsGoogleCalendar(item.sourceId)}>Exportar .ics</Button>}
+                    {!googleCalendarDisponivel && <Button size="sm" variant="secondary" disabled={semData} onClick={() => exportarIcsGoogleCalendar(item.sourceId)}>Exportar .ics</Button>}
                     {semData && <span className="text-xs text-muted-foreground">Defina um agendamento antes de enviar ao Google Calendar.</span>}
                   </div>
                 </div>;
@@ -582,13 +605,13 @@ export default function Agenda() {
           {modal === "novaAcao" && <div><Label>Tipo de ação</Label><Select value={flowForm.tipo} onValueChange={(v: TipoProximaAcao) => setFlowForm((atual) => ({ ...atual, tipo: v }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{TIPOS.map((tipo) => <SelectItem key={tipo} value={tipo}>{tipo}</SelectItem>)}</SelectContent></Select></div>}
           <div className="md:col-span-2"><Label>{modal === "novaAcao" ? "Descrição" : "Objetivo da visita"}</Label><Textarea value={flowForm.descricao} onChange={(event) => setFlowForm((atual) => ({ ...atual, descricao: event.target.value }))} /></div>
           <div className="md:col-span-2"><Label>Observações</Label><Textarea value={flowForm.observacao} onChange={(event) => setFlowForm((atual) => ({ ...atual, observacao: event.target.value }))} /></div>
-          {googleCalendarClientIdConfigurado && modal !== "visita" && <div className="md:col-span-2 rounded-md border p-3">
+          {(googleCalendarBackendConnected || googleCalendarClientIdConfigurado) && modal !== "visita" && <div className="md:col-span-2 rounded-md border p-3">
             <div className="flex items-start gap-3">
               <Checkbox id="enviar-google-calendar" checked={enviarGoogleCalendarNoSalvar} onCheckedChange={(checked) => setEnviarGoogleCalendarNoSalvar(checked === true)} />
               <div className="space-y-1 leading-none">
                 <Label htmlFor="enviar-google-calendar" className="cursor-pointer">Enviar também para Google Calendar</Label>
                 <p className="text-xs text-muted-foreground">
-                  {googleCalendarPreferenciaAtiva ? "Preferência ativa neste dispositivo; tentaremos reutilizar a autorização sem novo consentimento completo." : "Você pode conectar o Google Calendar ao salvar."}
+                  {googleCalendarPreferenciaAtiva ? "Google Calendar ativo; se o backend persistente estiver conectado, enviaremos sem popup nas próximas sessões." : "Você pode conectar o Google Calendar ao salvar."}
                 </p>
               </div>
             </div>
