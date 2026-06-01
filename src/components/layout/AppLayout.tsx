@@ -123,7 +123,6 @@ export default function AppLayout() {
   const isOnline = useOnlineStatus();
   const { isSaving, lastSavedAt, pendingSyncCount, syncStatus, syncError } = useAppStore();
 
-  const statusText = isOnline ? "Online" : "Offline — trabalhando com dados locais";
   const saveText = isSaving ? "Salvando localmente..." : lastSavedAt ? "Dados salvos localmente" : "";
   const syncBlockReason = (() => {
     if (!syncError) return "";
@@ -151,17 +150,17 @@ export default function AppLayout() {
       <div className="flex min-h-screen w-full bg-background">
         <AppSidebar />
         <div className="flex flex-1 flex-col min-w-0">
-          <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-border bg-card/80 px-4 backdrop-blur">
-            <SidebarTrigger />
-            <div className="flex flex-col leading-tight">
-              <h1 className="text-sm font-semibold text-foreground">Safra 26/27 — Controle Operacional</h1>
-              <span className="text-[11px] text-muted-foreground">Gestão comercial agrícola</span>
+          <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b border-border bg-card/80 px-3 backdrop-blur md:gap-3 md:px-4">
+            <SidebarTrigger className="shrink-0" />
+            <div className="flex min-w-0 flex-col leading-tight">
+              <h1 className="truncate text-sm font-semibold text-foreground"><span className="md:hidden">Safra 26/27</span><span className="hidden md:inline">Safra 26/27 — Controle Operacional</span></h1>
+              <span className="hidden text-[11px] text-muted-foreground sm:inline">Gestão comercial agrícola</span>
             </div>
-            <div className="ml-auto text-right text-[11px] leading-tight">
-              <div className={isOnline ? "text-emerald-600" : "text-amber-600"}>{statusText}</div>
-              {saveText && <div className="text-muted-foreground">{saveText}</div>}
-              {syncText && <div className={syncStatus === "error" ? "text-destructive" : pendingSyncCount > 0 ? "text-amber-700" : "text-muted-foreground"}>{syncText}</div>}
-              {syncStatus === "error" && syncError && <div className="max-w-xs truncate text-destructive/80" title={syncError}>{syncError}</div>}
+            <div className="ml-auto min-w-0 text-right text-[10px] leading-tight md:text-[11px]">
+              <div className={isOnline ? "font-medium text-emerald-600" : "font-medium text-amber-600"}>{isOnline ? "Online" : "Offline"}</div>
+              {saveText && <div className="hidden text-muted-foreground sm:block">{saveText}</div>}
+              {syncText && <div className={syncStatus === "error" ? "max-w-[9rem] truncate text-destructive md:max-w-xs" : pendingSyncCount > 0 ? "max-w-[9rem] truncate text-amber-700 md:max-w-xs" : "hidden text-muted-foreground sm:block"} title={syncText}>{syncText}</div>}
+              {syncStatus === "error" && syncError && <div className="hidden max-w-xs truncate text-destructive/80 sm:block" title={syncError}>{syncError}</div>}
             </div>
           </header>
           <main className="flex-1 overflow-x-hidden p-4 pb-[calc(6rem+env(safe-area-inset-bottom))] md:p-6 md:pb-6">
