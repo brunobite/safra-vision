@@ -1,4 +1,5 @@
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Card } from "@/components/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Button } from "@/components/ui/button";
@@ -31,11 +32,12 @@ import { fetchAccountSnapshot, shouldRestoreFromCloud, buildCloudRestoreSummary,
 import { enqueueSyncItem, requeueFailedAndStaleSyncItems } from "@/lib/syncQueue";
 import { findRemoteOnlyClientTestCandidates, softDeleteRemoteClientTests, type RemoteOnlyClientTestCandidate } from "@/lib/remoteCleanup";
 import { findLocalTestRecordCandidates, getSyncQueueAudit, type SyncQueueAudit, type TestRecordCandidate } from "@/lib/syncAudit";
+import { useAuth } from "@/store/AuthStore";
 import { getAccountSyncUserMessage, getAccountSyncVisualState, SYNC_HOMOLOGATION_CHECKLIST } from "@/lib/accountSyncUi";
 import { calcularMetaCarteira, calcularPotencialCarteira, calcularPotencialCliente, distribuirMetaPorPotencial, limitarPercentualAcerto, normalizarValorNaoNegativo, resolverVendedorCanonico } from "@/utils/businessRules";
 import { fmtBRL } from "@/utils/calculations";
 import * as XLSX from "xlsx";
-import { disconnectGoogleCalendar, getGoogleCalendarAuthStatus, getGoogleCalendarClientId, getGoogleCalendarLastAuthError, hasGoogleCalendarAccess, initGoogleCalendarClient, isGoogleCalendarPreferenceEnabled, isGoogleIdentityServicesLoaded, requestGoogleCalendarAccess, setGoogleCalendarPreferenceEnabled, type GoogleCalendarAuthStatus } from "@/lib/googleCalendar";
+import { disconnectGoogleCalendar, disconnectGoogleCalendarBackend, getGoogleCalendarAuthStatus, getGoogleCalendarBackendStatus, getGoogleCalendarClientId, getGoogleCalendarLastAuthError, hasGoogleCalendarAccess, initGoogleCalendarClient, isGoogleCalendarBackendAvailable, isGoogleCalendarPreferenceEnabled, isGoogleIdentityServicesLoaded, requestGoogleCalendarAccess, setGoogleCalendarPreferenceEnabled, startGoogleCalendarBackendOAuth, type GoogleCalendarAuthStatus, type GoogleCalendarBackendStatus } from "@/lib/googleCalendar";
 
 const APLICAR: { v: AplicarSobre; label: string }[] = [
   { v: "realizado_empresa", label: "Realizado empresa" }, { v: "realizado_pessoal", label: "Realizado pessoal" },
@@ -59,6 +61,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promi
 }
 
 export default function Configuracoes() {
+  const { session, isLocalMode } = useAuth();
   const {
     regras, setRegras, vendedores, setVendedores, ticketsMedios, setTicketsMedios, dbError, isSaving, lastSavedAt, saveError,
     clientes, lancamentos, negocios, produtos, metasEmpresa, metasPessoais, eventos, metasVendedor, metasCategoria, prioridadesP1, orcamentos, setOrcamentos, empresas, setEmpresas, formasPagamento, setFormasPagamento, prazosPagamento, setPrazosPagamento,
@@ -112,6 +115,9 @@ export default function Configuracoes() {
   const [activeTab, setActiveTab] = useState("comissao");
   const [googleCalendarStatus, setGoogleCalendarStatus] = useState(getGoogleCalendarAuthStatus());
   const [googleCalendarError, setGoogleCalendarError] = useState<string | null>(null);
+  const [googleCalendarBackendStatus, setGoogleCalendarBackendStatus] = useState<GoogleCalendarBackendStatus>({ connected: false });
+  const [googleCalendarBackendLoading, setGoogleCalendarBackendLoading] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
   const refreshGoogleCalendarStatus = () => {
     const currentStatus = getGoogleCalendarAuthStatus();
     setGoogleCalendarStatus(currentStatus);
@@ -749,6 +755,43 @@ export default function Configuracoes() {
     event.target.value = "";
   };
 
+
+  const atualizarGoogleCalendarBackendStatus = async () => {
+    if (!session?.access_token || !isGoogleCalendarBackendAvailable()) {
+      setGoogleCalendarBackendStatus({ connected: false });
+      return { connected: false } as GoogleCalendarBackendStatus;
+    }
+    setGoogleCalendarBackendLoading(true);
+    return getGoogleCalendarBackendStatus()
+      .then((status) => {
+        setGoogleCalendarBackendStatus(status);
+        return status;
+      })
+      .finally(() => setGoogleCalendarBackendLoading(false));
+  };
+
+  useEffect(() => {
+    void atualizarGoogleCalendarBackendStatus();
+  }, [session?.access_token]);
+
+  useEffect(() => {
+    const result = searchParams.get("googleCalendar");
+    if (!result) return;
+    if (result === "connected") {
+      toast.success("Google Calendar persistente conectado.");
+      void atualizarGoogleCalendarBackendStatus();
+    }
+    if (result === "error") {
+      const message = searchParams.get("message") || "Erro ao conectar Google Calendar persistente.";
+      setGoogleCalendarError(message);
+      toast.error(message);
+    }
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete("googleCalendar");
+    nextParams.delete("message");
+    setSearchParams(nextParams, { replace: true });
+  }, [searchParams, setSearchParams]);
+
   const googleCalendarClientId = getGoogleCalendarClientId();
   const googleCalendarClientIdLoaded = Boolean(googleCalendarClientId);
   const googleCalendarAccessInMemory = hasGoogleCalendarAccess();
@@ -771,40 +814,67 @@ export default function Configuracoes() {
     auth_error: "Precisa renovar autorização",
   };
 
+  const googleCalendarPersistentAvailable = !isLocalMode && isGoogleCalendarBackendAvailable() && Boolean(session?.access_token);
+  const googleCalendarModeLabel = googleCalendarPersistentAvailable ? "Backend persistente ativo" : "Modo sessão";
+  const googleCalendarEffectiveConnected = googleCalendarBackendStatus.connected || googleCalendarDisplayStatus === "connected";
+
   const conectarGoogleCalendar = async () => {
     setGoogleCalendarError(null);
-    try {
-      await requestGoogleCalendarAccess({ prompt: "consent" });
-      setGoogleCalendarPreferenceEnabled(true);
-      refreshGoogleCalendarStatus();
-      toast.success("Google Calendar conectado neste dispositivo.");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Erro de autorização do Google Calendar.";
-      setGoogleCalendarError(message);
-      refreshGoogleCalendarStatus();
-      toast.error(message);
+    if (isGoogleCalendarBackendAvailable() && session?.access_token) {
+      return startGoogleCalendarBackendOAuth()
+        .then((authUrl) => window.location.assign(authUrl))
+        .catch((error) => {
+          const message = error instanceof Error ? error.message : "Erro de autorização do Google Calendar.";
+          setGoogleCalendarError(message);
+          refreshGoogleCalendarStatus();
+          toast.error(message);
+        });
     }
+    return requestGoogleCalendarAccess({ prompt: "consent" })
+      .then(() => {
+        setGoogleCalendarPreferenceEnabled(true);
+        refreshGoogleCalendarStatus();
+        toast.success("Google Calendar conectado neste dispositivo.");
+      })
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : "Erro de autorização do Google Calendar.";
+        setGoogleCalendarError(message);
+        refreshGoogleCalendarStatus();
+        toast.error(message);
+      });
   };
 
-  const desconectarGoogleCalendar = () => {
-    disconnectGoogleCalendar();
-    refreshGoogleCalendarStatus();
+  const desconectarGoogleCalendar = async () => {
     setGoogleCalendarError(null);
-    toast.success("Google Calendar desconectado deste dispositivo.");
+    const disconnectBackend = googleCalendarBackendStatus.connected && session?.access_token
+      ? disconnectGoogleCalendarBackend().then(() => atualizarGoogleCalendarBackendStatus())
+      : Promise.resolve();
+    return disconnectBackend
+      .then(() => {
+        disconnectGoogleCalendar();
+        refreshGoogleCalendarStatus();
+        toast.success("Google Calendar desconectado.");
+      })
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : "Erro ao desconectar Google Calendar.";
+        setGoogleCalendarError(message);
+        toast.error(message);
+      });
   };
 
   const testarGoogleCalendar = async () => {
     setGoogleCalendarError(null);
-    try {
-      await initGoogleCalendarClient();
-      refreshGoogleCalendarStatus();
-      toast.success(hasGoogleCalendarAccess() ? "Token do Google Calendar válido nesta sessão." : "Client ID carregado. Clique em conectar para autorizar.");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Erro ao testar Google Calendar.";
-      setGoogleCalendarError(message);
-      refreshGoogleCalendarStatus();
-      toast.error(message);
-    }
+    return initGoogleCalendarClient()
+      .then(() => {
+        refreshGoogleCalendarStatus();
+        toast.success(hasGoogleCalendarAccess() ? "Token do Google Calendar válido nesta sessão." : "Token em memória ausente. Clique em conectar para autorizar o fallback da sessão.");
+      })
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : "Erro ao testar Google Calendar.";
+        setGoogleCalendarError(message);
+        refreshGoogleCalendarStatus();
+        toast.error(message);
+      });
   };
 
   return <div className="space-y-4">
@@ -868,10 +938,10 @@ export default function Configuracoes() {
           <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
             <div>
               <div className="flex items-center gap-2 text-sm font-semibold"><CalendarClock className="h-4 w-4" />Google Calendar</div>
-              <p className="text-xs text-muted-foreground">O Safra Vision continua sendo a fonte comercial. O Google Calendar é apenas espelho operacional dos agendamentos e o access token fica somente em memória da sessão.</p>
+              <p className="text-xs text-muted-foreground">O Safra Vision continua sendo a fonte comercial. O Google Calendar é apenas espelho operacional; no modo persistente, tokens sensíveis ficam somente no backend seguro.</p>
             </div>
-            <Badge variant={googleCalendarDisplayStatus === "connected" ? "default" : googleCalendarDisplayStatus === "auth_error" ? "destructive" : "outline"}>
-              {googleCalendarStatusLabel[googleCalendarDisplayStatus]}
+            <Badge variant={googleCalendarEffectiveConnected ? "default" : googleCalendarDisplayStatus === "auth_error" ? "destructive" : "outline"}>
+              {googleCalendarEffectiveConnected ? "Conectado" : googleCalendarStatusLabel[googleCalendarDisplayStatus]}
             </Badge>
           </div>
           <div className="grid gap-3 md:grid-cols-2">
@@ -884,9 +954,9 @@ export default function Configuracoes() {
               Escopo solicitado: https://www.googleapis.com/auth/calendar.events. A autorização só é disparada por clique do usuário em “Conectar Google Calendar”.
             </div>
           </div>
-          {googleCalendarClientIdLoaded && googleCalendarDisplayStatus !== "connected" && (
+          {(googleCalendarClientIdLoaded || googleCalendarPersistentAvailable) && googleCalendarDisplayStatus !== "connected" && (
             <div className="rounded border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
-              Client ID carregado. Clique em Conectar Google Calendar e conclua a permissão na tela do Google.
+              {googleCalendarPersistentAvailable ? "Backend persistente disponível. Conecte uma vez para envio automático sem popups nas próximas sessões." : "Modo sessão disponível. Clique em Conectar Google Calendar e conclua a permissão na tela do Google."}
             </div>
           )}
           {googleCalendarError && <div className="rounded border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">{googleCalendarError}</div>}
@@ -894,17 +964,19 @@ export default function Configuracoes() {
             <div className="mb-2 font-semibold text-foreground">Diagnóstico seguro</div>
             <div className="grid gap-1 md:grid-cols-2">
               <div>Client ID: {googleCalendarClientIdLoaded ? "carregado" : "não carregado"}</div>
+              <div>Modo: {googleCalendarModeLabel}</div>
+              <div>Backend persistente: {googleCalendarBackendLoading ? "consultando" : googleCalendarBackendStatus.connected ? "conectado" : googleCalendarPersistentAvailable ? "disponível" : "indisponível"}</div>
               <div>Script Google Identity Services: {isGoogleIdentityServicesLoaded() ? "carregado" : "não carregado"}</div>
-              <div>Token em memória: {googleCalendarAccessInMemory ? "sim" : "não"}</div>
+              <div>Token em memória (fallback sessão): {googleCalendarAccessInMemory ? "sim" : "não"}</div>
               <div>Preferência local: {googleCalendarPreferenceEnabled ? "ativa neste dispositivo" : "inativa"}</div>
               <div>Status atual: {googleCalendarStatusLabel[googleCalendarDisplayStatus]}</div>
-              <div className="md:col-span-2">Último erro amigável: {googleCalendarLastFriendlyError || "nenhum"}</div>
+              <div className="md:col-span-2">Último erro amigável: {googleCalendarLastFriendlyError || googleCalendarBackendStatus.error || "nenhum"}</div>
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button onClick={conectarGoogleCalendar} disabled={!googleCalendarClientIdLoaded}>Conectar Google Calendar</Button>
+            <Button onClick={conectarGoogleCalendar} disabled={!googleCalendarClientIdLoaded && !googleCalendarPersistentAvailable}>Conectar Google Calendar</Button>
             <Button variant="outline" onClick={desconectarGoogleCalendar}>Desconectar Google Calendar</Button>
-            <Button variant="secondary" onClick={testarGoogleCalendar}>Testar conexão</Button>
+            <Button variant="secondary" onClick={testarGoogleCalendar}>Testar fallback sessão</Button>
           </div>
         </Card>
       </TabsContent>
