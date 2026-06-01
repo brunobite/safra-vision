@@ -12,15 +12,13 @@ import type {
 } from "@/types";
 import { resolverVendedorCanonico } from "@/utils/businessRules";
 
-export type AgendaClassificacao = "Atrasada" | "Pendente hoje" | "Agendada" | "Sem agendamento" | "Concluída";
+export type AgendaClassificacao = "Atrasada" | "Pendente hoje" | "Agendada" | "Sem agendamento" | "Reagendada" | "Concluída" | "Cancelada";
 export type AgendaOrigem = "Ação comercial" | "Cliente" | "Oportunidade" | "Orçamento" | "Negócio" | "Alerta";
 export type AgendaVisao = "hoje" | "semana" | "atrasadas" | "sem-agendamento" | "todas";
 export type AgendaAlertaTipo =
   | "cliente-a-sem-proxima-acao"
   | "cliente-p1-sem-proxima-acao"
   | "proxima-acao-vencida"
-  | "orcamento-aberto-sem-retorno"
-  | "negocio-ganho-sem-pos-venda"
   | "cliente-sem-vendedor"
   | "alto-potencial-sem-acao-futura";
 
@@ -138,10 +136,12 @@ export function isAcaoAtiva(status?: string): boolean {
 }
 
 export function classificarAgenda(data: string | undefined, status: string | undefined, hojeIso = toIsoDate(new Date())): AgendaClassificacao {
+  if (status === "Cancelada") return "Cancelada";
   if (isAcaoConcluida(status)) return "Concluída";
   if (!data) return "Sem agendamento";
   if (data < hojeIso) return "Atrasada";
   if (data === hojeIso) return "Pendente hoje";
+  if (status === "Reagendada") return "Reagendada";
   return "Agendada";
 }
 
@@ -276,7 +276,6 @@ export function montarItensAgenda(params: {
         orcamentoId: orcamento.id,
         orcamentoCodigo: orcamento.codigo,
         negocioId: orcamento.negocioId,
-        alertaTipo: "orcamento-aberto-sem-retorno",
       });
     });
 
@@ -301,7 +300,6 @@ export function montarItensAgenda(params: {
         orcamentoId: negocio.orcamentoId,
         negocioId: negocio.id,
         negocioNome: negocio.nome,
-        alertaTipo: "negocio-ganho-sem-pos-venda",
       });
     });
 
@@ -334,7 +332,7 @@ export function montarAlertasAgenda(params: {
   vendedores?: Pick<Vendedor, "nome">[];
   hojeIso?: string;
 }): AgendaAlerta[] {
-  const { clientes, proximasAcoes, orcamentos = [], negocios = [], vendedores = [] } = params;
+  const { clientes, proximasAcoes, vendedores = [] } = params;
   const hojeIso = params.hojeIso || toIsoDate(new Date());
   const alertas: AgendaAlerta[] = [];
 
@@ -342,10 +340,10 @@ export function montarAlertasAgenda(params: {
     const vendedor = resolverVendedorCanonico(cliente.vendedor, vendedores);
     const semAcaoAtiva = !temAcaoAtiva(cliente.id, proximasAcoes) && !cliente.proximaAcao;
     if (cliente.abc === "A" && semAcaoAtiva) {
-      alertas.push({ id: `cliente-a-sem-proxima-acao-${cliente.id}`, tipo: "cliente-a-sem-proxima-acao", severidade: "alta", titulo: "Cliente A sem ação comercial", detalhe: cliente.nome, clienteId: cliente.id });
+      alertas.push({ id: `cliente-a-sem-proxima-acao-${cliente.id}`, tipo: "cliente-a-sem-proxima-acao", severidade: "alta", titulo: "Cliente A sem ação comercial", detalhe: `${cliente.nome} • nenhuma ação ativa registrada`, clienteId: cliente.id });
     }
-    if (cliente.prioridade === "P1" && semAcaoAtiva) {
-      alertas.push({ id: `cliente-p1-sem-proxima-acao-${cliente.id}`, tipo: "cliente-p1-sem-proxima-acao", severidade: "alta", titulo: "Cliente P1 sem ação comercial", detalhe: cliente.nome, clienteId: cliente.id });
+    if (cliente.prioridade === "P1" && !temAcaoFuturaOuHoje(cliente.id, proximasAcoes, hojeIso)) {
+      alertas.push({ id: `cliente-p1-sem-proxima-acao-${cliente.id}`, tipo: "cliente-p1-sem-proxima-acao", severidade: "alta", titulo: "Cliente P1 sem ação futura", detalhe: `${cliente.nome} • agende a próxima visita ou ação`, clienteId: cliente.id });
     }
     if (vendedor === "Não definido") {
       alertas.push({ id: `cliente-sem-vendedor-${cliente.id}`, tipo: "cliente-sem-vendedor", severidade: "media", titulo: "Cliente sem vendedor", detalhe: cliente.nome, clienteId: cliente.id });
@@ -359,25 +357,13 @@ export function montarAlertasAgenda(params: {
     .filter((acao) => isAcaoAtiva(acao.status) && !!acao.data && acao.data < hojeIso)
     .forEach((acao) => {
       const cliente = clienteDaAcao(acao, clientes);
-      alertas.push({ id: `proxima-acao-vencida-${acao.id}`, tipo: "proxima-acao-vencida", severidade: "alta", titulo: "Próxima ação vencida", detalhe: `${cliente?.nome || "Sem cliente"} • ${acao.data}`, clienteId: acao.clienteId, sourceId: acao.id });
+      alertas.push({ id: `proxima-acao-vencida-${acao.id}`, tipo: "proxima-acao-vencida", severidade: "alta", titulo: "Ação atrasada", detalhe: `${cliente?.nome || "Sem cliente"} • ${acao.data}`, clienteId: acao.clienteId, sourceId: acao.id });
     });
 
-  orcamentos
-    .filter((orcamento) => ORCAMENTOS_ABERTOS.includes(orcamento.status))
-    .forEach((orcamento) => {
-      const cliente = clientes.find((item) => item.id === orcamento.clienteId);
-      alertas.push({ id: `orcamento-aberto-sem-retorno-${orcamento.id}`, tipo: "orcamento-aberto-sem-retorno", severidade: "media", titulo: "Orçamento em aberto sem retorno", detalhe: `${orcamento.codigo} • ${cliente?.nome || "Sem cliente"}`, clienteId: orcamento.clienteId, sourceId: orcamento.id });
-    });
-
-  negocios
-    .filter((negocio) => negocio.status === "Fechado ganho")
-    .filter((negocio) => !proximasAcoes.some((acao) => (acao.negocioId === negocio.id || acao.clienteId === negocio.clienteId) && POS_VENDA_TIPOS.includes(acao.tipo) && isAcaoAtiva(acao.status)))
-    .forEach((negocio) => {
-      const cliente = clientes.find((item) => item.id === negocio.clienteId);
-      alertas.push({ id: `negocio-ganho-sem-pos-venda-${negocio.id}`, tipo: "negocio-ganho-sem-pos-venda", severidade: "baixa", titulo: "Negócio ganho sem pós-venda", detalhe: `${negocio.nome || negocio.id} • ${cliente?.nome || "Sem cliente"}`, clienteId: negocio.clienteId, sourceId: negocio.id });
-    });
-
-  return alertas;
+  return alertas.sort((a, b) => {
+    const peso = { alta: 0, media: 1, baixa: 2 } as const;
+    return peso[a.severidade] - peso[b.severidade] || a.titulo.localeCompare(b.titulo) || a.detalhe.localeCompare(b.detalhe);
+  });
 }
 
 export function filtrarItensAgenda(items: AgendaItem[], filtros: AgendaFiltros): AgendaItem[] {

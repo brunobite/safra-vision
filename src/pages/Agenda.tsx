@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { AlertTriangle, CalendarClock, CheckCircle2, Clock, ExternalLink, Filter, Plus, RotateCcw } from "lucide-react";
 import { useAppStore } from "@/store/AppStore";
-import type { AgendaVisao } from "@/utils/agenda";
+import type { AgendaItem, AgendaVisao } from "@/utils/agenda";
 import {
   buscarClientesAgenda,
   calcularResumoAgenda,
@@ -249,7 +249,7 @@ export default function Agenda() {
     if (!acao) return toast.error("Selecione um cliente para a nova ação.");
     setProximasAcoes((atuais) => [acao, ...atuais]);
     setModal(null);
-    toast.success("Nova ação marcada no calendário e vinculada ao fluxo atual.");
+    toast.success("Próxima ação salva na Agenda e Visitas e vinculada ao fluxo atual.");
   };
 
   const concluir = (acaoId?: string) => {
@@ -357,7 +357,8 @@ export default function Agenda() {
     if (!acaoId) return;
     const dados = reschedule[acaoId];
     if (!dados?.data) return;
-    setProximasAcoes((atuais) => reagendarAcaoAgenda(atuais, acaoId, dados.data, dados.horario).map((acao) => acao.id === acaoId ? { ...acao, ...metadataAfterGoogleCalendarReschedule(acao) } : acao));
+    setProximasAcoes((atuais) => reagendarAcaoAgenda(atuais, acaoId, dados.data, dados.horario).map((acao) => acao.id === acaoId ? { ...acao, ...metadataAfterGoogleCalendarReschedule(acao), googleCalendarSyncStatus: acao.googleCalendarEventId ? "pending" : acao.googleCalendarSyncStatus } : acao));
+    toast.success("Ação reagendada. Se havia vínculo com Google Calendar, ficou marcada para atualização.");
     setReschedule((atual) => ({ ...atual, [acaoId]: { data: "", horario: "" } }));
   };
 
@@ -369,6 +370,21 @@ export default function Agenda() {
 
   const contagemVisao = (value: AgendaVisao) => filtrarPorVisaoAgenda(itens, value, hoje).length;
   const termoOperacional = (valor: string) => valor === "Sem próxima ação" ? "Sem ação comercial" : valor;
+  const statusOperacional = (item: AgendaItem) => {
+    if (item.status === "Cancelada") return "Cancelada";
+    if (item.status === "Concluída" || item.status === "Realizada" || item.classificacao === "Concluída") return "Concluída";
+    if (item.status === "Reagendada") return "Reagendada";
+    return item.classificacao;
+  };
+  const googleCalendarLabel = (status: string) => status === "not_synced"
+    ? "Google Calendar: não sincronizado"
+    : status === "synced"
+      ? "Google Calendar: sincronizado"
+      : status === "update_pending"
+        ? "Google Calendar: atualização pendente"
+        : status === "deleted"
+          ? "Google Calendar: vínculo removido"
+          : "Google Calendar: erro";
 
   return <div className="space-y-4">
     <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
@@ -421,48 +437,66 @@ export default function Agenda() {
           {itensFiltrados.map((item) => {
             const reprogramacao = reschedule[item.sourceId || ""] || { data: item.data || hoje, horario: item.horario || "" };
             const podeEditarAcao = item.origem === "Ação comercial" && !!item.sourceId;
-            return <div key={item.id} className="rounded-xl border bg-card p-3 text-sm">
-              <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
-                <div>
-                  <button className="font-semibold text-primary hover:underline" onClick={() => item.clienteId && nav(`/clientes/${item.clienteId}`)}>{item.cliente}</button>
-                  <div className="text-xs text-muted-foreground">{item.fazenda} • {item.cidade}</div>
+            const labelStatus = statusOperacional(item);
+            return <div key={item.id} className="rounded-xl border bg-card p-4 text-sm shadow-sm">
+              <div className="grid gap-3 lg:grid-cols-[1.2fr_1fr]">
+                <div className="rounded-lg bg-muted/40 p-3">
+                  <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
+                    <div>
+                      <button className="font-semibold text-primary hover:underline" onClick={() => item.clienteId && nav(`/clientes/${item.clienteId}`)}>{item.cliente}</button>
+                      <div className="text-xs text-muted-foreground">{item.fazenda} • {item.cidade}</div>
+                    </div>
+                    <div className="flex flex-wrap gap-2"><Badge variant={badgeVariant(labelStatus)}>{labelStatus}</Badge><Badge variant="outline">{termoOperacional(item.tipo)}</Badge></div>
+                  </div>
+                  <div className="grid gap-1 text-muted-foreground md:grid-cols-2">
+                    <span><b className="text-foreground">Data:</b> {item.data || "Sem agendamento"}</span>
+                    <span><b className="text-foreground">Horário:</b> {item.horario || "—"}</span>
+                    <span><b className="text-foreground">Vendedor:</b> {item.vendedor}</span>
+                    <span><b className="text-foreground">ABC/Prioridade:</b> {item.abc || "—"}/{item.prioridade || "—"}</span>
+                  </div>
                 </div>
-                <div className="flex flex-wrap gap-2"><Badge variant={badgeVariant(item.classificacao)}>{item.classificacao}</Badge><Badge variant="outline">{termoOperacional(item.status)}</Badge></div>
+
+                <div className="rounded-lg border p-3">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Ação comercial e objetivo</div>
+                  <div className="mt-2 grid gap-1 text-muted-foreground">
+                    <span><b className="text-foreground">Ação:</b> {termoOperacional(item.tipo)}</span>
+                    <span><b className="text-foreground">Origem:</b> {item.origem}</span>
+                    <span><b className="text-foreground">Objetivo:</b> {item.descricao}</span>
+                    <span><b className="text-foreground">Vínculos:</b> {[item.oportunidadeId ? `Opp. ${item.oportunidadeNome || item.oportunidadeId}` : "", item.orcamentoId ? `Orç. ${item.orcamentoCodigo || item.orcamentoId}` : "", item.negocioId ? `Neg. ${item.negocioNome || item.negocioId}` : ""].filter(Boolean).join(" • ") || "—"}</span>
+                  </div>
+                </div>
               </div>
-              <div className="grid gap-1 text-muted-foreground md:grid-cols-2 xl:grid-cols-3">
-                <span><b className="text-foreground">Agendamento:</b> {item.data || "Sem agendamento"}{item.horario ? ` às ${item.horario}` : ""}</span>
-                <span><b className="text-foreground">Vendedor:</b> {item.vendedor}</span>
-                <span><b className="text-foreground">ABC/Prioridade:</b> {item.abc || "—"}/{item.prioridade || "—"}</span>
-                <span><b className="text-foreground">Ação comercial:</b> {termoOperacional(item.tipo)}</span>
-                <span><b className="text-foreground">Etapa/origem:</b> {item.origem}</span>
-                <span><b className="text-foreground">Vínculos:</b> {[item.oportunidadeId ? `Opp. ${item.oportunidadeNome || item.oportunidadeId}` : "", item.orcamentoId ? `Orç. ${item.orcamentoCodigo || item.orcamentoId}` : "", item.negocioId ? `Neg. ${item.negocioNome || item.negocioId}` : ""].filter(Boolean).join(" • ") || "—"}</span>
-                <span className="md:col-span-2 xl:col-span-3"><b className="text-foreground">Objetivo comercial:</b> {item.descricao}</span>
-              </div>
+
               {podeEditarAcao && (() => {
                 const acao = proximasAcoes.find((registro) => registro.id === item.sourceId);
                 const statusGoogle = acao?.googleCalendarStatus || (acao?.googleCalendarEventId ? "synced" : "not_synced");
                 const semData = !item.data;
                 const clientIdConfigurado = Boolean(getGoogleCalendarClientId());
                 const labelAcao = statusGoogle === "error" ? "Tentar novamente" : acao?.googleCalendarEventId ? "Atualizar no Google Calendar" : "Enviar para Google Calendar";
-                return <div className="mt-3 space-y-2 border-t pt-3">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Badge variant={statusGoogle === "synced" ? "default" : statusGoogle === "error" ? "destructive" : "outline"}>Google Calendar: {statusGoogle === "not_synced" ? "não sincronizado" : statusGoogle === "synced" ? "sincronizado" : statusGoogle === "update_pending" ? "atualização pendente" : statusGoogle === "deleted" ? "vínculo removido" : "erro"}</Badge>
+                return <div className="mt-3 rounded-lg border border-dashed p-3">
+                  <div className="mb-2 flex flex-wrap items-center gap-2">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Google Calendar</span>
+                    <Badge variant={statusGoogle === "synced" ? "default" : statusGoogle === "error" ? "destructive" : "outline"}>{googleCalendarLabel(statusGoogle)}</Badge>
                     {acao?.googleCalendarLastError && <span className="text-xs text-destructive">{acao.googleCalendarLastError}</span>}
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <Button size="sm" variant={statusGoogle === "error" ? "default" : "outline"} disabled={semData} title={semData ? "Defina um agendamento antes de enviar ao Google Calendar." : undefined} onClick={() => sincronizarGoogleCalendar(item.sourceId)}>{labelAcao}</Button>
                     {acao?.googleCalendarHtmlLink && <Button size="sm" variant="outline" onClick={() => window.open(acao.googleCalendarHtmlLink, "_blank", "noopener,noreferrer")}><ExternalLink className="mr-1 h-3 w-3" />Abrir no Google Calendar</Button>}
-                    {acao?.googleCalendarEventId && <Button size="sm" variant="ghost" onClick={() => removerVinculoGoogleCalendar(item.sourceId)}>Remover vínculo do Google Calendar</Button>}
+                    {acao?.googleCalendarEventId && <Button size="sm" variant="ghost" onClick={() => removerVinculoGoogleCalendar(item.sourceId)}>Remover vínculo</Button>}
                     {!clientIdConfigurado && <Button size="sm" variant="secondary" disabled={semData} onClick={() => exportarIcsGoogleCalendar(item.sourceId)}>Exportar .ics</Button>}
                     {semData && <span className="text-xs text-muted-foreground">Defina um agendamento antes de enviar ao Google Calendar.</span>}
                   </div>
                 </div>;
               })()}
-              {podeEditarAcao && <div className="mt-3 flex flex-wrap items-end gap-2 border-t pt-3">
-                <Button size="sm" variant="outline" onClick={() => concluir(item.sourceId)}>Concluir ação comercial</Button>
-                <div><Label className="text-xs">Novo agendamento</Label><Input className="h-9 w-40" type="date" value={reprogramacao.data} onChange={(event) => setReschedule((atual) => ({ ...atual, [item.sourceId || ""]: { ...reprogramacao, data: event.target.value } }))} /></div>
-                <div><Label className="text-xs">Horário</Label><Input className="h-9 w-32" type="time" value={reprogramacao.horario} onChange={(event) => setReschedule((atual) => ({ ...atual, [item.sourceId || ""]: { ...reprogramacao, horario: event.target.value } }))} /></div>
-                <Button size="sm" onClick={() => reagendar(item.sourceId)}><RotateCcw className="mr-1 h-3 w-3" />Reagendar</Button>
+
+              {podeEditarAcao && <div className="mt-3 rounded-lg border p-3">
+                <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Conclusão e reagendamento</div>
+                <div className="flex flex-wrap items-end gap-2">
+                  <Button size="sm" variant="outline" onClick={() => concluir(item.sourceId)}>Concluir ação comercial</Button>
+                  <div><Label className="text-xs">Novo agendamento</Label><Input className="h-9 w-40" type="date" value={reprogramacao.data} onChange={(event) => setReschedule((atual) => ({ ...atual, [item.sourceId || ""]: { ...reprogramacao, data: event.target.value } }))} /></div>
+                  <div><Label className="text-xs">Horário</Label><Input className="h-9 w-32" type="time" value={reprogramacao.horario} onChange={(event) => setReschedule((atual) => ({ ...atual, [item.sourceId || ""]: { ...reprogramacao, horario: event.target.value } }))} /></div>
+                  <Button size="sm" onClick={() => reagendar(item.sourceId)}><RotateCcw className="mr-1 h-3 w-3" />Reagendar</Button>
+                </div>
               </div>}
             </div>;
           })}
@@ -500,7 +534,7 @@ export default function Agenda() {
 
     <Dialog open={modal === "agendar" || modal === "visita" || modal === "novaAcao"} onOpenChange={(open) => !open && setModal(null)}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
-        <DialogHeader><DialogTitle>{modal === "agendar" ? "Agendar visita futura" : modal === "visita" ? "VISITA CONCLUÍDA" : "Marcar nova ação"}</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle>{modal === "agendar" ? "Agendar visita futura" : modal === "visita" ? "VISITA CONCLUÍDA" : "Marcar próxima ação"}</DialogTitle></DialogHeader>
         <div className="grid gap-3 md:grid-cols-2">
           <div className="relative md:col-span-2"><Label>Cliente</Label><Input value={flowForm.clienteBusca} onChange={(event) => setFlowForm((atual) => ({ ...atual, clienteBusca: event.target.value, clienteId: "", vendedor: "" }))} placeholder="Buscar por nome, fazenda, cidade, rota ou vendedor" />{flowForm.clienteBusca && !flowForm.clienteId && <div className="mt-1 max-h-48 overflow-y-auto rounded-md border bg-popover p-1 text-sm shadow">{clientesEncontrados.map((cliente) => <button key={cliente.id} type="button" className="w-full rounded-sm px-3 py-2 text-left hover:bg-accent" onClick={() => preencherCliente(cliente.id)}><div className="font-medium">{cliente.nome}</div><div className="text-xs text-muted-foreground">{cliente.fazenda} — {cliente.cidade} — {cliente.vendedor || "Sem vendedor"}</div></button>)}{clientesEncontrados.length === 0 && <div className="px-3 py-2 text-muted-foreground">Nenhum cliente encontrado.</div>}</div>}</div>
           <div><Label>Data</Label><Input type="date" value={flowForm.data} onChange={(event) => setFlowForm((atual) => ({ ...atual, data: event.target.value }))} /></div>
@@ -510,7 +544,7 @@ export default function Agenda() {
           <div className="md:col-span-2"><Label>{modal === "novaAcao" ? "Descrição" : "Objetivo da visita"}</Label><Textarea value={flowForm.descricao} onChange={(event) => setFlowForm((atual) => ({ ...atual, descricao: event.target.value }))} /></div>
           <div className="md:col-span-2"><Label>Observações</Label><Textarea value={flowForm.observacao} onChange={(event) => setFlowForm((atual) => ({ ...atual, observacao: event.target.value }))} /></div>
         </div>
-        <DialogFooter><Button variant="outline" onClick={() => setModal(null)}>Cancelar</Button><Button onClick={modal === "agendar" ? salvarAgendamento : modal === "visita" ? salvarVisitaConcluida : salvarNovaAcao}>{modal === "agendar" ? "Salvar como Agendada" : modal === "visita" ? "Salvar visita concluída" : "Marcar no calendário"}</Button></DialogFooter>
+        <DialogFooter><Button variant="outline" onClick={() => setModal(null)}>Cancelar</Button><Button onClick={modal === "agendar" ? salvarAgendamento : modal === "visita" ? salvarVisitaConcluida : salvarNovaAcao}>{modal === "agendar" ? "Salvar como Agendada" : modal === "visita" ? "Salvar visita concluída" : "Salvar próxima ação"}</Button></DialogFooter>
       </DialogContent>
     </Dialog>
 
@@ -519,7 +553,7 @@ export default function Agenda() {
     </Dialog>
 
     <Dialog open={modal === "marcarPergunta"} onOpenChange={(open) => !open && setModal(null)}>
-      <DialogContent><DialogHeader><DialogTitle>MARCAR NOVA AÇÃO?</DialogTitle></DialogHeader><p className="text-sm text-muted-foreground">A nova ação alimenta a agenda e pode ficar vinculada à visita ou oportunidade do fluxo atual.</p><DialogFooter><Button variant="outline" onClick={() => setModal(null)}>NÃO</Button><Button onClick={prepararNovaAcaoDoContexto}>SIM, MARCAR NO CALENDÁRIO</Button></DialogFooter></DialogContent>
+      <DialogContent><DialogHeader><DialogTitle>CRIAR PRÓXIMA AÇÃO?</DialogTitle></DialogHeader><p className="text-sm text-muted-foreground">A próxima ação alimenta a Agenda e Visitas e pode ficar vinculada à visita ou oportunidade do fluxo atual.</p><DialogFooter><Button variant="outline" onClick={() => setModal(null)}>NÃO</Button><Button onClick={prepararNovaAcaoDoContexto}>SIM, CRIAR PRÓXIMA AÇÃO</Button></DialogFooter></DialogContent>
     </Dialog>
 
     <Dialog open={modal === "oportunidade"} onOpenChange={(open) => !open && setModal(null)}>
