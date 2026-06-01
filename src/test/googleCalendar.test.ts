@@ -52,10 +52,10 @@ describe("payload do Google Calendar", () => {
     expect(payload.location).toBe("Fazenda Boa Vista — Bagé");
   });
 
-  it("cria horário com dateTime e duração padrão quando há hora", () => {
-    const payload = buildCalendarEventFromAgendaItem(item);
-    expect(payload.start).toEqual({ dateTime: "2026-06-10T09:30:00" });
-    expect(payload.end).toEqual({ dateTime: "2026-06-10T10:30:00" });
+  it("cria horário com dateTime, timeZone e duração padrão quando há hora", () => {
+    const payload = buildCalendarEventFromAgendaItem({ ...item, data: "2026-06-19", horario: "08:00" });
+    expect(payload.start).toEqual({ dateTime: "2026-06-19T08:00:00", timeZone: "America/Sao_Paulo" });
+    expect(payload.end).toEqual({ dateTime: "2026-06-19T09:00:00", timeZone: "America/Sao_Paulo" });
   });
 
   it("bloqueia envio quando não há data", () => {
@@ -161,6 +161,20 @@ describe("status de sincronização", () => {
 describe("token e autorização", () => {
   it("sem token bloqueia chamada à API", async () => {
     await expect(createGoogleCalendarEvent(buildCalendarEventFromAgendaItem(item))).rejects.toThrow("Conecte o Google Calendar antes de sincronizar");
+  });
+
+  it("retorna erro detalhado do Google Calendar", async () => {
+    await authorizeGoogleCalendar();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 400,
+        text: async () => JSON.stringify({ error: { message: "Invalid time zone: America/Sao_Paulo", status: "INVALID_ARGUMENT" } }),
+      }),
+    );
+
+    await expect(createGoogleCalendarEvent(buildCalendarEventFromAgendaItem(item))).rejects.toThrow("Invalid time zone: America/Sao_Paulo");
   });
 
   it("não imprime access token em logs", async () => {

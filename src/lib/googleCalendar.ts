@@ -5,6 +5,7 @@ export const GOOGLE_GSI_SCRIPT_URL = "https://accounts.google.com/gsi/client";
 export const GOOGLE_CALENDAR_API_BASE = "https://www.googleapis.com/calendar/v3/calendars";
 export const DEFAULT_GOOGLE_CALENDAR_ID = "primary";
 export const DEFAULT_EVENT_DURATION_MINUTES = 60;
+export const DEFAULT_GOOGLE_CALENDAR_TIME_ZONE = "America/Sao_Paulo";
 
 export type GoogleCalendarStatus = "not_synced" | "synced" | "update_pending" | "error" | "deleted";
 export type GoogleCalendarAuthStatus = "not_configured" | "not_connected" | "connected" | "token_expired" | "auth_error";
@@ -275,8 +276,27 @@ async function fetchGoogleCalendar(path: string, init: RequestInit): Promise<Goo
     markGoogleCalendarTokenExpired();
     throw new Error("Autorização expirada. Conecte novamente o Google Calendar.");
   }
-  if (!response.ok) throw new Error(`Erro do Google Calendar (${response.status}).`);
+  if (!response.ok) throw new Error(await readGoogleCalendarErrorMessage(response));
   return response.json() as Promise<GoogleCalendarApiEvent>;
+}
+
+async function readGoogleCalendarErrorMessage(response: Response): Promise<string> {
+  const fallback = `Erro do Google Calendar (${response.status}).`;
+  if (typeof response.text !== "function") return fallback;
+
+  const body = await response.text();
+  if (!body) return fallback;
+
+  try {
+    const parsed = JSON.parse(body) as { error?: { message?: string; status?: string; code?: number; errors?: Array<{ message?: string; reason?: string }> } | string; message?: string };
+    if (typeof parsed.error === "string") return `${fallback} ${parsed.error}`;
+    const googleMessage = parsed.error?.message || parsed.message;
+    const firstError = parsed.error?.errors?.find((entry) => entry.message || entry.reason);
+    const detail = googleMessage || firstError?.message || firstError?.reason || parsed.error?.status;
+    return detail ? `${fallback} ${detail}` : fallback;
+  } catch {
+    return `${fallback} ${body}`;
+  }
 }
 
 export async function createGoogleCalendarEvent(payload: GoogleCalendarEventPayload, calendarId = DEFAULT_GOOGLE_CALENDAR_ID): Promise<GoogleCalendarApiEvent> {
@@ -293,10 +313,22 @@ export async function deleteGoogleCalendarEvent(eventId: string, calendarId = DE
   await fetchGoogleCalendar(`/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`, { method: "DELETE" });
 }
 
-function addMinutes(dateTime: string, minutes: number): string {
-  const date = new Date(dateTime);
+function formatLocalDateTime(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  const seconds = String(date.getSeconds()).padStart(2, "0");
+  return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`;
+}
+
+export function addMinutesToLocalDateTime(dateIso: string, time: string, minutes: number): string {
+  const [year, month, day] = dateIso.split("-").map(Number);
+  const [hours = 0, minute = 0] = time.split(":").map(Number);
+  const date = new Date(year, month - 1, day, hours, minute, 0);
   date.setMinutes(date.getMinutes() + minutes);
-  return date.toISOString().slice(0, 19);
+  return formatLocalDateTime(date);
 }
 
 function addOneDay(dateIso: string): string {
@@ -364,7 +396,15 @@ export function buildCalendarEventFromAgendaItem(item: GoogleCalendarAgendaItem)
   const horario = item.horario?.trim();
   if (horario) {
     const dateTime = `${item.data}T${horario}:00`;
-    return { summary, description, location, start: { dateTime }, end: { dateTime: addMinutes(dateTime, DEFAULT_EVENT_DURATION_MINUTES) }, reminders };
+    const endDateTime = addMinutesToLocalDateTime(item.data, horario, DEFAULT_EVENT_DURATION_MINUTES);
+    return {
+      summary,
+      description,
+      location,
+      start: { dateTime, timeZone: DEFAULT_GOOGLE_CALENDAR_TIME_ZONE },
+      end: { dateTime: endDateTime, timeZone: DEFAULT_GOOGLE_CALENDAR_TIME_ZONE },
+      reminders,
+    };
   }
   return { summary, description, location, start: { date: item.data }, end: { date: addOneDay(item.data) }, reminders };
 }
