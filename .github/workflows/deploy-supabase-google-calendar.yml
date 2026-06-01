@@ -1,0 +1,87 @@
+name: Deploy Supabase Google Calendar
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy Supabase migration and Edge Functions
+    runs-on: ubuntu-latest
+
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Validate required GitHub secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          missing=0
+          for secret_name in SUPABASE_ACCESS_TOKEN SUPABASE_PROJECT_ID SUPABASE_DB_PASSWORD; do
+            if [ -z "${!secret_name:-}" ]; then
+              echo "::error::Required GitHub secret ${secret_name} is not configured."
+              missing=1
+            fi
+          done
+
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+
+      - name: Apply Supabase database migrations
+        shell: bash
+        run: |
+          set -euo pipefail
+          supabase db push --project-ref "$SUPABASE_PROJECT_ID" --password "$SUPABASE_DB_PASSWORD"
+
+      # Configure the runtime secrets used by these Edge Functions in the Supabase Dashboard
+      # before running this workflow:
+      # - GOOGLE_CLIENT_ID
+      # - GOOGLE_CLIENT_SECRET
+      # - GOOGLE_CALENDAR_REDIRECT_URI
+      # - SUPABASE_URL
+      # - SUPABASE_SERVICE_ROLE_KEY
+      # - SAFRA_VISION_APP_URL
+      - name: Deploy google-calendar-oauth-start Edge Function
+        shell: bash
+        run: |
+          set -euo pipefail
+          supabase functions deploy google-calendar-oauth-start --project-ref "$SUPABASE_PROJECT_ID"
+
+      - name: Deploy google-calendar-oauth-callback Edge Function
+        shell: bash
+        run: |
+          set -euo pipefail
+          supabase functions deploy google-calendar-oauth-callback --project-ref "$SUPABASE_PROJECT_ID"
+
+      - name: Deploy google-calendar-status Edge Function
+        shell: bash
+        run: |
+          set -euo pipefail
+          supabase functions deploy google-calendar-status --project-ref "$SUPABASE_PROJECT_ID"
+
+      - name: Deploy google-calendar-disconnect Edge Function
+        shell: bash
+        run: |
+          set -euo pipefail
+          supabase functions deploy google-calendar-disconnect --project-ref "$SUPABASE_PROJECT_ID"
+
+      - name: Deploy google-calendar-upsert-event Edge Function
+        shell: bash
+        run: |
+          set -euo pipefail
+          supabase functions deploy google-calendar-upsert-event --project-ref "$SUPABASE_PROJECT_ID"
