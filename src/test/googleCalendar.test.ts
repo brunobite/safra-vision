@@ -6,15 +6,18 @@ import {
   buildGoogleCalendarSummary,
   createGoogleCalendarEvent,
   disconnectGoogleCalendar,
+  ensureGoogleCalendarAccess,
   resetGoogleCalendarAuthForTests,
   getGoogleCalendarAgendaActionState,
   getGoogleCalendarAuthStatus,
   hasGoogleCalendarAccess,
+  isGoogleCalendarPreferenceEnabled,
   metadataAfterGoogleCalendarDelete,
   metadataAfterGoogleCalendarError,
   metadataAfterGoogleCalendarReschedule,
   metadataAfterGoogleCalendarSuccess,
   requestGoogleCalendarAccess,
+  setGoogleCalendarPreferenceEnabled,
   upsertGoogleCalendarEventForAgendaItem,
 } from "@/lib/googleCalendar";
 
@@ -196,6 +199,29 @@ describe("token e autorização", () => {
     await expect(requestGoogleCalendarAccess({ clientId: "client-id" })).rejects.toThrow("Usuário negou acesso.");
     expect(getGoogleCalendarAuthStatus()).toBe("auth_error");
   });
+
+  it("persiste somente flag operacional de preferência", () => {
+    setGoogleCalendarPreferenceEnabled(true);
+    expect(isGoogleCalendarPreferenceEnabled()).toBe(true);
+    expect(window.localStorage.getItem("safraVision.googleCalendar.enabled")).toBe("true");
+    expect(window.localStorage.getItem("access_token")).toBeNull();
+
+    disconnectGoogleCalendar();
+    expect(isGoogleCalendarPreferenceEnabled()).toBe(false);
+  });
+
+  it("permite reuso sem prompt de consentimento quando já houve conexão", async () => {
+    const requestAccessToken = mockGoogleIdentity({ access_token: "token", expires_in: 3600 });
+    await requestGoogleCalendarAccess({ clientId: "client-id", prompt: "" });
+    expect(requestAccessToken).toHaveBeenCalledWith({ prompt: "" });
+  });
+
+  it("ensureGoogleCalendarAccess não força consentimento no reuso e orienta reconexão", async () => {
+    const requestAccessToken = mockGoogleIdentity({ error: "interaction_required", error_description: "Interaction required" });
+    setGoogleCalendarPreferenceEnabled(true);
+    await expect(ensureGoogleCalendarAccess({ clientId: "client-id", interactive: false })).rejects.toThrow("Precisa renovar autorização do Google Calendar");
+    expect(requestAccessToken).toHaveBeenCalledWith({ prompt: "" });
+  });
 });
 
 describe("UI da agenda e fallback", () => {
@@ -247,4 +273,5 @@ function mockGoogleIdentity(response: { access_token?: string; expires_in?: numb
     createElement: vi.fn(() => ({ set src(_value: string) {}, async: true, defer: true, onload: null as null | (() => void), onerror: null as null | (() => void) })),
     head: { appendChild: vi.fn((script: { onload?: () => void }) => script.onload?.()) },
   });
+  return requestAccessToken;
 }

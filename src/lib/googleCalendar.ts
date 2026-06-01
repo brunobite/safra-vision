@@ -15,6 +15,14 @@ export interface GoogleCalendarConfig {
   scope?: string;
 }
 
+export interface GoogleCalendarAccessOptions extends GoogleCalendarConfig {
+  prompt?: "consent" | "";
+}
+
+export interface EnsureGoogleCalendarAccessOptions extends GoogleCalendarConfig {
+  interactive?: boolean;
+}
+
 export interface GoogleCalendarAgendaItem {
   id: string;
   cliente?: string;
@@ -84,8 +92,11 @@ let authStatus: GoogleCalendarAuthStatus = "not_configured";
 let lastAuthError: string | null = null;
 let pendingTokenRequest: { resolve: (token: string) => void; reject: (error: Error) => void; timeoutId?: number } | null = null;
 
+export const GOOGLE_CALENDAR_ENABLED_STORAGE_KEY = "safraVision.googleCalendar.enabled";
+
 const GOOGLE_CALENDAR_AUTH_TIMEOUT_MS = 120_000;
 const GOOGLE_CALENDAR_AUTH_TIMEOUT_MESSAGE = "Autorização não concluída. Verifique se você rolou até o final da tela do Google e tocou em Continuar/Permitir.";
+const GOOGLE_CALENDAR_RECONNECT_MESSAGE = "Precisa renovar autorização do Google Calendar. Acesse Configurações e conecte novamente neste dispositivo.";
 
 function safeGoogleCalendarDevLog(message: string, details?: Record<string, unknown>): void {
   if (!import.meta.env.DEV) return;
@@ -134,7 +145,25 @@ export function getGoogleCalendarAuthStatus(): GoogleCalendarAuthStatus {
   if (lastAuthError) return "auth_error";
   if (!getGoogleCalendarClientId() && !currentConfig?.clientId) return "not_configured";
   if (authStatus === "connected" || authStatus === "token_expired") return authStatus;
-  return "not_connected";
+  return isGoogleCalendarPreferenceEnabled() ? "token_expired" : "not_connected";
+}
+
+export function isGoogleCalendarPreferenceEnabled(): boolean {
+  try {
+    return typeof window !== "undefined" && window.localStorage?.getItem(GOOGLE_CALENDAR_ENABLED_STORAGE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+export function setGoogleCalendarPreferenceEnabled(enabled: boolean): void {
+  try {
+    if (typeof window === "undefined") return;
+    if (enabled) window.localStorage?.setItem(GOOGLE_CALENDAR_ENABLED_STORAGE_KEY, "true");
+    else window.localStorage?.removeItem(GOOGLE_CALENDAR_ENABLED_STORAGE_KEY);
+  } catch {
+    // A preferência operacional não é crítica e nunca contém dados sensíveis.
+  }
 }
 
 export function getGoogleCalendarLastAuthError(): string | null {
@@ -148,8 +177,9 @@ export function isGoogleIdentityServicesLoaded(): boolean {
 export function disconnectGoogleCalendar(): void {
   accessToken = null;
   accessTokenExpiresAt = 0;
-  authStatus = "not_configured";
+  authStatus = getGoogleCalendarClientId() || currentConfig?.clientId ? "not_connected" : "not_configured";
   lastAuthError = null;
+  setGoogleCalendarPreferenceEnabled(false);
   clearPendingTokenRequest();
 }
 
@@ -160,6 +190,7 @@ export function resetGoogleCalendarAuthForTests(): void {
   accessTokenExpiresAt = 0;
   authStatus = "not_configured";
   lastAuthError = null;
+  setGoogleCalendarPreferenceEnabled(false);
   clearPendingTokenRequest();
 }
 
@@ -241,9 +272,10 @@ export async function initGoogleCalendarClient(config: GoogleCalendarConfig = {}
   });
 }
 
-export async function requestGoogleCalendarAccess(config: GoogleCalendarConfig = {}): Promise<string> {
+export async function requestGoogleCalendarAccess(config: GoogleCalendarAccessOptions = {}): Promise<string> {
   const requestedClientId = config.clientId || getGoogleCalendarClientId();
   const requestedScope = config.scope || GOOGLE_CALENDAR_SCOPE;
+  const requestedPrompt = config.prompt ?? (hasGoogleCalendarAccess() ? "" : "consent");
   if (!tokenClient || currentConfig?.clientId !== requestedClientId || currentConfig?.scope !== requestedScope) await initGoogleCalendarClient(config);
   if (!tokenClient) throw new Error("Cliente OAuth do Google Calendar não inicializado.");
   clearPendingTokenRequest(new Error("Uma nova tentativa de autorização do Google Calendar foi iniciada."));
@@ -255,15 +287,27 @@ export async function requestGoogleCalendarAccess(config: GoogleCalendarConfig =
       clearPendingTokenRequest(new Error(GOOGLE_CALENDAR_AUTH_TIMEOUT_MESSAGE));
     }, GOOGLE_CALENDAR_AUTH_TIMEOUT_MS);
     pendingTokenRequest = { resolve, reject, timeoutId };
-    safeGoogleCalendarDevLog("requestAccessToken chamado", { clientIdPresent: Boolean(requestedClientId), gsiLoaded: isGoogleIdentityServicesLoaded() });
+    safeGoogleCalendarDevLog("requestAccessToken chamado", { clientIdPresent: Boolean(requestedClientId), gsiLoaded: isGoogleIdentityServicesLoaded(), promptMode: requestedPrompt ? "consent" : "reuse" });
     try {
-      tokenClient?.requestAccessToken({ prompt: hasGoogleCalendarAccess() ? "" : "consent" });
+      tokenClient?.requestAccessToken({ prompt: requestedPrompt });
     } catch (error) {
       const message = friendlyGoogleError(error) || "Não foi possível iniciar a autorização do Google Calendar.";
       markGoogleCalendarAuthError(message);
       clearPendingTokenRequest(new Error(message));
     }
   });
+}
+
+export async function ensureGoogleCalendarAccess(options: EnsureGoogleCalendarAccessOptions = {}): Promise<string> {
+  if (hasGoogleCalendarAccess() && accessToken) return accessToken;
+  const shouldAskConsent = options.interactive ?? !isGoogleCalendarPreferenceEnabled();
+  try {
+    return await requestGoogleCalendarAccess({ ...options, prompt: shouldAskConsent ? "consent" : "" });
+  } catch (error) {
+    const message = shouldAskConsent ? friendlyGoogleError(error) : GOOGLE_CALENDAR_RECONNECT_MESSAGE;
+    markGoogleCalendarAuthError(message);
+    throw new Error(message);
+  }
 }
 
 async function fetchGoogleCalendar(path: string, init: RequestInit): Promise<GoogleCalendarApiEvent> {
