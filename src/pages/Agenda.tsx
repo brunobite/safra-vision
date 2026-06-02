@@ -190,6 +190,17 @@ export default function Agenda() {
     return acao;
   };
 
+  const montarGoogleCalendarPayload = useCallback((acao: ProximaAcao) => {
+    const cliente = clientes.find((item) => item.id === acao.clienteId);
+    return {
+      ...acao,
+      cliente: cliente?.nome,
+      fazenda: cliente?.localidade || cliente?.rota,
+      cidade: cliente?.cidade,
+      vendedor: acao.responsavel || cliente?.vendedor,
+    };
+  }, [clientes]);
+
   const executarUpsertGoogleCalendar = async (payload: ReturnType<typeof montarGoogleCalendarPayload>) => {
     if (isGoogleCalendarOffline()) throw new Error(GOOGLE_CALENDAR_OFFLINE_MANUAL_SYNC_MESSAGE);
     if (googleCalendarBackendConnected && session?.access_token) {
@@ -448,16 +459,6 @@ export default function Agenda() {
     }
   };
 
-  const montarGoogleCalendarPayload = useCallback((acao: ProximaAcao) => {
-    const cliente = clientes.find((item) => item.id === acao.clienteId);
-    return {
-      ...acao,
-      cliente: cliente?.nome,
-      fazenda: cliente?.localidade || cliente?.rota,
-      cidade: cliente?.cidade,
-      vendedor: acao.responsavel || cliente?.vendedor,
-    };
-  }, [clientes]);
 
   const agendaItemGooglePayload = (acaoId?: string) => {
     const acao = proximasAcoes.find((item) => item.id === acaoId);
