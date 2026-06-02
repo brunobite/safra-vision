@@ -390,6 +390,8 @@ export interface Produto {
   ultimaAtualizacao?: string;
   ativo: boolean;
   observacoes?: string;
+  createdAt?: string;
+  updatedAt?: string;
   itensEstimados?: OportunidadeItemEstimado[];
   segmento?: string;
   responsavel?: string;

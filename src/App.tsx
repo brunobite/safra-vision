@@ -1,6 +1,6 @@
 import { Suspense, lazy, useEffect } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -21,7 +21,6 @@ const Configuracoes = lazy(() => import("./pages/Configuracoes"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 const FunilVendas = lazy(() => import("./pages/FunilVendas"));
 const Produtos = lazy(() => import("./pages/Produtos"));
-const PrecosEstoque = lazy(() => import("./pages/PrecosEstoque"));
 const Orcamentos = lazy(() => import("./pages/Orcamentos"));
 const ProximasAcoes = lazy(() => import("./pages/ProximasAcoes"));
 const Agenda = lazy(() => import("./pages/Agenda"));
@@ -59,7 +58,7 @@ const App = () => {
                 <Route path="/funil" element={<FunilVendas />} />
                 <Route path="/orcamentos" element={<Orcamentos />} />
                 <Route path="/produtos" element={<Produtos />} />
-                <Route path="/precos-estoque" element={<PrecosEstoque />} />
+                <Route path="/precos-estoque" element={<Navigate to="/produtos" replace />} />
                 <Route path="/metas" element={<Metas />} />
                 <Route path="/relatorios" element={<Relatorios />} />
                 <Route path="/clientes" element={<Clientes />} />
