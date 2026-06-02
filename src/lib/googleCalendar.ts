@@ -553,6 +553,32 @@ export async function upsertGoogleCalendarEventViaBackend(item: GoogleCalendarAg
   };
 }
 
+
+export function isGoogleCalendarSyncPending(item: {
+  googleCalendarSyncStatus?: string;
+  googleCalendarStatus?: GoogleCalendarStatus;
+  googleCalendarLastError?: string;
+}): boolean {
+  return item.googleCalendarSyncStatus === "pending"
+    || item.googleCalendarStatus === "update_pending"
+    || item.googleCalendarLastError === GOOGLE_CALENDAR_OFFLINE_PENDING_MESSAGE;
+}
+
+export function isGoogleCalendarPendingActionEligible(item: {
+  data?: string;
+  status?: string;
+  googleCalendarSyncStatus?: string;
+  googleCalendarStatus?: GoogleCalendarStatus;
+  googleCalendarLastError?: string;
+}): boolean {
+  if (!isGoogleCalendarSyncPending(item)) return false;
+  if (!item.data?.trim()) return false;
+  if (item.status === "Cancelada") return false;
+  if (item.googleCalendarStatus === "deleted") return false;
+  if (item.googleCalendarSyncStatus === "synced" && item.googleCalendarStatus !== "update_pending") return false;
+  return true;
+}
+
 export function metadataAfterGoogleCalendarSuccess(event: GoogleCalendarApiEvent, calendarId = DEFAULT_GOOGLE_CALENDAR_ID, now = new Date().toISOString()): GoogleCalendarSyncMetadata {
   return { googleCalendarEventId: event.id, googleCalendarHtmlLink: event.htmlLink, googleCalendarSyncedAt: now, googleCalendarStatus: "synced", googleCalendarLastError: undefined, googleCalendarCalendarId: calendarId, googleCalendarUpdatedAt: event.updated || now };
 }
