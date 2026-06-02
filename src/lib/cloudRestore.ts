@@ -56,6 +56,7 @@ export const SYNCABLE_CLOUD_STORES: SyncableStore[] = [
   "clientes",
   "lancamentos",
   "oportunidades",
+  "historicoFunil",
   "orcamentos",
   "negocios",
   "proximasAcoes",

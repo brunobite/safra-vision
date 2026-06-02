@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, ReactNode } from "react";
 import {
   Cliente, Lancamento, MetaEmpresa, MetaPessoal, Evento, PrioridadeP1Item,
-  Negocio, Produto, RegraComissao, Vendedor, MetaVendedor, MetaCategoria, TicketMedioRegra, Orcamento, Empresa, ProximaAcao, FormaPagamento, PrazoPagamento, AppConfig, OportunidadeComercial, RelatorioVisita,
+  Negocio, Produto, RegraComissao, Vendedor, MetaVendedor, MetaCategoria, TicketMedioRegra, Orcamento, Empresa, ProximaAcao, FormaPagamento, PrazoPagamento, AppConfig, OportunidadeComercial, RelatorioVisita, HistoricoFunil,
 } from "@/types";
 import { bootstrapLocalDatabase, saveStore } from "@/lib/localRepository";
 import { restoreAccountSnapshotToLocal, type AccountSnapshot, type CloudRestoreResult } from "@/lib/cloudRestore";
@@ -35,6 +35,7 @@ interface AppStoreCtx {
   prioridadesP1: PrioridadeP1Item[]; setPrioridadesP1: React.Dispatch<React.SetStateAction<PrioridadeP1Item[]>>;
   negocios: Negocio[]; setNegocios: React.Dispatch<React.SetStateAction<Negocio[]>>;
   oportunidades: OportunidadeComercial[]; setOportunidades: React.Dispatch<React.SetStateAction<OportunidadeComercial[]>>;
+  historicoFunil: HistoricoFunil[]; setHistoricoFunil: React.Dispatch<React.SetStateAction<HistoricoFunil[]>>;
   produtos: Produto[]; setProdutos: React.Dispatch<React.SetStateAction<Produto[]>>;
   regras: RegraComissao[]; setRegras: React.Dispatch<React.SetStateAction<RegraComissao[]>>;
   vendedores: Vendedor[]; setVendedores: React.Dispatch<React.SetStateAction<Vendedor[]>>;
@@ -87,6 +88,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const [prioridadesP1, setPrioridadesP1] = useState<PrioridadeP1Item[]>([]);
   const [negocios, setNegocios] = useState<Negocio[]>([]);
   const [oportunidades, setOportunidades] = useState<OportunidadeComercial[]>([]);
+  const [historicoFunil, setHistoricoFunil] = useState<HistoricoFunil[]>([]);
   const [produtos, setProdutos] = useState<Produto[]>([]);
   const [regras, setRegras] = useState<RegraComissao[]>([]);
   const [vendedores, setVendedores] = useState<Vendedor[]>([]);
@@ -182,6 +184,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         setPrioridadesP1(localData.prioridadesP1);
         setNegocios(localData.negocios);
         setOportunidades((localData as {oportunidades?: OportunidadeComercial[]}).oportunidades || []);
+        setHistoricoFunil((localData as {historicoFunil?: HistoricoFunil[]}).historicoFunil || []);
         setProdutos(localData.produtos);
         setRegras(localData.regrasComissao);
         setVendedores(localData.vendedores);
@@ -253,6 +256,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => { void persistStore("prioridadesP1", prioridadesP1); }, [prioridadesP1, persistStore]);
   useEffect(() => { void persistStore("negocios", negocios); }, [negocios, persistStore]);
   useEffect(() => { void persistStore("oportunidades", oportunidades as never); }, [oportunidades, persistStore]);
+  useEffect(() => { void persistStore("historicoFunil", historicoFunil as never); }, [historicoFunil, persistStore]);
   useEffect(() => { void persistStore("produtos", produtos); }, [produtos, persistStore]);
   useEffect(() => { void persistStore("regrasComissao", regras); }, [regras, persistStore]);
   useEffect(() => { void persistStore("vendedores", vendedores); }, [vendedores, persistStore]);
@@ -273,12 +277,13 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     try {
       const result = await restoreAccountSnapshotToLocal(snapshot);
       skipNextPersistStoresRef.current = new Set([
-        "clientes", "lancamentos", "oportunidades", "orcamentos", "negocios", "proximasAcoes", "relatoriosVisita",
+        "clientes", "lancamentos", "oportunidades", "historicoFunil", "orcamentos", "negocios", "proximasAcoes", "relatoriosVisita",
         "vendedores", "produtos", "formasPagamento", "prazosPagamento", "appConfig",
       ]);
       setClientes(result.snapshot.clientes as Cliente[]);
       setLancamentos(result.snapshot.lancamentos as Lancamento[]);
       setOportunidades(result.snapshot.oportunidades as OportunidadeComercial[]);
+      setHistoricoFunil((result.snapshot.historicoFunil || []) as HistoricoFunil[]);
       setOrcamentos(result.snapshot.orcamentos as Orcamento[]);
       setNegocios(result.snapshot.negocios as Negocio[]);
       setProximasAcoes(result.snapshot.proximasAcoes as ProximaAcao[]);
@@ -637,7 +642,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       metasEmpresa, setMetasEmpresa, metasPessoais, setMetasPessoais,
       metasVendedor, setMetasVendedor, metasCategoria, setMetasCategoria,
       eventos, setEventos, prioridadesP1, setPrioridadesP1,
-      negocios, setNegocios, oportunidades, setOportunidades, produtos, setProdutos,
+      negocios, setNegocios, oportunidades, setOportunidades, historicoFunil, setHistoricoFunil, produtos, setProdutos,
       regras, setRegras, vendedores, setVendedores, ticketsMedios, setTicketsMedios, orcamentos, setOrcamentos, empresas, setEmpresas, proximasAcoes, setProximasAcoes, relatoriosVisita, setRelatoriosVisita, formasPagamento, setFormasPagamento, prazosPagamento, setPrazosPagamento, appConfig, setAppConfig,
       isLoading, isReady, dbError, isSaving, lastSavedAt, saveError, pendingSyncCount, refreshPendingSyncCount, syncStatus, syncError, lastAutoSyncAt, accountSyncStatus, accountSyncHistory, runManualUploadSync, runAccountSyncNowForAccount, restoreAccountSnapshot,
       filters, setFilters,

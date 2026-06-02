@@ -34,7 +34,7 @@ function acaoTemLancamento(acao: ProximaAcao, lancamentos: Lancamento[]) {
 export default function ClienteFicha360() {
   const nav = useNavigate();
   const { id } = useParams();
-  const { clienteById, lancamentos, proximasAcoes, relatoriosVisita, orcamentos, negocios, empresas, oportunidades } = useAppStore();
+  const { clienteById, lancamentos, proximasAcoes, relatoriosVisita, orcamentos, negocios, empresas, oportunidades, historicoFunil } = useAppStore();
   const cliente = clienteById(id || "");
 
   const relatoriosCliente = useMemo(() => relatoriosVisita.filter((relatorio) => relatorio.clienteId === id).sort((a, b) => `${b.dataVisita}T${b.horario || ""}`.localeCompare(`${a.dataVisita}T${a.horario || ""}`)), [relatoriosVisita, id]);
@@ -86,8 +86,10 @@ export default function ClienteFicha360() {
   const orcAprovados = orcamentos.filter((o) => o.clienteId === id && o.status === "Aprovado").length;
   const orcPerdidos = orcamentos.filter((o) => o.clienteId === id && ["Recusado", "Vencido", "Reprovado", "Cancelado"].includes(o.status)).length;
   const negociosGanhos = negocios.filter((n) => n.clienteId === id && n.status === "Fechado ganho").length;
-  const oppGanhas = oportunidades.filter((o) => o.clienteId === id && o.etapa === "Ganha");
-  const oppPerdidas = oportunidades.filter((o) => o.clienteId === id && o.etapa === "Perdida");
+  const oportunidadesCliente = oportunidades.filter((o) => o.clienteId === id);
+  const oportunidadesAbertas = oportunidadesCliente.filter((o) => !["Ganha", "Perdida", "Cancelada", "Suspensa/Sem timing"].includes(o.etapa));
+  const oppGanhas = oportunidadesCliente.filter((o) => o.etapa === "Ganha");
+  const oppPerdidas = oportunidadesCliente.filter((o) => o.etapa === "Perdida");
 
   return <div className="space-y-4">
     <Card className="p-4">
@@ -129,6 +131,32 @@ export default function ClienteFicha360() {
       </div>
     </Card>
 
+
+
+    <Card className="p-4">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-sm font-semibold">Oportunidades abertas no funil</h2>
+        <Badge variant="outline">{oportunidadesAbertas.length} aberta(s)</Badge>
+      </div>
+      <div className="space-y-2">
+        {oportunidadesAbertas.length === 0 && <div className="rounded border border-dashed p-3 text-sm text-muted-foreground">Nenhuma oportunidade aberta vinculada a este cliente.</div>}
+        {oportunidadesAbertas.map((o) => {
+          const ultimaMovimentacao = historicoFunil.filter((h) => h.oportunidadeId === o.id).sort((a, b) => b.dataMovimento.localeCompare(a.dataMovimento))[0];
+          const relatorio = relatoriosCliente.find((r) => r.id === o.relatorioVisitaId || r.oportunidadeId === o.id);
+          return <div key={o.id} className="rounded border p-3 text-sm">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <b>{o.necessidade || o.segmento || "Oportunidade comercial"}</b>
+                <div className="text-xs text-muted-foreground">Etapa atual: {o.etapa} • Valor estimado: {fmtBRL(o.valorEstimado || 0)} • Fechamento: {formatDateBR(o.previsaoFechamento) || "—"}</div>
+              </div>
+              <Button size="sm" variant="outline" onClick={() => nav(`/funil?clienteId=${cliente.id}`)}>Abrir funil</Button>
+            </div>
+            <div className="mt-2 text-xs text-muted-foreground">Última movimentação: {ultimaMovimentacao ? `${formatDateBR(ultimaMovimentacao.dataMovimento)} · ${ultimaMovimentacao.etapaAnterior || "—"} → ${ultimaMovimentacao.etapaNova}` : "Sem histórico registrado"}</div>
+            <div className="mt-1 text-xs text-muted-foreground">Relatório vinculado: {relatorio ? `${formatDateBR(relatorio.dataVisita)} · ${relatorio.resultadoVisita}` : o.relatorioVisitaId || "—"}</div>
+          </div>;
+        })}
+      </div>
+    </Card>
 
 
     <Card className="p-4">

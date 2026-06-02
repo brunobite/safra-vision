@@ -14,6 +14,7 @@ export const seedData = {
   lancamentos: enableDemoData ? initialLancamentos : [],
   negocios: enableDemoData ? initialNegocios : [],
   oportunidades: [],
+  historicoFunil: [],
   produtos: enableDemoProducts ? initialProdutos : [],
   metasEmpresa: enableDemoData ? initialMetasEmpresa : [],
   metasPessoais: enableDemoData ? initialMetasPessoais : [],
