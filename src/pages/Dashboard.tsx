@@ -1,420 +1,390 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { GlobalFilters } from "@/components/GlobalFilters";
 import { KpiCard } from "@/components/dashboard/KpiCard";
 import { useAppStore } from "@/store/AppStore";
-import { calcDashboard, fmtBRL, fmtNum, fmtPct } from "@/utils/calculations";
-import { montarDashboardComercialSafra } from "@/utils/businessRules";
-import { calcularResumoAgenda, montarItensAgenda } from "@/utils/agenda";
-import {
-  TrendingUp, AlertTriangle, FileText, CalendarDays, Layers, Clock, Percent, Award,
-} from "lucide-react";
+import { fmtBRL, fmtNum, fmtPct } from "@/utils/calculations";
+import { AlertTriangle, Award, CalendarDays, Clock, FileText, Layers, Percent, TrendingUp, Users } from "lucide-react";
 import { Card } from "@/components/ui/card";
-import {
-  ResponsiveContainer, Tooltip, Legend,
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line,
-} from "recharts";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
+import { ResponsiveContainer, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid } from "recharts";
+import type { Cliente, OportunidadeComercial, OrcamentoStatus, StatusProximaAcao } from "@/types";
+
+const ALL = "__all__";
+const OPEN_OPPORTUNITY_STAGES = [
+  "Oportunidade identificada",
+  "Identificada",
+  "Qualificação técnica/comercial",
+  "Qualificação",
+  "Necessidade definida",
+  "Orçamento solicitado",
+  "Orçamento em elaboração",
+  "Orçamento enviado",
+  "Negociação",
+  "Fechamento encaminhado",
+  "Suspensa/Sem timing",
+];
+const CLOSED_OPPORTUNITY_STAGES = ["Ganha", "Perdida", "Cancelada"];
+const ACTION_OPEN_STATUSES: StatusProximaAcao[] = ["Pendente", "Em andamento", "Reagendada"];
+const STUCK_DAYS_LIMIT = 30;
+
+function todayIso() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function daysBetween(fromIso: string | undefined, toIso: string) {
+  if (!fromIso) return 0;
+  const from = new Date(fromIso.slice(0, 10));
+  const to = new Date(toIso);
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return 0;
+  return Math.max(0, Math.floor((to.getTime() - from.getTime()) / 86400000));
+}
+
+function dateInPeriod(dateIso: string | undefined, start: string, end: string) {
+  if (!dateIso) return false;
+  const date = dateIso.slice(0, 10);
+  if (start && date < start) return false;
+  if (end && date > end) return false;
+  return true;
+}
+
+function probabilityToRatio(value: number | undefined) {
+  if (!value) return 0;
+  return value > 1 ? value / 100 : value;
+}
+
+function opportunityValue(oportunidade: OportunidadeComercial) {
+  return oportunidade.valorFinal || oportunidade.valorEstimado || 0;
+}
+
+function isOpenOpportunity(oportunidade: OportunidadeComercial) {
+  return !CLOSED_OPPORTUNITY_STAGES.includes(oportunidade.etapa);
+}
+
+function stageTone(etapa: string) {
+  if (etapa === "Ganha") return "bg-emerald-100 text-emerald-700";
+  if (etapa === "Perdida" || etapa === "Cancelada") return "bg-red-100 text-red-700";
+  if (etapa.includes("Orçamento") || etapa === "Negociação") return "bg-amber-100 text-amber-700";
+  return "bg-blue-100 text-blue-700";
+}
 
 export default function Dashboard() {
-  const { clientes, metasEmpresa, metasPessoais, filtered, lancamentos, negocios, regras, orcamentos, oportunidades, proximasAcoes, appConfig, clienteById, ticketsMedios, metasVendedor, vendedores } = useAppStore();
-  const [acaoFiltro, setAcaoFiltro] = useState<"hoje"|"semana"|"mes"|"atrasadas"|"todas">("hoje");
-  const nav = useNavigate();
-
-  const metaPessoalTotal = metasPessoais.reduce((s, m) => s + m.metaFaturamento, 0);
-  const kpis = useMemo(
-    () => calcDashboard(filtered.lancamentos, clientes, metasEmpresa, metaPessoalTotal, filtered.negocios, regras),
-    [filtered.lancamentos, filtered.negocios, clientes, metasEmpresa, metaPessoalTotal, regras]
-  );
-
-  const metaXReal = useMemo(() => {
-    const real: Record<string, number> = {};
-    negocios.filter(n => n.status === "Fechado ganho").forEach(n => {
-      const mes = (n.ultimaAtualizacao || n.dataCriacao).slice(0, 7);
-      real[mes] = (real[mes] || 0) + (n.valorFechado || 0);
-    });
-    return metasEmpresa.map(m => ({ mes: m.mes, Meta: m.metaTotal, Realizado: real[m.mes] || 0 }));
-  }, [metasEmpresa, negocios]);
-
-  const funilEtapa = useMemo(() => {
-    const m: Record<string, number> = {};
-    filtered.negocios.forEach(n => { m[n.status] = (m[n.status] || 0) + (n.valorPotencial || 0); });
-    return Object.entries(m).map(([etapa, valor]) => ({ etapa, valor }));
-  }, [filtered.negocios]);
-
-  const porCategoria = useMemo(() => {
-    const m: Record<string, number> = {};
-    filtered.negocios.forEach(n => { m[n.categoria] = (m[n.categoria] || 0) + (n.valorPotencial || 0); });
-    return Object.entries(m).map(([cat, valor]) => ({ cat, valor }));
-  }, [filtered.negocios]);
-
-  const aprovMes = useMemo(() => {
-    const real: Record<string, number> = {};
-    negocios.filter(n => n.status === "Fechado ganho").forEach(n => {
-      const mes = (n.ultimaAtualizacao || n.dataCriacao).slice(0, 7);
-      real[mes] = (real[mes] || 0) + (n.valorFechado || 0);
-    });
-    const potTotal = clientes.reduce((s, c) => s + (c.potencialTotal || 0), 0) || 1;
-    return Object.entries(real).sort(([a],[b]) => a.localeCompare(b)).map(([mes, v]) => ({ mes, "%": +((v/potTotal)*100).toFixed(2) }));
-  }, [negocios, clientes]);
-
-
-  const hoje = new Date().toISOString().slice(0,10);
-  const taxa = Math.min(100, Math.max(0, appConfig.percentualAcertoEsperado || 0));
-  const gestaoComercial = useMemo(() => montarDashboardComercialSafra({
+  const {
     clientes,
-    ticketsMedios,
-    percentualAcertoEsperado: taxa,
-    metasVendedor,
-    vendedores,
+    lancamentos,
     negocios,
     orcamentos,
     oportunidades,
     proximasAcoes,
-    hojeIso: hoje,
-  }), [clientes, ticketsMedios, taxa, metasVendedor, vendedores, negocios, orcamentos, oportunidades, proximasAcoes, hoje]);
-  const potencialCarteira = gestaoComercial.potencialCarteira;
-  const metaCarteira = gestaoComercial.metaCarteira;
-  const realizado = gestaoComercial.realizado;
-  const pct = gestaoComercial.percentualAtingido;
-  const gapParaMeta = gestaoComercial.gap;
-  const agendaResumo = useMemo(() => calcularResumoAgenda(montarItensAgenda({ clientes, proximasAcoes, oportunidades, orcamentos, negocios, vendedores, hojeIso: hoje }), hoje), [clientes, proximasAcoes, oportunidades, orcamentos, negocios, vendedores, hoje]);
+    relatoriosVisita,
+    vendedores,
+    clienteById,
+  } = useAppStore();
+  const nav = useNavigate();
+  const hoje = todayIso();
+  const [filters, setFilters] = useState({
+    dataInicial: hoje.slice(0, 7) + "-01",
+    dataFinal: hoje,
+    vendedor: "",
+    clienteId: "",
+    rota: "",
+    etapa: "",
+    statusOportunidade: "",
+    statusAcao: "",
+  });
 
-  const operacionais = useMemo(() => ({
-    atrasados: clientes.filter(c => c.statusAtual !== "Inativo" && ((c.dataProximaAcao && c.dataProximaAcao < hoje) || (c.retorno && c.retorno < hoje))).length,
-    proximasSemana: proximasAcoes.filter(a=>a.status==="Pendente" && a.data >= hoje).length,
-    semVisita: clientes.filter(c=>!lancamentos.some(l=>l.clienteId===c.id && l.tipo==="Visita")).length,
-    orcamentosAbertos: orcamentos.filter(o=>["Rascunho","Enviado"].includes(o.status)).length,
-    negociosAbertos: negocios.filter(n=>!["Fechado ganho","Fechado perdido"].includes(n.status)).length,
-    visitasMes: lancamentos.filter(l=>l.tipo==="Visita" && l.data.slice(0,7)===hoje.slice(0,7)).length,
-  }), [clientes, proximasAcoes, lancamentos, orcamentos, negocios, hoje]);
+  const rotas = useMemo(() => Array.from(new Set(clientes.map((c) => c.rota).filter(Boolean))).sort(), [clientes]);
+  const etapas = useMemo(() => Array.from(new Set([...OPEN_OPPORTUNITY_STAGES, ...oportunidades.map((o) => o.etapa)])).sort(), [oportunidades]);
+  const statusAcoes = useMemo(() => Array.from(new Set(proximasAcoes.map((a) => a.status))).sort(), [proximasAcoes]);
 
+  const clienteMap = useMemo(() => new Map(clientes.map((cliente) => [cliente.id, cliente])), [clientes]);
 
-  const executivos = useMemo(() => {
-    const topPotencial = [...clientes].sort((a,b)=>(b.potencialTotal||0)-(a.potencialTotal||0)).slice(0,5);
-    const semAcao = clientes.filter((c) => !proximasAcoes.some((a) => a.clienteId === c.id && a.status === "Pendente"));
-    const rotaCritica = Object.entries(clientes.reduce((m,c)=>{const k=c.rota||"Sem rota"; m[k]=(m[k]||0)+(c.statusAtual!=="Inativo" && !proximasAcoes.some((a)=>a.clienteId===c.id&&a.status==="Pendente")?1:0); return m;}, {} as Record<string,number>)).sort((a,b)=>b[1]-a[1]).slice(0,5);
-    const visitasSemana = lancamentos.filter((l) => l.tipo === "Visita" && l.data >= hoje && l.data <= new Date(Date.now()+6*86400000).toISOString().slice(0,10));
-    const visitasAtrasadas = proximasAcoes.filter((a) => a.tipo === "Visita" && a.status === "Pendente" && a.data < hoje);
-    const semVisitaPlanejada = clientes.filter((c) => !proximasAcoes.some((a)=>a.clienteId===c.id && a.tipo==="Visita" && a.status==="Pendente")).length;
-    const porResponsavel = Object.entries(proximasAcoes.filter((a)=>a.status==="Pendente").reduce((m,a)=>{const k=a.responsavel||"Sem responsável"; m[k]=(m[k]||0)+1; return m;}, {} as Record<string,number>));
-    return { topPotencial, semAcao, rotaCritica, visitasSemana, visitasAtrasadas, semVisitaPlanejada, porResponsavel };
-  }, [clientes, proximasAcoes, lancamentos, hoje]);
+  const scoped = useMemo(() => {
+    const matchesCliente = (clienteId?: string) => !filters.clienteId || clienteId === filters.clienteId;
+    const matchesCarteira = (clienteId?: string, vendedor?: string) => {
+      const cliente = clienteId ? clienteMap.get(clienteId) : undefined;
+      if (!matchesCliente(clienteId)) return false;
+      if (filters.rota && cliente?.rota !== filters.rota) return false;
+      if (filters.vendedor && (vendedor || cliente?.vendedor) !== filters.vendedor) return false;
+      return true;
+    };
 
-
-  const fechamentoComercial = useMemo(() => {
-    const abertas = filtered.oportunidades.filter((o) => !["Ganha", "Perdida", "Cancelada"].includes(o.etapa));
-    const ganhas = filtered.oportunidades.filter((o) => o.etapa === "Ganha");
-    const perdidas = filtered.oportunidades.filter((o) => o.etapa === "Perdida");
-    const taxaConversao = (ganhas.length + perdidas.length) ? ganhas.length / (ganhas.length + perdidas.length) : 0;
-    const valorGanho = ganhas.reduce((s, o) => s + (o.valorFinal || o.valorEstimado || 0), 0);
-    const valorPerdido = perdidas.reduce((s, o) => s + (o.valorFinal || o.valorEstimado || 0), 0);
-    const semProximaAcao = abertas.filter((o) => !proximasAcoes.some((a) => a.oportunidadeId === o.id && ["Pendente", "Em andamento"].includes(a.status))).length;
-    const ganhasSemPos = ganhas.filter((o) => !proximasAcoes.some((a) => a.oportunidadeId === o.id && ["Entrega","Acompanhamento técnico","Conferir aplicação","Visita pós-venda","Cobrança comercial futura","Pós-venda"].includes(a.tipo))).length;
-    const motivos = Object.entries(perdidas.reduce((m,o)=>{const k=o.motivoPerda||"Não informado"; m[k]=(m[k]||0)+1; return m;}, {} as Record<string,number>)).sort((a,b)=>b[1]-a[1]).slice(0,5);
-    return {abertas:abertas.length, ganhas:ganhas.length, perdidas:perdidas.length, taxaConversao, valorGanho, valorPerdido, semProximaAcao, ganhasSemPos, motivos};
-  }, [filtered.oportunidades, proximasAcoes]);
-
-  const comercial = useMemo(() => {
-    const abertos = orcamentos.filter(o => ["Aberto","Rascunho"].includes(o.status));
-    const negociacao = orcamentos.filter(o => o.status === "Em negociação");
-    const aprovados = orcamentos.filter(o => o.status === "Aprovado");
-    const perdidos = orcamentos.filter(o => ["Recusado","Vencido","Reprovado","Cancelado"].includes(o.status));
-    const soma = (arr: typeof orcamentos) => arr.reduce((s,o)=>s+(o.valorTotal||0),0);
-    const taxa = (aprovados.length+perdidos.length)>0 ? aprovados.length/(aprovados.length+perdidos.length) : 0;
-    const ticket = aprovados.length ? soma(aprovados)/aprovados.length : 0;
-    const porAberto = Object.values(clientes.reduce((m,c)=>{const v=abertos.filter(o=>o.clienteId===c.id).reduce((s,o)=>s+o.valorTotal,0); if(v>0)m[c.id]={id:c.id,nome:c.nome,valor:v}; return m;}, {} as Record<string,{id:string,nome:string,valor:number}>)).sort((a,b)=>b.valor-a.valor).slice(0,5);
-    const porRealizado = Object.values(clientes.reduce((m,c)=>{const v=negocios.filter(n=>n.clienteId===c.id&&n.status==="Fechado ganho").reduce((s,n)=>s+(n.valorFechado||0),0); if(v>0)m[c.id]={id:c.id,nome:c.nome,valor:v}; return m;}, {} as Record<string,{id:string,nome:string,valor:number}>)).sort((a,b)=>b.valor-a.valor).slice(0,5);
-    const hoje = new Date();
-    const parados = abertos.filter(o => Math.floor((hoje.getTime()-new Date(o.updatedAt||o.data).getTime())/86400000) >= 15).sort((a,b)=>a.updatedAt.localeCompare(b.updatedAt)).slice(0,5);
-    return {abertos:soma(abertos), negociacao:soma(negociacao), aprovados:soma(aprovados), perdidos:soma(perdidos), taxa, ticket, porAberto, porRealizado, parados};
-  }, [orcamentos, clientes, negocios]);
-
-  const potXFech = useMemo(() => {
-    const m: Record<string, { Potencial: number; Fechado: number }> = {};
-    negocios.forEach(n => {
-      const mes = (n.ultimaAtualizacao || n.dataCriacao).slice(0, 7);
-      m[mes] ??= { Potencial: 0, Fechado: 0 };
-      m[mes].Potencial += n.valorPotencial || 0;
-      if (n.status === "Fechado ganho") m[mes].Fechado += n.valorFechado || 0;
+    const clientesFiltrados = clientes.filter((cliente) => matchesCarteira(cliente.id, cliente.vendedor));
+    const lancamentosFiltrados = lancamentos.filter((lancamento) => dateInPeriod(lancamento.data, filters.dataInicial, filters.dataFinal) && matchesCarteira(lancamento.clienteId, lancamento.vendedor));
+    const relatoriosFiltrados = relatoriosVisita.filter((relatorio) => dateInPeriod(relatorio.dataVisita, filters.dataInicial, filters.dataFinal) && matchesCarteira(relatorio.clienteId, relatorio.vendedor));
+    const oportunidadesFiltradas = oportunidades.filter((oportunidade) => {
+      const dataReferencia = oportunidade.updatedAt || oportunidade.createdAt || oportunidade.previsaoFechamento;
+      if (!dateInPeriod(dataReferencia, filters.dataInicial, filters.dataFinal) && !dateInPeriod(oportunidade.previsaoFechamento, filters.dataInicial, filters.dataFinal)) return false;
+      if (!matchesCarteira(oportunidade.clienteId, oportunidade.vendedor || oportunidade.responsavel)) return false;
+      if (filters.etapa && oportunidade.etapa !== filters.etapa) return false;
+      if (filters.statusOportunidade === "aberta" && !isOpenOpportunity(oportunidade)) return false;
+      if (filters.statusOportunidade === "ganha" && oportunidade.etapa !== "Ganha") return false;
+      if (filters.statusOportunidade === "perdida" && oportunidade.etapa !== "Perdida") return false;
+      if (filters.statusOportunidade === "cancelada" && oportunidade.etapa !== "Cancelada") return false;
+      return true;
     });
-    return Object.entries(m).sort(([a],[b]) => a.localeCompare(b)).map(([mes, v]) => ({ mes, ...v }));
-  }, [negocios]);
+    const orcamentosFiltrados = orcamentos.filter((orcamento) => dateInPeriod(orcamento.updatedAt || orcamento.data, filters.dataInicial, filters.dataFinal) && matchesCarteira(orcamento.clienteId, orcamento.vendedor));
+    const negociosFiltrados = negocios.filter((negocio) => dateInPeriod(negocio.ultimaAtualizacao || negocio.dataCriacao || negocio.previsaoFechamento, filters.dataInicial, filters.dataFinal) && matchesCarteira(negocio.clienteId, negocio.vendedor));
+    const acoesFiltradas = proximasAcoes.filter((acao) => {
+      if (!matchesCarteira(acao.clienteId, acao.responsavel)) return false;
+      if (filters.statusAcao && acao.status !== filters.statusAcao) return false;
+      return true;
+    });
+
+    return { clientesFiltrados, lancamentosFiltrados, relatoriosFiltrados, oportunidadesFiltradas, orcamentosFiltrados, negociosFiltrados, acoesFiltradas };
+  }, [clienteMap, clientes, filters, lancamentos, negocios, oportunidades, orcamentos, proximasAcoes, relatoriosVisita]);
+
+  const dashboard = useMemo(() => {
+    const clientesAtivos = scoped.clientesFiltrados.filter((cliente) => cliente.statusAtual !== "Inativo");
+    const clienteTemAcaoFutura = (cliente: Cliente) =>
+      scoped.acoesFiltradas.some((acao) => acao.clienteId === cliente.id && ACTION_OPEN_STATUSES.includes(acao.status) && acao.data >= hoje) || Boolean(cliente.dataProximaAcao && cliente.dataProximaAcao >= hoje);
+    const potencialMedio = clientesAtivos.length ? clientesAtivos.reduce((sum, cliente) => sum + (cliente.potencialTotal || 0), 0) / clientesAtivos.length : 0;
+    const clientesSemAcaoFutura = clientesAtivos.filter((cliente) => !clienteTemAcaoFutura(cliente));
+    const clientesAltoPotencialSemAcao = clientesSemAcaoFutura.filter((cliente) => cliente.abc === "A" || cliente.prioridade === "P1" || (cliente.potencialTotal || 0) >= potencialMedio);
+    const acoesAbertas = scoped.acoesFiltradas.filter((acao) => ACTION_OPEN_STATUSES.includes(acao.status));
+    const acoesAtrasadas = acoesAbertas.filter((acao) => acao.data < hoje);
+    const acoesHoje = acoesAbertas.filter((acao) => acao.data === hoje);
+    const visitasConcluidas = scoped.lancamentosFiltrados.filter((lancamento) => lancamento.tipo === "Visita" && lancamento.status === "Concluído");
+    const oportunidadesAbertas = scoped.oportunidadesFiltradas.filter(isOpenOpportunity);
+    const valorAberto = oportunidadesAbertas.reduce((sum, oportunidade) => sum + opportunityValue(oportunidade), 0);
+    const valorPonderado = oportunidadesAbertas.reduce((sum, oportunidade) => sum + opportunityValue(oportunidade) * probabilityToRatio(oportunidade.probabilidade), 0);
+    const oportunidadesPorEtapa = Object.values(oportunidadesAbertas.reduce((acc, oportunidade) => {
+      acc[oportunidade.etapa] ??= { etapa: oportunidade.etapa, quantidade: 0, valor: 0, ponderado: 0 };
+      acc[oportunidade.etapa].quantidade += 1;
+      acc[oportunidade.etapa].valor += opportunityValue(oportunidade);
+      acc[oportunidade.etapa].ponderado += opportunityValue(oportunidade) * probabilityToRatio(oportunidade.probabilidade);
+      return acc;
+    }, {} as Record<string, { etapa: string; quantidade: number; valor: number; ponderado: number }>)).sort((a, b) => b.valor - a.valor);
+    const oportunidadeTemProximaAcao = (oportunidade: OportunidadeComercial) =>
+      Boolean(oportunidade.proximaAcaoId) || scoped.acoesFiltradas.some((acao) => acao.oportunidadeId === oportunidade.id && ACTION_OPEN_STATUSES.includes(acao.status) && acao.data >= hoje);
+    const oportunidadesSemProximaAcao = oportunidadesAbertas.filter((oportunidade) => !oportunidadeTemProximaAcao(oportunidade));
+    const oportunidadesParadas = oportunidadesAbertas
+      .map((oportunidade) => ({ ...oportunidade, diasParada: daysBetween(oportunidade.updatedAt || oportunidade.createdAt, hoje) }))
+      .filter((oportunidade) => oportunidade.diasParada >= STUCK_DAYS_LIMIT)
+      .sort((a, b) => b.diasParada - a.diasParada);
+    const oportunidadesCriticas = [...oportunidadesSemProximaAcao.map((o) => ({ ...o, motivoCritico: "Sem próxima ação" })), ...oportunidadesParadas.map((o) => ({ ...o, motivoCritico: `${o.diasParada} dias parada` }))]
+      .reduce((acc, oportunidade) => {
+        if (!acc.some((item) => item.id === oportunidade.id)) acc.push(oportunidade);
+        return acc;
+      }, [] as Array<OportunidadeComercial & { motivoCritico: string; diasParada?: number }>)
+      .sort((a, b) => opportunityValue(b) - opportunityValue(a));
+    const orcamentosPorStatus = scoped.orcamentosFiltrados.reduce((acc, orcamento) => {
+      const status = orcamento.status as OrcamentoStatus;
+      acc[status] = (acc[status] || 0) + 1;
+      return acc;
+    }, {} as Record<OrcamentoStatus, number>);
+    const orcamentoBuckets = {
+      abertos: (orcamentosPorStatus.Rascunho || 0) + (orcamentosPorStatus.Aberto || 0) + (orcamentosPorStatus["Em revisão"] || 0),
+      enviados: (orcamentosPorStatus.Enviado || 0) + (orcamentosPorStatus.Reenviado || 0) + (orcamentosPorStatus["Em negociação"] || 0),
+      aprovados: orcamentosPorStatus.Aprovado || 0,
+      perdidos: (orcamentosPorStatus.Perdido || 0) + (orcamentosPorStatus.Recusado || 0) + (orcamentosPorStatus.Vencido || 0) + (orcamentosPorStatus.Reprovado || 0) + (orcamentosPorStatus.Expirado || 0) + (orcamentosPorStatus.Cancelado || 0),
+    };
+    const negociosGanhos = scoped.negociosFiltrados.filter((negocio) => negocio.status === "Fechado ganho");
+    const oportunidadesGanhas = scoped.oportunidadesFiltradas.filter((oportunidade) => oportunidade.etapa === "Ganha");
+    const oportunidadesPerdidas = scoped.oportunidadesFiltradas.filter((oportunidade) => oportunidade.etapa === "Perdida");
+    const taxaConversao = oportunidadesGanhas.length + oportunidadesPerdidas.length
+      ? oportunidadesGanhas.length / (oportunidadesGanhas.length + oportunidadesPerdidas.length)
+      : oportunidadesAbertas.length
+        ? oportunidadesAbertas.reduce((sum, oportunidade) => sum + probabilityToRatio(oportunidade.probabilidade), 0) / oportunidadesAbertas.length
+        : 0;
+    const previsaoFechamento = Object.values(oportunidadesAbertas.reduce((acc, oportunidade) => {
+      const periodo = oportunidade.previsaoFechamento?.slice(0, 7) || "Sem previsão";
+      acc[periodo] ??= { periodo, quantidade: 0, valor: 0, ponderado: 0 };
+      acc[periodo].quantidade += 1;
+      acc[periodo].valor += opportunityValue(oportunidade);
+      acc[periodo].ponderado += opportunityValue(oportunidade) * probabilityToRatio(oportunidade.probabilidade);
+      return acc;
+    }, {} as Record<string, { periodo: string; quantidade: number; valor: number; ponderado: number }>)).sort((a, b) => a.periodo.localeCompare(b.periodo));
+    const rankingVendedor = Object.values(scoped.clientesFiltrados.reduce((acc, cliente) => {
+      const vendedor = cliente.vendedor || "Sem vendedor";
+      acc[vendedor] ??= { vendedor, clientes: 0, oportunidades: 0, valorAberto: 0, valorPonderado: 0, acoesAtrasadas: 0, negociosGanhos: 0 };
+      acc[vendedor].clientes += cliente.statusAtual !== "Inativo" ? 1 : 0;
+      return acc;
+    }, {} as Record<string, { vendedor: string; clientes: number; oportunidades: number; valorAberto: number; valorPonderado: number; acoesAtrasadas: number; negociosGanhos: number }>));
+    const ensureSeller = (vendedor?: string) => {
+      const key = vendedor || "Sem vendedor";
+      let row = rankingVendedor.find((item) => item.vendedor === key);
+      if (!row) {
+        row = { vendedor: key, clientes: 0, oportunidades: 0, valorAberto: 0, valorPonderado: 0, acoesAtrasadas: 0, negociosGanhos: 0 };
+        rankingVendedor.push(row);
+      }
+      return row;
+    };
+    oportunidadesAbertas.forEach((oportunidade) => {
+      const row = ensureSeller(oportunidade.vendedor || oportunidade.responsavel || clienteMap.get(oportunidade.clienteId)?.vendedor);
+      row.oportunidades += 1;
+      row.valorAberto += opportunityValue(oportunidade);
+      row.valorPonderado += opportunityValue(oportunidade) * probabilityToRatio(oportunidade.probabilidade);
+    });
+    acoesAtrasadas.forEach((acao) => ensureSeller(acao.responsavel || clienteMap.get(acao.clienteId || "")?.vendedor).acoesAtrasadas += 1);
+    negociosGanhos.forEach((negocio) => ensureSeller(negocio.vendedor || clienteMap.get(negocio.clienteId)?.vendedor).negociosGanhos += 1);
+    rankingVendedor.sort((a, b) => b.valorAberto - a.valorAberto || b.clientes - a.clientes);
+    const alertas = [
+      { id: "acoes-atrasadas", titulo: "Ações atrasadas", valor: acoesAtrasadas.length, detalhe: `${acoesAtrasadas.length} ação(ões) pendente(s) antes de ${hoje}.`, severidade: acoesAtrasadas.length ? "alta" : "baixa" },
+      { id: "clientes-sem-acao", titulo: "Clientes sem ação futura", valor: clientesSemAcaoFutura.length, detalhe: `${clientesSemAcaoFutura.length} cliente(s) ativo(s) sem próximo contato registrado.`, severidade: clientesAltoPotencialSemAcao.length ? "alta" : clientesSemAcaoFutura.length ? "media" : "baixa" },
+      { id: "opp-sem-acao", titulo: "Oportunidades sem próxima ação", valor: oportunidadesSemProximaAcao.length, detalhe: `${oportunidadesSemProximaAcao.length} oportunidade(s) aberta(s) precisam de follow-up.`, severidade: oportunidadesSemProximaAcao.length ? "media" : "baixa" },
+      { id: "opp-paradas", titulo: "Oportunidades paradas", valor: oportunidadesParadas.length, detalhe: `${oportunidadesParadas.length} oportunidade(s) sem atualização há ${STUCK_DAYS_LIMIT}+ dias.`, severidade: oportunidadesParadas.length ? "alta" : "baixa" },
+    ];
+
+    return {
+      clientesAtivos,
+      clientesSemAcaoFutura,
+      clientesAltoPotencialSemAcao,
+      acoesAtrasadas,
+      acoesHoje,
+      visitasConcluidas,
+      relatoriosPeriodo: scoped.relatoriosFiltrados,
+      oportunidadesAbertas,
+      valorAberto,
+      valorPonderado,
+      oportunidadesPorEtapa,
+      oportunidadesSemProximaAcao,
+      oportunidadesParadas,
+      oportunidadesCriticas,
+      orcamentoBuckets,
+      negociosGanhos,
+      taxaConversao,
+      previsaoFechamento,
+      rankingVendedor,
+      alertas,
+    };
+  }, [clienteMap, hoje, scoped]);
+
+  const updateFilter = (key: keyof typeof filters, value: string) => setFilters((prev) => ({ ...prev, [key]: value === ALL ? "" : value }));
+  const clearFilters = () => setFilters({ dataInicial: hoje.slice(0, 7) + "-01", dataFinal: hoje, vendedor: "", clienteId: "", rota: "", etapa: "", statusOportunidade: "", statusAcao: "" });
 
   return (
-    <div className="space-y-6">
-      <GlobalFilters />
-
+    <div className="space-y-5">
       <Card className="p-4">
-        <h2 className="mb-3 text-sm font-semibold text-foreground">Resultado comercial da carteira</h2>
-        <div className="grid grid-cols-2 gap-2 sm:gap-3 md:grid-cols-4">
-        <KpiCard label="Potencial total da carteira" value={fmtBRL(potencialCarteira)} icon={Layers} />
-        <KpiCard label="Taxa de acerto" value={`${taxa.toFixed(2)}%`} icon={Percent} />
-        <KpiCard label="Meta calculada da carteira" value={fmtBRL(metaCarteira)} icon={TrendingUp} />
-        <KpiCard label="Realizado" value={fmtBRL(realizado)} icon={TrendingUp} tone="success" />
-        <KpiCard label="% de atingimento" value={fmtPct(pct)} icon={Percent} tone={pct >= 1 ? "success" : pct >= 0.8 ? "warning" : "destructive"} />
-        <KpiCard label="Gap para meta" value={fmtBRL(gapParaMeta)} icon={AlertTriangle} tone={gapParaMeta <= 0 ? "success" : "destructive"} />
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <h1 className="text-xl font-semibold text-foreground">Painel gestor e indicadores comerciais</h1>
+            <p className="text-sm text-muted-foreground">Indicadores calculados em memória a partir do AppStore/cache local. Google Calendar permanece apenas como espelho operacional.</p>
+          </div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <Button type="button" variant="outline" onClick={() => nav("/agenda")}>Ver Agenda</Button>
+            <Button type="button" variant="outline" onClick={() => nav("/funil")}>Ver Funil</Button>
+            <Button type="button" variant="outline" onClick={() => nav("/relatorios")}>Ver Relatórios</Button>
+            <Button type="button" variant="outline" onClick={() => nav("/clientes")}>Ver Clientes críticos</Button>
+          </div>
         </div>
-        {potencialCarteira === 0 && <p className="mt-3 text-xs text-muted-foreground">Potencial da carteira ainda não configurado.</p>}
-        {gestaoComercial.alertasConfiguracao.length > 0 && <div className="mt-3 grid gap-2 md:grid-cols-2">{gestaoComercial.alertasConfiguracao.map((alerta) => <div key={alerta} className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{alerta}</div>)}</div>}
       </Card>
 
       <Card className="p-4">
-        <div className="mb-3 flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
-          <h2 className="text-sm font-semibold text-foreground">Gestão Comercial Safra 26/27</h2>
-          <span className="rounded-full bg-muted px-3 py-1 text-xs text-muted-foreground">Status: {gestaoComercial.statusVisual}</span>
+        <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+          <h2 className="text-sm font-semibold text-foreground">Filtros do painel</h2>
+          <Button type="button" variant="ghost" size="sm" onClick={clearFilters}>Limpar filtros</Button>
         </div>
-        <div className="grid grid-cols-2 gap-2 sm:gap-3 md:grid-cols-4 lg:grid-cols-6">
-          <KpiCard label="Clientes ativos" value={fmtNum(gestaoComercial.clientesAtivos)} icon={Award} />
-          <KpiCard label="Área cadastrada" value={`${fmtNum(gestaoComercial.areaTotalHa)} ha`} icon={Layers} />
-          <KpiCard label="Ticket estimado/ha" value={fmtBRL(gestaoComercial.ticketMedioEstimadoHa)} icon={TrendingUp} />
-          <KpiCard label="Oportunidades abertas" value={fmtNum(gestaoComercial.oportunidadesAbertas)} icon={Layers} />
-          <KpiCard label="Orçamentos aprovados" value={fmtNum(gestaoComercial.orcamentosAprovados)} icon={FileText} tone="success" />
-          <KpiCard label="Negócios ganhos" value={fmtNum(gestaoComercial.negociosGanhos)} icon={Award} tone="success" />
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
+          <div><Label className="text-xs">Período inicial</Label><Input type="date" value={filters.dataInicial} onChange={(e) => updateFilter("dataInicial", e.target.value)} /></div>
+          <div><Label className="text-xs">Período final</Label><Input type="date" value={filters.dataFinal} onChange={(e) => updateFilter("dataFinal", e.target.value)} /></div>
+          <div><Label className="text-xs">Vendedor</Label><Select value={filters.vendedor || ALL} onValueChange={(value) => updateFilter("vendedor", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todos</SelectItem>{vendedores.map((vendedor) => <SelectItem key={vendedor.id} value={vendedor.nome}>{vendedor.nome}</SelectItem>)}</SelectContent></Select></div>
+          <div><Label className="text-xs">Cliente</Label><Select value={filters.clienteId || ALL} onValueChange={(value) => updateFilter("clienteId", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todos</SelectItem>{clientes.map((cliente) => <SelectItem key={cliente.id} value={cliente.id}>{cliente.nome}</SelectItem>)}</SelectContent></Select></div>
+          <div><Label className="text-xs">Rota</Label><Select value={filters.rota || ALL} onValueChange={(value) => updateFilter("rota", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todas</SelectItem>{rotas.map((rota) => <SelectItem key={rota} value={rota}>{rota}</SelectItem>)}</SelectContent></Select></div>
+          <div><Label className="text-xs">Etapa do funil</Label><Select value={filters.etapa || ALL} onValueChange={(value) => updateFilter("etapa", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todas</SelectItem>{etapas.map((etapa) => <SelectItem key={etapa} value={etapa}>{etapa}</SelectItem>)}</SelectContent></Select></div>
+          <div><Label className="text-xs">Status oportunidade</Label><Select value={filters.statusOportunidade || ALL} onValueChange={(value) => updateFilter("statusOportunidade", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todos</SelectItem><SelectItem value="aberta">Aberta</SelectItem><SelectItem value="ganha">Ganha</SelectItem><SelectItem value="perdida">Perdida</SelectItem><SelectItem value="cancelada">Cancelada</SelectItem></SelectContent></Select></div>
+          <div><Label className="text-xs">Status da ação</Label><Select value={filters.statusAcao || ALL} onValueChange={(value) => updateFilter("statusAcao", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todos</SelectItem>{statusAcoes.map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}</SelectContent></Select></div>
         </div>
       </Card>
+
+      <div className="grid grid-cols-2 gap-2 sm:gap-3 md:grid-cols-3 xl:grid-cols-6">
+        <KpiCard label="Clientes ativos" value={fmtNum(dashboard.clientesAtivos.length)} icon={Users} />
+        <KpiCard label="Clientes sem ação futura" value={fmtNum(dashboard.clientesSemAcaoFutura.length)} icon={AlertTriangle} tone={dashboard.clientesSemAcaoFutura.length ? "warning" : "success"} />
+        <KpiCard label="Alto potencial sem ação" value={fmtNum(dashboard.clientesAltoPotencialSemAcao.length)} icon={Award} tone={dashboard.clientesAltoPotencialSemAcao.length ? "destructive" : "success"} />
+        <KpiCard label="Ações atrasadas" value={fmtNum(dashboard.acoesAtrasadas.length)} icon={Clock} tone={dashboard.acoesAtrasadas.length ? "destructive" : "success"} />
+        <KpiCard label="Ações hoje" value={fmtNum(dashboard.acoesHoje.length)} icon={CalendarDays} />
+        <KpiCard label="Visitas concluídas" value={fmtNum(dashboard.visitasConcluidas.length)} icon={CalendarDays} tone="success" />
+        <KpiCard label="Relatórios registrados" value={fmtNum(dashboard.relatoriosPeriodo.length)} icon={FileText} />
+        <KpiCard label="Oportunidades abertas" value={fmtNum(dashboard.oportunidadesAbertas.length)} icon={Layers} />
+        <KpiCard label="Valor aberto" value={fmtBRL(dashboard.valorAberto)} icon={TrendingUp} />
+        <KpiCard label="Valor ponderado" value={fmtBRL(dashboard.valorPonderado)} icon={Percent} />
+        <KpiCard label="Oportunidades sem ação" value={fmtNum(dashboard.oportunidadesSemProximaAcao.length)} icon={AlertTriangle} tone={dashboard.oportunidadesSemProximaAcao.length ? "warning" : "success"} />
+        <KpiCard label="Paradas 30+ dias" value={fmtNum(dashboard.oportunidadesParadas.length)} icon={Clock} tone={dashboard.oportunidadesParadas.length ? "destructive" : "success"} />
+        <KpiCard label="Orç. abertos/enviados" value={`${dashboard.orcamentoBuckets.abertos}/${dashboard.orcamentoBuckets.enviados}`} icon={FileText} />
+        <KpiCard label="Orç. aprov./perd." value={`${dashboard.orcamentoBuckets.aprovados}/${dashboard.orcamentoBuckets.perdidos}`} icon={Award} />
+        <KpiCard label="Negócios ganhos" value={fmtNum(dashboard.negociosGanhos.length)} icon={Award} tone="success" />
+        <KpiCard label="Conversão estimada" value={fmtPct(dashboard.taxaConversao)} icon={Percent} />
+      </div>
 
       <div className="grid gap-4 xl:grid-cols-2">
         <Card className="p-4">
-          <h2 className="mb-3 text-sm font-semibold text-foreground">Desempenho por vendedor</h2>
-          <div className="overflow-auto">
-            <table className="w-full min-w-[760px] text-left text-xs">
-              <thead className="border-b text-muted-foreground">
-                <tr><th className="py-2">Vendedor</th><th>Clientes</th><th>Área</th><th>Potencial</th><th>Meta</th><th>Origem</th><th>Realizado</th><th>Gap</th><th>%</th><th>Opp.</th><th>Ações críticas</th></tr>
-              </thead>
-              <tbody>
-                {gestaoComercial.porVendedor.map((linha) => (
-                  <tr key={linha.vendedor} className="border-b last:border-0">
-                    <td className="py-2 font-medium">{linha.vendedor}</td>
-                    <td>{fmtNum(linha.clientes)}</td>
-                    <td>{fmtNum(linha.areaHa)} ha</td>
-                    <td>{fmtBRL(linha.potencial)}</td>
-                    <td>{fmtBRL(linha.meta)}</td>
-                    <td><span className={`rounded px-2 py-0.5 ${linha.origemMeta === "manual" ? "bg-emerald-100 text-emerald-700" : "bg-blue-100 text-blue-700"}`}>{linha.origemMeta === "manual" ? "manual" : "automática"}</span></td>
-                    <td>{fmtBRL(linha.realizado)}</td>
-                    <td className={linha.gap <= 0 ? "text-emerald-700" : "text-red-700"}>{fmtBRL(linha.gap)}</td>
-                    <td>{fmtPct(linha.percentualAtingido)}</td>
-                    <td>{fmtNum(linha.oportunidadesAbertas)}</td>
-                    <td>{fmtNum(linha.proximasAcoesCriticas)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <h2 className="mb-3 text-sm font-semibold text-foreground">Alertas operacionais</h2>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {dashboard.alertas.map((alerta) => (
+              <div key={alerta.id} className="rounded-lg border p-3 text-sm">
+                <div className="flex items-center justify-between gap-2"><b>{alerta.titulo}</b><Badge variant={alerta.severidade === "alta" ? "destructive" : "secondary"}>{alerta.valor}</Badge></div>
+                <p className="mt-1 text-xs text-muted-foreground">{alerta.detalhe}</p>
+              </div>
+            ))}
           </div>
         </Card>
 
         <Card className="p-4">
-          <h2 className="mb-3 text-sm font-semibold text-foreground">Desempenho por ABC e prioridade</h2>
-          <div className="overflow-auto">
-            <table className="w-full min-w-[620px] text-left text-xs">
-              <thead className="border-b text-muted-foreground">
-                <tr><th className="py-2">ABC</th><th>Clientes</th><th>Área</th><th>Potencial</th><th>Realizado</th><th>Gap</th><th>P1 sem ação</th></tr>
-              </thead>
-              <tbody>
-                {gestaoComercial.porAbc.map((linha) => (
-                  <tr key={linha.abc} className="border-b last:border-0">
-                    <td className="py-2 font-medium">{linha.abc}</td>
-                    <td>{fmtNum(linha.clientes)}</td>
-                    <td>{fmtNum(linha.areaHa)} ha</td>
-                    <td>{fmtBRL(linha.potencial)}</td>
-                    <td>{fmtBRL(linha.realizado)}</td>
-                    <td className={linha.gap <= 0 ? "text-emerald-700" : "text-red-700"}>{fmtBRL(linha.gap)}</td>
-                    <td>{fmtNum(linha.prioritariosSemProximaAcao)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <h2 className="mb-3 text-sm font-semibold text-foreground">Resumo do funil por etapa</h2>
+          <div className="space-y-3">
+            {dashboard.oportunidadesPorEtapa.map((etapa) => (
+              <div key={etapa.etapa}>
+                <div className="mb-1 flex items-center justify-between gap-3 text-xs"><span className="font-medium">{etapa.etapa} ({fmtNum(etapa.quantidade)})</span><span>{fmtBRL(etapa.valor)}</span></div>
+                <Progress value={dashboard.valorAberto ? Math.min(100, (etapa.valor / dashboard.valorAberto) * 100) : 0} />
+                <div className="mt-1 text-[11px] text-muted-foreground">Ponderado: {fmtBRL(etapa.ponderado)}</div>
+              </div>
+            ))}
+            {!dashboard.oportunidadesPorEtapa.length && <p className="text-xs text-muted-foreground">Nenhuma oportunidade aberta no recorte atual.</p>}
           </div>
         </Card>
       </div>
 
-      <Card className="p-4">
-        <h2 className="mb-3 text-sm font-semibold text-foreground">Visão por cliente</h2>
-        <div className="overflow-auto">
-          <table className="w-full min-w-[1120px] text-left text-xs">
-            <thead className="border-b text-muted-foreground">
-              <tr><th className="py-2">Cliente</th><th>Fazenda</th><th>Cidade</th><th>Vendedor</th><th>ABC</th><th>Prioridade</th><th>Área</th><th>Potencial</th><th>Realizado</th><th>Gap</th><th>Status</th><th>Próxima ação</th></tr>
-            </thead>
-            <tbody>
-              {gestaoComercial.porCliente.slice(0, 25).map((linha) => (
-                <tr key={linha.clienteId} className="border-b last:border-0">
-                  <td className="py-2 font-medium"><button className="text-primary hover:underline" onClick={() => nav(`/clientes/${linha.clienteId}`)}>{linha.cliente}</button></td>
-                  <td>{linha.fazenda}</td>
-                  <td>{linha.cidade}</td>
-                  <td>{linha.vendedor}</td>
-                  <td>{linha.abc}</td>
-                  <td>{linha.prioridade}</td>
-                  <td>{fmtNum(linha.areaHa)} ha</td>
-                  <td>{fmtBRL(linha.potencial)}</td>
-                  <td>{fmtBRL(linha.realizado)}</td>
-                  <td className={linha.gap <= 0 ? "text-emerald-700" : "text-red-700"}>{fmtBRL(linha.gap)}</td>
-                  <td>{linha.statusComercial}</td>
-                  <td>{linha.proximaAcao}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+      <div className="grid gap-4 xl:grid-cols-2">
+        <Card className="p-4">
+          <h2 className="mb-3 text-sm font-semibold text-foreground">Oportunidades críticas</h2>
+          <div className="space-y-2">
+            {dashboard.oportunidadesCriticas.slice(0, 10).map((oportunidade) => {
+              const cliente = clienteById(oportunidade.clienteId);
+              return <div key={oportunidade.id} className="rounded-lg border p-3 text-xs"><div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between"><button className="text-left font-medium text-primary hover:underline" onClick={() => nav("/funil")}>{oportunidade.clienteNome || cliente?.nome || "Cliente não identificado"}</button><Badge className={stageTone(oportunidade.etapa)}>{oportunidade.motivoCritico}</Badge></div><div className="mt-1 text-muted-foreground">{oportunidade.etapa} • {oportunidade.vendedor || oportunidade.responsavel || cliente?.vendedor || "Sem vendedor"} • {fmtBRL(opportunityValue(oportunidade))}</div></div>;
+            })}
+            {!dashboard.oportunidadesCriticas.length && <p className="text-xs text-muted-foreground">Nenhuma oportunidade crítica no recorte atual.</p>}
+          </div>
+        </Card>
 
-      <Card className="p-4">
-        <h2 className="mb-3 text-sm font-semibold text-foreground">Alertas gerenciais</h2>
-        <div className="grid gap-2 md:grid-cols-2">
-          {gestaoComercial.alertas.slice(0, 12).map((alerta) => (
-            <div key={alerta.id} className="rounded border p-3 text-xs">
-              <div className="flex items-center justify-between gap-2">
-                <b>{alerta.titulo}</b>
-                <span className={`rounded px-2 py-0.5 ${alerta.severidade === "alta" ? "bg-red-100 text-red-700" : alerta.severidade === "media" ? "bg-yellow-100 text-yellow-700" : "bg-blue-100 text-blue-700"}`}>{alerta.severidade}</span>
+        <Card className="p-4">
+          <h2 className="mb-3 text-sm font-semibold text-foreground">Clientes sem próxima ação</h2>
+          <div className="space-y-2">
+            {dashboard.clientesSemAcaoFutura.slice(0, 10).map((cliente) => (
+              <div key={cliente.id} className="rounded-lg border p-3 text-xs">
+                <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between"><button className="text-left font-medium text-primary hover:underline" onClick={() => nav(`/clientes/${cliente.id}`)}>{cliente.nome}</button><Badge variant={cliente.abc === "A" || cliente.prioridade === "P1" ? "destructive" : "secondary"}>{cliente.abc}/{cliente.prioridade}</Badge></div>
+                <div className="mt-1 text-muted-foreground">{cliente.rota || "Sem rota"} • {cliente.vendedor || "Sem vendedor"} • potencial {fmtBRL(cliente.potencialTotal || 0)}</div>
               </div>
-              <div className="mt-1 text-muted-foreground">{alerta.detalhe}</div>
-            </div>
-          ))}
-          {!gestaoComercial.alertas.length && <p className="text-xs text-muted-foreground">Nenhum alerta gerencial no momento.</p>}
-        </div>
-      </Card>
+            ))}
+            {!dashboard.clientesSemAcaoFutura.length && <p className="text-xs text-muted-foreground">Todos os clientes ativos do recorte possuem ação futura.</p>}
+          </div>
+        </Card>
+      </div>
 
-      <Card className="p-4">
-        <h2 className="mb-3 text-sm font-semibold text-foreground">Agenda de ações</h2>
-        <div className="mb-3 flex gap-2">{(["hoje","semana","mes","atrasadas","todas"] as const).map(f=><button key={f} className={`rounded border px-2 py-1 text-xs ${acaoFiltro===f?"bg-primary text-primary-foreground":""}`} onClick={()=>setAcaoFiltro(f)}>{f}</button>)}</div>
-        <div className="space-y-2">{proximasAcoes.filter(a=>{const d=a.data; if(acaoFiltro==="hoje") return d===hoje; if(acaoFiltro==="atrasadas") return a.status==="Pendente"&&d<hoje; if(acaoFiltro==="semana") return d>=hoje && d<=new Date(Date.now()+6*86400000).toISOString().slice(0,10); if(acaoFiltro==="mes") return d.slice(0,7)===hoje.slice(0,7); return true;}).map(a=>{const color=(a.status==="Pendente"&&a.data<hoje)?"bg-red-100 text-red-700":a.data===hoje?"bg-blue-100 text-blue-700":a.descricao.toLowerCase().includes("prior")?"bg-yellow-100 text-yellow-700":"bg-emerald-100 text-emerald-700"; return <div key={a.id} className="rounded border p-2 text-xs"><div className="flex justify-between"><b>{clienteById(a.clienteId||"")?.nome||"Sem cliente"}</b><span className={`rounded px-2 py-0.5 ${color}`}>{a.status}</span></div><div>{a.data} • {a.tipo} • {a.responsavel || "Sem responsável"}</div><div>{a.descricao}</div></div>;})}</div>
-      </Card>
-
-
-      <Card className="p-4">
-        <h2 className="mb-3 text-sm font-semibold text-foreground">Fechamento comercial</h2>
-        <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
-          <KpiCard label="Oportunidades abertas" value={fmtNum(fechamentoComercial.abertas)} />
-          <KpiCard label="Ganhas" value={fmtNum(fechamentoComercial.ganhas)} tone="success" />
-          <KpiCard label="Perdidas" value={fmtNum(fechamentoComercial.perdidas)} tone="destructive" />
-          <KpiCard label="Taxa de conversão" value={fmtPct(fechamentoComercial.taxaConversao)} />
-          <KpiCard label="Valor ganho" value={fmtBRL(fechamentoComercial.valorGanho)} tone="success" />
-          <KpiCard label="Valor perdido" value={fmtBRL(fechamentoComercial.valorPerdido)} tone="destructive" />
-          <KpiCard label="Sem próxima ação" value={fmtNum(fechamentoComercial.semProximaAcao)} tone="warning" />
-          <KpiCard label="Ganhas sem pós-venda" value={fmtNum(fechamentoComercial.ganhasSemPos)} tone="warning" />
-        </div>
-        <div className="mt-2 text-xs"><b>Principais motivos de perda:</b> {fechamentoComercial.motivos.map(([m,q])=>`${m} (${q})`).join(', ') || '—'}</div>
-      </Card>
-
-      <Card className="p-4">
-        <h2 className="mb-3 text-sm font-semibold text-foreground">Bloco comercial (orçamentos)</h2>
-        <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
-          <KpiCard label="Orçamentos abertos" value={fmtBRL(comercial.abertos)} icon={FileText} />
-          <KpiCard label="Em negociação" value={fmtBRL(comercial.negociacao)} icon={Layers} />
-          <KpiCard label="Aprovado" value={fmtBRL(comercial.aprovados)} icon={Award} tone="success" />
-          <KpiCard label="Perdido" value={fmtBRL(comercial.perdidos)} icon={AlertTriangle} tone="destructive" />
-          <KpiCard label="Conversão" value={fmtPct(comercial.taxa)} icon={Percent} />
-          <KpiCard label="Ticket médio" value={fmtBRL(comercial.ticket)} icon={TrendingUp} />
-        </div>
-        <div className="mt-3 grid gap-2 text-xs md:grid-cols-3">
-          <div><b>Top clientes por orçamento aberto:</b> {comercial.porAberto.map(c=>`${c.nome} (${fmtBRL(c.valor)})`).join(", ") || "—"}</div>
-          <div><b>Top clientes por realizado:</b> {comercial.porRealizado.map(c=>`${c.nome} (${fmtBRL(c.valor)})`).join(", ") || "—"}</div>
-          <div><b>Orçamentos parados (15+ dias):</b> {comercial.parados.map(o=>`${clienteById(o.clienteId)?.nome || o.clienteId} (${o.codigo})`).join(", ") || "—"}</div>
-        </div>
-      </Card>
-
-      <Card className="p-4">
-        <div className="mb-3 flex items-center justify-between gap-2">
-          <h2 className="text-sm font-semibold text-foreground">Operação comercial</h2>
-          <button className="text-xs text-primary hover:underline" onClick={() => nav("/agenda")}>Abrir Agenda</button>
-        </div>
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-        <KpiCard label="Pipeline aberto" value={fmtBRL(kpis.pipelineAberto)} icon={Layers} tone="muted" />
-        <KpiCard label="Clientes atrasados" value={fmtNum(operacionais.atrasados)} icon={AlertTriangle} tone="destructive" />
-        <KpiCard label="Próximas ações" value={fmtNum(operacionais.proximasSemana)} icon={Clock} />
-        <KpiCard label="Clientes sem visita" value={fmtNum(operacionais.semVisita)} icon={CalendarDays} tone="warning" />
-        <KpiCard label="Orçamentos abertos" value={fmtNum(operacionais.orcamentosAbertos)} icon={FileText} />
-        <KpiCard label="Negócios abertos" value={fmtNum(operacionais.negociosAbertos)} icon={Layers} />
-        <KpiCard label="Visitas do mês" value={fmtNum(operacionais.visitasMes)} icon={TrendingUp} />
-        <KpiCard label="Agenda atrasada" value={fmtNum(agendaResumo.atrasadas)} icon={AlertTriangle} tone="destructive" />
-        <KpiCard label="Agenda hoje" value={fmtNum(agendaResumo.hoje)} icon={Clock} />
-        <KpiCard label="A/P1 sem ação" value={fmtNum(agendaResumo.clientesAP1SemProximaAcao)} icon={CalendarDays} tone="warning" />
-        <KpiCard label="Próximos 7 dias" value={fmtNum(agendaResumo.proximos7Dias)} icon={CalendarDays} />
-        </div>
-      </Card>
-
-
-
-      <Card className="p-4">
-        <h2 className="mb-3 text-sm font-semibold text-foreground">Bloco executivo da carteira</h2>
-        <div className="grid gap-2 text-xs md:grid-cols-2">
-          <div><b>Top clientes por potencial:</b> {executivos.topPotencial.length ? executivos.topPotencial.map((c) => <button key={c.id} className="mr-2 text-primary hover:underline" onClick={() => nav(`/clientes/${c.id}`)}>{c.nome} ({fmtBRL(c.potencialTotal || 0)})</button>) : "—"}</div>
-          <div><b>Clientes críticos sem ação:</b> {executivos.semAcao.slice(0,8).length ? executivos.semAcao.slice(0,8).map((c) => <button key={c.id} className="mr-2 text-primary hover:underline" onClick={() => nav(`/clientes/${c.id}`)}>{c.nome}</button>) : "—"}</div>
-          <div><b>Rotas críticas:</b> {executivos.rotaCritica.map(([r,q]) => `${r} (${q})`).join(", ") || "—"}</div>
-          <div><b>Clientes sem visita planejada:</b> {fmtNum(executivos.semVisitaPlanejada)}</div>
-          <div><b>Visitas da semana:</b> {fmtNum(executivos.visitasSemana.length)} | <b>Visitas atrasadas:</b> {fmtNum(executivos.visitasAtrasadas.length)}</div>
-          <div><b>Clientes por responsável (ações pendentes):</b> {executivos.porResponsavel.map(([r,q]) => `${r} (${q})`).join(", ") || "—"}</div>
-        </div>
-      </Card>
-
-      <Card className="p-4">
-        <h2 className="mb-3 text-sm font-semibold text-foreground">Funil e pipeline</h2>
-        <div className="grid grid-cols-2 gap-2 sm:gap-3 md:grid-cols-4">
-          <KpiCard label="Pipeline aberto" value={fmtBRL(kpis.pipelineAberto)} icon={Layers} tone="muted" />
-          <KpiCard label="Propostas enviadas" value={fmtNum(kpis.propostas)} icon={FileText} />
-          <KpiCard label="Aproveitamento" value={fmtPct(kpis.aproveitamento)} icon={Award} tone={kpis.aproveitamento >= 0.5 ? "success" : "warning"} />
-          <KpiCard label="Pendências" value={fmtNum(kpis.pendencias)} icon={Clock} tone={kpis.pendencias > 0 ? "warning" : "success"} />
-        </div>
-      </Card>
-
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card className="p-4 lg:col-span-2">
-          <h3 className="mb-3 text-sm font-semibold">Meta x Realizado por mês</h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={metaXReal}>
-              <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-              <XAxis dataKey="mes" fontSize={11} /><YAxis fontSize={11} />
-              <Tooltip formatter={(v: number) => fmtBRL(v)} /><Legend />
-              <Line type="monotone" dataKey="Meta" stroke="hsl(158 64% 22%)" strokeWidth={2} />
-              <Line type="monotone" dataKey="Realizado" stroke="hsl(36 90% 50%)" strokeWidth={2} />
-            </LineChart>
-          </ResponsiveContainer>
+      <div className="grid gap-4 xl:grid-cols-2">
+        <Card className="p-4">
+          <h2 className="mb-3 text-sm font-semibold text-foreground">Indicadores por vendedor</h2>
+          <div className="overflow-auto">
+            <table className="w-full min-w-[760px] text-left text-xs">
+              <thead className="border-b text-muted-foreground"><tr><th className="py-2">Vendedor</th><th>Clientes</th><th>Opp. abertas</th><th>Valor aberto</th><th>Ponderado</th><th>Ações atrasadas</th><th>Ganhos</th></tr></thead>
+              <tbody>{dashboard.rankingVendedor.map((linha) => <tr key={linha.vendedor} className="border-b last:border-0"><td className="py-2 font-medium">{linha.vendedor}</td><td>{fmtNum(linha.clientes)}</td><td>{fmtNum(linha.oportunidades)}</td><td>{fmtBRL(linha.valorAberto)}</td><td>{fmtBRL(linha.valorPonderado)}</td><td>{fmtNum(linha.acoesAtrasadas)}</td><td>{fmtNum(linha.negociosGanhos)}</td></tr>)}</tbody>
+            </table>
+          </div>
         </Card>
 
         <Card className="p-4">
-          <h3 className="mb-3 text-sm font-semibold">Funil de vendas por etapa</h3>
-          <ResponsiveContainer width="100%" height={260}>
-            <BarChart data={funilEtapa} layout="vertical">
-              <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-              <XAxis type="number" fontSize={11} /><YAxis dataKey="etapa" type="category" fontSize={11} width={130} />
-              <Tooltip formatter={(v: number) => fmtBRL(v)} />
-              <Bar dataKey="valor" fill="hsl(200 70% 45%)" radius={[0,4,4,0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </Card>
-
-        <Card className="p-4">
-          <h3 className="mb-3 text-sm font-semibold">Negócios por categoria</h3>
-          <ResponsiveContainer width="100%" height={260}>
-            <BarChart data={porCategoria}>
-              <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-              <XAxis dataKey="cat" fontSize={10} /><YAxis fontSize={11} />
-              <Tooltip formatter={(v: number) => fmtBRL(v)} />
-              <Bar dataKey="valor" fill="hsl(158 64% 22%)" radius={[4,4,0,0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </Card>
-
-        <Card className="p-4">
-          <h3 className="mb-3 text-sm font-semibold">Valor potencial x fechado</h3>
-          <ResponsiveContainer width="100%" height={260}>
-            <BarChart data={potXFech}>
-              <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-              <XAxis dataKey="mes" fontSize={11} /><YAxis fontSize={11} />
-              <Tooltip formatter={(v: number) => fmtBRL(v)} /><Legend />
-              <Bar dataKey="Potencial" fill="hsl(280 50% 50%)" radius={[4,4,0,0]} />
-              <Bar dataKey="Fechado" fill="hsl(36 90% 50%)" radius={[4,4,0,0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </Card>
-
-        <Card className="p-4">
-          <h3 className="mb-3 text-sm font-semibold">Aproveitamento por mês (%)</h3>
-          <ResponsiveContainer width="100%" height={260}>
-            <LineChart data={aprovMes}>
-              <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-              <XAxis dataKey="mes" fontSize={11} /><YAxis fontSize={11} />
-              <Tooltip />
-              <Line type="monotone" dataKey="%" stroke="hsl(158 64% 22%)" strokeWidth={2} />
-            </LineChart>
+          <h2 className="mb-3 text-sm font-semibold text-foreground">Previsão de fechamento por período</h2>
+          <div className="overflow-auto">
+            <table className="mb-4 w-full min-w-[520px] text-left text-xs">
+              <thead className="border-b text-muted-foreground"><tr><th className="py-2">Período</th><th>Opp.</th><th>Valor</th><th>Ponderado</th></tr></thead>
+              <tbody>{dashboard.previsaoFechamento.map((linha) => <tr key={linha.periodo} className="border-b last:border-0"><td className="py-2 font-medium">{linha.periodo}</td><td>{fmtNum(linha.quantidade)}</td><td>{fmtBRL(linha.valor)}</td><td>{fmtBRL(linha.ponderado)}</td></tr>)}</tbody>
+            </table>
+          </div>
+          <ResponsiveContainer width="100%" height={240}>
+            <BarChart data={dashboard.previsaoFechamento.filter((linha) => linha.periodo !== "Sem previsão")}> <CartesianGrid strokeDasharray="3 3" opacity={0.3} /><XAxis dataKey="periodo" fontSize={11} /><YAxis fontSize={11} /><Tooltip formatter={(value: number) => fmtBRL(value)} /><Bar dataKey="valor" fill="hsl(200 70% 45%)" radius={[4, 4, 0, 0]} /><Bar dataKey="ponderado" fill="hsl(36 90% 50%)" radius={[4, 4, 0, 0]} /></BarChart>
           </ResponsiveContainer>
         </Card>
       </div>
