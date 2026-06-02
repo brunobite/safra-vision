@@ -77,7 +77,8 @@ export async function verifySignedState(state: string): Promise<{ user_id: strin
 
 export function getAppRedirectUrl(status: "connected" | "error", message?: string): string {
   const appBaseUrl = Deno.env.get("SAFRA_VISION_APP_URL") || Deno.env.get("SITE_URL") || "http://localhost:5173";
-  const url = new URL("/configuracoes", appBaseUrl);
+  const normalizedBaseUrl = appBaseUrl.endsWith("/") ? appBaseUrl : `${appBaseUrl}/`;
+  const url = new URL("configuracoes", normalizedBaseUrl);
   url.searchParams.set("googleCalendar", status);
   if (message) url.searchParams.set("message", message);
   return url.toString();
