@@ -189,6 +189,22 @@ export function calculateCategoryGoalRows(params: {
     .sort((a, b) => b.gap - a.gap);
 }
 
+const COMPANY_GOAL_FRONT_KEYS = ["vendaDireta", "cooperagro", "tritec"] as const;
+const COMPANY_GOAL_NON_FRONT_KEYS = new Set(["id", "mes", "metaTotal", "observacao"]);
+
+export function effectiveCompanyGoal(meta: MetaEmpresa): number {
+  if ((meta.metaTotal || 0) > 0) return meta.metaTotal;
+
+  const typedMeta = meta as MetaEmpresa & Record<string, unknown>;
+  const configuredFronts = COMPANY_GOAL_FRONT_KEYS.reduce((sum, key) => sum + (Number(typedMeta[key]) || 0), 0);
+  const extraFronts = Object.entries(typedMeta).reduce((sum, [key, value]) => {
+    if (COMPANY_GOAL_NON_FRONT_KEYS.has(key) || COMPANY_GOAL_FRONT_KEYS.includes(key as typeof COMPANY_GOAL_FRONT_KEYS[number])) return sum;
+    return typeof value === "number" && Number.isFinite(value) ? sum + value : sum;
+  }, 0);
+
+  return configuredFronts + extraFronts;
+}
+
 export function calculateGoalSummary(params: {
   metasEmpresa: MetaEmpresa[];
   lancamentos: Lancamento[];
@@ -205,7 +221,7 @@ export function calculateGoalSummary(params: {
   const clientesFiltrados = clientes.filter((cliente) => clienteMatches(cliente, filters) && cliente.statusAtual !== "Inativo");
   const metaTotal = metasEmpresa
     .filter((meta) => inMonthRange(meta.mes, filters.dataInicial, filters.dataFinal))
-    .reduce((sum, meta) => sum + (meta.metaTotal || 0), 0);
+    .reduce((sum, meta) => sum + effectiveCompanyGoal(meta), 0);
   const realizado = lancamentos
     .filter((lancamento) => (lancamento.tipo === "Venda" || lancamento.status === "Concluído") && inDateRange(lancamento.data, filters.dataInicial, filters.dataFinal))
     .filter((lancamento) => clienteMatches(clientesById.get(lancamento.clienteId), filters))

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { AlertTriangle, CalendarClock, CheckCircle2, Clock, ExternalLink, Filter, Plus, RotateCcw } from "lucide-react";
 import { useAppStore } from "@/store/AppStore";
 import { useAuth } from "@/store/AuthStore";
@@ -55,6 +55,25 @@ const VISOES: Array<{ value: AgendaVisao; label: string }> = [
 type AgendaFlowForm = { clienteId: string; clienteBusca: string; data: string; horario: string; descricao: string; tipo: TipoProximaAcao; observacao: string; vendedor: string };
 type RelatorioVisitaForm = { resumoVisita: string; pontosAvaliados: string; dadosColetados: string; necessidadeIdentificada: string; produtosSolucoesDiscutidas: string; potencialNegocio: string; resultadoVisita: ResultadoVisita; proximaAcaoRecomendada: string; observacoesGerais: string };
 type OportunidadeItemForm = { produtoId: string; quantidade: number; unidade: string; precoUnitario: number };
+type AgendaDraftAction = {
+  source?: string;
+  reason?: string;
+  clienteId?: string;
+  clienteNome?: string;
+  vendedor?: string;
+  tipo?: TipoProximaAcao;
+  data?: string;
+  horario?: string;
+  descricao?: string;
+  observacao?: string;
+  origem?: ProximaAcao["origem"];
+  oportunidadeId?: string;
+  orcamentoId?: string;
+  acaoId?: string;
+  negocioId?: string;
+  lancamentoId?: string;
+};
+type AgendaLocationState = { draftAction?: AgendaDraftAction } | null;
 
 const nowParts = () => {
   const now = new Date();
@@ -87,6 +106,7 @@ export default function Agenda() {
   const { session } = useAuth();
   const { clientes, vendedores, proximasAcoes, setProximasAcoes, setRelatoriosVisita, oportunidades, setOportunidades, orcamentos, negocios, setNegocios, lancamentos, setLancamentos, produtos } = useAppStore();
   const nav = useNavigate();
+  const location = useLocation();
   const [params, setParams] = useSearchParams();
   const hoje = new Date().toISOString().slice(0, 10);
 
@@ -96,7 +116,7 @@ export default function Agenda() {
   const [filtrosOpen, setFiltrosOpen] = useState(false);
   const [modal, setModal] = useState<"agendar" | "visita" | "pergunta" | "oportunidade" | "marcarPergunta" | "novaAcao" | null>(null);
   const [flowForm, setFlowForm] = useState<AgendaFlowForm>(emptyFlowForm());
-  const [contexto, setContexto] = useState<{ clienteId: string; vendedor?: string; lancamentoId?: string; oportunidadeId?: string; negocioId?: string; acaoId?: string; relatorioId?: string } | null>(null);
+  const [contexto, setContexto] = useState<{ clienteId: string; vendedor?: string; lancamentoId?: string; oportunidadeId?: string; orcamentoId?: string; negocioId?: string; acaoId?: string; relatorioId?: string; origem?: ProximaAcao["origem"] } | null>(null);
   const [relatorioForm, setRelatorioForm] = useState<RelatorioVisitaForm>(emptyRelatorioForm());
   const [oppForm, setOppForm] = useState({ descricao: "", previsaoFechamento: "" });
   const [oppItems, setOppItems] = useState<OportunidadeItemForm[]>([{ produtoId: "", quantidade: 1, unidade: "", precoUnitario: 0 }]);
@@ -151,6 +171,36 @@ export default function Agenda() {
     if (action === "nova-acao") abrirNovaAcaoAvulsa(clienteId, (params.get("tipo") as TipoProximaAcao) || undefined);
     setParams({});
   }, [params, setParams]);
+
+  useEffect(() => {
+    const draft = (location.state as AgendaLocationState)?.draftAction;
+    if (!draft) return;
+
+    const cliente = clientes.find((item) => item.id === draft.clienteId);
+    setFlowForm({
+      ...emptyFlowForm(draft.tipo || "Follow-up"),
+      clienteId: cliente?.id || draft.clienteId || "",
+      clienteBusca: cliente?.nome || draft.clienteNome || "",
+      vendedor: draft.vendedor || cliente?.vendedor || "",
+      data: draft.data || hoje,
+      horario: draft.horario || "",
+      descricao: draft.descricao || "Próxima ação comercial",
+      observacao: draft.observacao || "",
+    });
+    setContexto({
+      clienteId: cliente?.id || draft.clienteId || "",
+      vendedor: draft.vendedor || cliente?.vendedor || "",
+      oportunidadeId: draft.oportunidadeId,
+      orcamentoId: draft.orcamentoId,
+      negocioId: draft.negocioId,
+      lancamentoId: draft.lancamentoId,
+      acaoId: draft.acaoId,
+      origem: draft.origem,
+    });
+    setEnviarGoogleCalendarNoSalvar(googleCalendarBackendConnected || (googleCalendarClientIdConfigurado && isGoogleCalendarPreferenceEnabled()));
+    setModal("novaAcao");
+    nav(`${location.pathname}${location.search}`, { replace: true, state: null });
+  }, [clientes, googleCalendarBackendConnected, googleCalendarClientIdConfigurado, hoje, location.pathname, location.search, location.state, nav]);
 
   const preencherCliente = (clienteId: string) => {
     const cliente = clientes.find((item) => item.id === clienteId);
@@ -467,7 +517,8 @@ export default function Agenda() {
   const salvarNovaAcao = async () => {
     if (!flowForm.data) return toast.error("Informe a data da nova ação.");
     if (!flowForm.vendedor) return toast.error("Selecione o vendedor responsável pela ação.");
-    const acao = criarAcaoAgenda("Pendente", contexto?.oportunidadeId ? "Negócio" : "Avulsa", { oportunidadeId: contexto?.oportunidadeId, negocioId: contexto?.negocioId, lancamentoId: contexto?.lancamentoId });
+    const origem = contexto?.origem || (contexto?.orcamentoId ? "Orçamento" : contexto?.oportunidadeId || contexto?.negocioId ? "Negócio" : "Avulsa");
+    const acao = criarAcaoAgenda("Pendente", origem, { oportunidadeId: contexto?.oportunidadeId, orcamentoId: contexto?.orcamentoId, negocioId: contexto?.negocioId, lancamentoId: contexto?.lancamentoId, proximaAcaoId: contexto?.acaoId });
     if (!acao) return toast.error("Selecione um cliente para a nova ação.");
     setProximasAcoes((atuais) => [acao, ...atuais]);
     setModal(null);

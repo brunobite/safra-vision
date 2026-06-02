@@ -13,11 +13,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAppStore } from "@/store/AppStore";
 import { fmtBRL, fmtNum, fmtPct, statusCor } from "@/utils/calculations";
-import { criarAcaoRapidaAgenda } from "@/utils/agenda";
 import {
   calculateCategoryGoalRows,
   calculateGoalSummary,
   calculateSellerGoalRows,
+  effectiveCompanyGoal,
   isoToday,
   monthStart,
   opportunityAmount,
@@ -65,7 +65,6 @@ export default function Metas() {
     oportunidades,
     orcamentos,
     proximasAcoes,
-    setProximasAcoes,
   } = useAppStore();
   const nav = useNavigate();
   const hoje = isoToday();
@@ -95,29 +94,26 @@ export default function Metas() {
   const createActionFromPlan = (item: ActionPlanItem) => {
     const cliente = item.clienteId ? clienteMap.get(item.clienteId) : undefined;
     if (!cliente) return toast.error("Plano sem cliente vinculado para criar ação.");
-    const now = new Date().toISOString();
-    const acao = {
-      ...criarAcaoRapidaAgenda({
-        cliente,
-        tipo: item.suggestedType,
-        data: item.suggestedDate,
-        descricao: item.title,
-        observacao: item.description,
-        vendedor: item.vendedor || cliente.vendedor,
-        now,
-        id: `pa-meta-${Date.now()}`,
-        vendedores,
-      }),
-      origem: item.orcamentoId ? "Orçamento" : item.oportunidadeId ? "Negócio" : "Cliente",
-      oportunidadeId: item.oportunidadeId,
-      orcamentoId: item.orcamentoId,
-      observacoes: [item.description, `Criada pelo plano de ação da Sprint 30 (${item.reason}).`].join(" "),
-      googleCalendarSyncStatus: "not_required" as const,
-      googleCalendarStatus: "not_synced" as const,
-      updatedAt: now,
-    };
-    setProximasAcoes((prev) => [acao, ...prev]);
-    toast.success("Ação criada na Agenda e Visitas.");
+
+    nav("/agenda", {
+      state: {
+        draftAction: {
+          source: "metas-action-plan",
+          reason: item.reason,
+          clienteId: cliente.id,
+          clienteNome: cliente.nome,
+          vendedor: item.vendedor || cliente.vendedor || "",
+          tipo: item.suggestedType,
+          data: item.suggestedDate,
+          descricao: item.title,
+          observacao: [item.description, `Origem: plano de ação de Metas (${item.reason}).`].join("\n"),
+          origem: item.orcamentoId ? "Orçamento" : item.oportunidadeId ? "Negócio" : "Cliente",
+          oportunidadeId: item.oportunidadeId,
+          orcamentoId: item.orcamentoId,
+          acaoId: item.acaoId,
+        },
+      },
+    });
   };
 
   // Empresa dialog
@@ -267,8 +263,9 @@ export default function Metas() {
           <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
             {[...metasEmpresa].filter((m) => m.mes >= filters.dataInicial.slice(0, 7) && m.mes <= filters.dataFinal.slice(0, 7)).sort((a, b) => a.mes.localeCompare(b.mes)).map((m) => {
               const real = lancamentos.filter((l) => l.data.slice(0, 7) === m.mes).reduce((sum, l) => sum + (l.vendaRs || 0), 0);
-              const pct = m.metaTotal ? real / m.metaTotal : 0;
-              return <Card key={m.id} className="p-4"><div className="mb-2 flex items-center justify-between"><div><p className="text-xs uppercase text-muted-foreground">Mês</p><p className="text-lg font-semibold">{m.mes}</p></div><div className="flex gap-1"><StatusBadge pct={pct} /><Button size="icon" variant="ghost" onClick={() => openEmp(m)}><Pencil className="h-3.5 w-3.5" /></Button><Button size="icon" variant="ghost" onClick={() => setMetasEmpresa((prev) => prev.filter((x) => x.id !== m.id))}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button></div></div><div className="space-y-1 text-sm"><div className="flex justify-between"><span className="text-muted-foreground">Meta</span><span>{fmtBRL(m.metaTotal)}</span></div><div className="flex justify-between"><span className="text-muted-foreground">Realizado</span><span>{fmtBRL(real)}</span></div><div className="flex justify-between"><span className="text-muted-foreground">Gap</span><span>{fmtBRL(m.metaTotal - real)}</span></div><Progress value={Math.min(pct * 100, 100)} /></div></Card>;
+              const metaEfetiva = effectiveCompanyGoal(m);
+              const pct = metaEfetiva ? real / metaEfetiva : 0;
+              return <Card key={m.id} className="p-4"><div className="mb-2 flex items-center justify-between"><div><p className="text-xs uppercase text-muted-foreground">Mês</p><p className="text-lg font-semibold">{m.mes}</p></div><div className="flex gap-1"><StatusBadge pct={pct} /><Button size="icon" variant="ghost" onClick={() => openEmp(m)}><Pencil className="h-3.5 w-3.5" /></Button><Button size="icon" variant="ghost" onClick={() => setMetasEmpresa((prev) => prev.filter((x) => x.id !== m.id))}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button></div></div><div className="space-y-1 text-sm"><div className="flex justify-between"><span className="text-muted-foreground">Meta efetiva</span><span>{fmtBRL(metaEfetiva)}</span></div>{m.metaTotal > 0 ? <div className="flex justify-between text-xs"><span className="text-muted-foreground">Meta manual</span><span>{fmtBRL(m.metaTotal)}</span></div> : <div className="flex justify-between text-xs"><span className="text-muted-foreground">Total das frentes</span><span>{fmtBRL((m.vendaDireta || 0) + (m.cooperagro || 0) + (m.tritec || 0))}</span></div>}<div className="flex justify-between"><span className="text-muted-foreground">Realizado</span><span>{fmtBRL(real)}</span></div><div className="flex justify-between"><span className="text-muted-foreground">Gap</span><span>{fmtBRL(metaEfetiva - real)}</span></div><Progress value={Math.min(pct * 100, 100)} /></div></Card>;
             })}
           </div>
         </TabsContent>
@@ -299,7 +296,7 @@ export default function Metas() {
         </TabsContent>
       </Tabs>
 
-      <Dialog open={empOpen} onOpenChange={setEmpOpen}><DialogContent><DialogHeader><DialogTitle>{empEdit ? "Editar meta" : "Nova meta mensal"}</DialogTitle></DialogHeader><div className="grid gap-3"><div><Label>Mês</Label><Input type="month" value={empForm.mes} onChange={(e) => setEmpForm({ ...empForm, mes: e.target.value })} /></div><div><Label>Meta total</Label><Input type="number" value={empForm.metaTotal} onChange={(e) => setEmpForm({ ...empForm, metaTotal: +e.target.value })} /></div><div className="grid grid-cols-3 gap-2"><div><Label>Venda Direta</Label><Input type="number" value={empForm.vendaDireta} onChange={(e) => setEmpForm({ ...empForm, vendaDireta: +e.target.value })} /></div><div><Label>Cooperagro</Label><Input type="number" value={empForm.cooperagro} onChange={(e) => setEmpForm({ ...empForm, cooperagro: +e.target.value })} /></div><div><Label>Tritec</Label><Input type="number" value={empForm.tritec} onChange={(e) => setEmpForm({ ...empForm, tritec: +e.target.value })} /></div></div><div><Label>Observação</Label><Input value={empForm.observacao || ""} onChange={(e) => setEmpForm({ ...empForm, observacao: e.target.value })} /></div></div><DialogFooter><Button onClick={saveEmp}>Salvar</Button></DialogFooter></DialogContent></Dialog>
+      <Dialog open={empOpen} onOpenChange={setEmpOpen}><DialogContent><DialogHeader><DialogTitle>{empEdit ? "Editar meta" : "Nova meta mensal"}</DialogTitle></DialogHeader><div className="grid gap-3"><div><Label>Mês</Label><Input type="month" value={empForm.mes} onChange={(e) => setEmpForm({ ...empForm, mes: e.target.value })} /></div><div><Label>Meta total</Label><Input type="number" value={empForm.metaTotal} onChange={(e) => setEmpForm({ ...empForm, metaTotal: +e.target.value })} /></div><div className="grid grid-cols-3 gap-2"><div><Label>Venda Direta</Label><Input type="number" value={empForm.vendaDireta} onChange={(e) => setEmpForm({ ...empForm, vendaDireta: +e.target.value })} /></div><div><Label>Cooperagro</Label><Input type="number" value={empForm.cooperagro} onChange={(e) => setEmpForm({ ...empForm, cooperagro: +e.target.value })} /></div><div><Label>Tritec</Label><Input type="number" value={empForm.tritec} onChange={(e) => setEmpForm({ ...empForm, tritec: +e.target.value })} /></div></div><div className="rounded-md border bg-muted/30 p-3 text-sm"><div className="flex justify-between"><span className="text-muted-foreground">Meta efetiva</span><strong>{fmtBRL(effectiveCompanyGoal({ ...empForm, id: empEdit?.id || "preview" }))}</strong></div><p className="mt-1 text-xs text-muted-foreground">Quando a meta total manual for maior que zero, ela prevalece; caso contrário, o app soma as frentes comerciais.</p></div><div><Label>Observação</Label><Input value={empForm.observacao || ""} onChange={(e) => setEmpForm({ ...empForm, observacao: e.target.value })} /></div></div><DialogFooter><Button onClick={saveEmp}>Salvar</Button></DialogFooter></DialogContent></Dialog>
 
       <Dialog open={pesOpen} onOpenChange={setPesOpen}><DialogContent><DialogHeader><DialogTitle>{pesEdit ? "Editar meta" : "Nova meta por frente"}</DialogTitle></DialogHeader><div className="grid gap-3"><div><Label>Frente</Label><Select value={pesForm.frente} onValueChange={(v: FrenteComercial) => setPesForm({ ...pesForm, frente: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{FRENTES_COMERCIAIS.map((f) => <SelectItem key={f} value={f}>{f}</SelectItem>)}</SelectContent></Select></div><div className="grid grid-cols-2 gap-2"><div><Label>Meta faturamento</Label><Input type="number" value={pesForm.metaFaturamento} onChange={(e) => setPesForm({ ...pesForm, metaFaturamento: +e.target.value })} /></div><div><Label>Comissão alvo</Label><Input type="number" value={pesForm.comissaoAlvo} onChange={(e) => setPesForm({ ...pesForm, comissaoAlvo: +e.target.value })} /></div><div><Label>Participação (%)</Label><Input type="number" value={pesForm.participacao} onChange={(e) => setPesForm({ ...pesForm, participacao: +e.target.value })} /></div><div><Label>% Comissão</Label><Input type="number" value={pesForm.percComissao} onChange={(e) => setPesForm({ ...pesForm, percComissao: +e.target.value })} /></div></div></div><DialogFooter><Button onClick={savePes}>Salvar</Button></DialogFooter></DialogContent></Dialog>
 
