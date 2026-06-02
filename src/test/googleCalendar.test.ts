@@ -13,6 +13,8 @@ import {
   getGoogleCalendarAuthStatus,
   hasGoogleCalendarAccess,
   isGoogleCalendarOffline,
+  isGoogleCalendarPendingActionEligible,
+  isGoogleCalendarSyncPending,
   isGoogleCalendarPreferenceEnabled,
   metadataAfterGoogleCalendarDelete,
   metadataAfterGoogleCalendarError,
@@ -169,6 +171,21 @@ describe("status de sincronização", () => {
 
   it("offline marca evento já vinculado como update_pending", () => {
     expect(metadataAfterGoogleCalendarOfflinePending({ googleCalendarEventId: "evt1" })).toEqual({ googleCalendarStatus: "update_pending", googleCalendarLastError: GOOGLE_CALENDAR_OFFLINE_PENDING_MESSAGE });
+  });
+
+  it("identifica pendências automáticas do Google Calendar", () => {
+    expect(isGoogleCalendarSyncPending({ googleCalendarSyncStatus: "pending" })).toBe(true);
+    expect(isGoogleCalendarSyncPending({ googleCalendarStatus: "update_pending" })).toBe(true);
+    expect(isGoogleCalendarSyncPending({ googleCalendarLastError: GOOGLE_CALENDAR_OFFLINE_PENDING_MESSAGE })).toBe(true);
+    expect(isGoogleCalendarSyncPending({ googleCalendarSyncStatus: "synced", googleCalendarStatus: "synced" })).toBe(false);
+  });
+
+  it("filtra pendências elegíveis sem data, canceladas ou com vínculo removido", () => {
+    expect(isGoogleCalendarPendingActionEligible({ data: "2026-06-10", googleCalendarSyncStatus: "pending" })).toBe(true);
+    expect(isGoogleCalendarPendingActionEligible({ data: "", googleCalendarSyncStatus: "pending" })).toBe(false);
+    expect(isGoogleCalendarPendingActionEligible({ data: "2026-06-10", status: "Cancelada", googleCalendarSyncStatus: "pending" })).toBe(false);
+    expect(isGoogleCalendarPendingActionEligible({ data: "2026-06-10", googleCalendarStatus: "deleted", googleCalendarSyncStatus: "pending" })).toBe(false);
+    expect(isGoogleCalendarPendingActionEligible({ data: "2026-06-10", googleCalendarSyncStatus: "synced", googleCalendarStatus: "synced" })).toBe(false);
   });
 });
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { AlertTriangle, CalendarClock, CheckCircle2, Clock, ExternalLink, Filter, Plus, RotateCcw } from "lucide-react";
 import { useAppStore } from "@/store/AppStore";
@@ -28,7 +28,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { GOOGLE_CALENDAR_OFFLINE_MANUAL_SYNC_MESSAGE, GOOGLE_CALENDAR_OFFLINE_SYNC_TOAST, buildAgendaItemIcs, buildCalendarEventFromAgendaItem, ensureGoogleCalendarAccess, getGoogleCalendarBackendStatus, getGoogleCalendarClientId, isGoogleCalendarOffline, isGoogleCalendarPreferenceEnabled, metadataAfterGoogleCalendarDelete, metadataAfterGoogleCalendarError, metadataAfterGoogleCalendarOfflinePending, metadataAfterGoogleCalendarReschedule, metadataAfterGoogleCalendarSuccess, setGoogleCalendarPreferenceEnabled, upsertGoogleCalendarEventForAgendaItem, upsertGoogleCalendarEventViaBackend } from "@/lib/googleCalendar";
+import { GOOGLE_CALENDAR_OFFLINE_MANUAL_SYNC_MESSAGE, GOOGLE_CALENDAR_OFFLINE_SYNC_TOAST, buildAgendaItemIcs, buildCalendarEventFromAgendaItem, ensureGoogleCalendarAccess, getGoogleCalendarBackendStatus, getGoogleCalendarClientId, isGoogleCalendarOffline, isGoogleCalendarPreferenceEnabled, metadataAfterGoogleCalendarDelete, metadataAfterGoogleCalendarError, metadataAfterGoogleCalendarOfflinePending, metadataAfterGoogleCalendarReschedule, metadataAfterGoogleCalendarSuccess, setGoogleCalendarPreferenceEnabled, upsertGoogleCalendarEventForAgendaItem, upsertGoogleCalendarEventViaBackend, isGoogleCalendarPendingActionEligible } from "@/lib/googleCalendar";
 
 const TIPOS: TipoProximaAcao[] = ["Visita", "Ligação", "WhatsApp", "Reunião", "Follow-up", "Enviar orçamento", "Cobrar retorno", "Pós-venda", "Renovação", "Outro"];
 const STATUS: StatusProximaAcao[] = ["Pendente", "Em andamento", "Realizada", "Reagendada", "Cancelada", "Concluída"];
@@ -48,6 +48,25 @@ type OportunidadeItemForm = { produtoId: string; quantidade: number; unidade: st
 const nowParts = () => {
   const now = new Date();
   return { iso: now.toISOString(), data: now.toISOString().slice(0, 10), horario: now.toTimeString().slice(0, 5) };
+};
+
+const GOOGLE_CALENDAR_AUTO_SYNC_DEBOUNCE_MS = 1_500;
+
+const isGoogleCalendarAutoSyncTransientError = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error || "");
+  const normalized = message.toLowerCase();
+  return normalized.includes("offline")
+    || normalized.includes("dispositivo offline")
+    || normalized.includes("sem conexão")
+    || normalized.includes("faça login")
+    || normalized.includes("sessão")
+    || normalized.includes("session")
+    || normalized.includes("usuário não autenticado")
+    || normalized.includes("google calendar persistente")
+    || normalized.includes("não conectado")
+    || normalized.includes("not connected")
+    || normalized.includes("network")
+    || normalized.includes("failed to fetch");
 };
 
 const emptyFlowForm = (tipo: TipoProximaAcao = "Visita"): AgendaFlowForm => ({ clienteId: "", clienteBusca: "", data: "", horario: "", descricao: "", tipo, observacao: "", vendedor: "" });
@@ -70,6 +89,9 @@ export default function Agenda() {
   const [oppItems, setOppItems] = useState<OportunidadeItemForm[]>([{ produtoId: "", quantidade: 1, unidade: "", precoUnitario: 0 }]);
   const [reschedule, setReschedule] = useState<Record<string, { data: string; horario: string }>>({});
   const [enviarGoogleCalendarNoSalvar, setEnviarGoogleCalendarNoSalvar] = useState(false);
+  const googleCalendarAutoSyncInProgressRef = useRef(false);
+  const googleCalendarPendingIdsInProgressRef = useRef<Set<string>>(new Set());
+  const googleCalendarAutoSyncDebounceRef = useRef<number | null>(null);
 
   const itens = useMemo(() => montarItensAgenda({ clientes, proximasAcoes, oportunidades, orcamentos, negocios, vendedores, hojeIso: hoje }), [clientes, proximasAcoes, oportunidades, orcamentos, negocios, vendedores, hoje]);
   const alertas = useMemo(() => montarAlertasAgenda({ clientes, proximasAcoes, orcamentos, negocios, vendedores, hojeIso: hoje }), [clientes, proximasAcoes, orcamentos, negocios, vendedores, hoje]);
@@ -179,6 +201,78 @@ export default function Agenda() {
     setGoogleCalendarPreferenceEnabled(true);
     return { ...event, calendarId: payload.googleCalendarCalendarId };
   };
+
+  const sincronizarPendenciasGoogleCalendar = useCallback(async () => {
+    if (googleCalendarAutoSyncInProgressRef.current) return;
+    if (isGoogleCalendarOffline() || typeof navigator !== "undefined" && navigator.onLine === false) return;
+    if (!session?.access_token) return;
+
+    const pendencias = proximasAcoes.filter((acao) =>
+      isGoogleCalendarPendingActionEligible(acao)
+      && !googleCalendarPendingIdsInProgressRef.current.has(acao.id),
+    );
+    if (pendencias.length === 0) return;
+
+    googleCalendarAutoSyncInProgressRef.current = true;
+    pendencias.forEach((acao) => googleCalendarPendingIdsInProgressRef.current.add(acao.id));
+
+    let sincronizadasComSucesso = 0;
+    const errosReais = new Map<string, ReturnType<typeof metadataAfterGoogleCalendarError>>();
+
+    try {
+      const backendStatus = await getGoogleCalendarBackendStatus();
+      setGoogleCalendarBackendConnected(backendStatus.connected);
+      if (!backendStatus.connected) return;
+
+      for (const acao of pendencias) {
+        if (isGoogleCalendarOffline() || typeof navigator !== "undefined" && navigator.onLine === false) break;
+        try {
+          const payload = montarGoogleCalendarPayload(acao);
+          buildCalendarEventFromAgendaItem(payload);
+          const event = await upsertGoogleCalendarEventViaBackend(payload);
+          const metadata = metadataAfterGoogleCalendarSuccess(event, event.calendarId || payload.googleCalendarCalendarId);
+          setProximasAcoes((atuais) => atuais.map((item) => item.id === acao.id ? { ...item, ...metadata, googleCalendarSyncStatus: "synced" } : item));
+          sincronizadasComSucesso += 1;
+        } catch (error) {
+          if (isGoogleCalendarAutoSyncTransientError(error)) continue;
+          errosReais.set(acao.id, metadataAfterGoogleCalendarError(error));
+        }
+      }
+
+      if (errosReais.size > 0) {
+        setProximasAcoes((atuais) => atuais.map((acao) => {
+          const metadata = errosReais.get(acao.id);
+          return metadata ? { ...acao, ...metadata, googleCalendarSyncStatus: "error" } : acao;
+        }));
+      }
+
+      if (sincronizadasComSucesso > 0) toast.success("Pendências do Google Calendar sincronizadas.");
+    } finally {
+      pendencias.forEach((acao) => googleCalendarPendingIdsInProgressRef.current.delete(acao.id));
+      googleCalendarAutoSyncInProgressRef.current = false;
+    }
+  }, [montarGoogleCalendarPayload, proximasAcoes, session?.access_token, setProximasAcoes]);
+
+  const agendarSincronizacaoPendenciasGoogleCalendar = useCallback(() => {
+    if (googleCalendarAutoSyncDebounceRef.current) window.clearTimeout(googleCalendarAutoSyncDebounceRef.current);
+    googleCalendarAutoSyncDebounceRef.current = window.setTimeout(() => {
+      googleCalendarAutoSyncDebounceRef.current = null;
+      void sincronizarPendenciasGoogleCalendar();
+    }, GOOGLE_CALENDAR_AUTO_SYNC_DEBOUNCE_MS);
+  }, [sincronizarPendenciasGoogleCalendar]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (session?.access_token && !isGoogleCalendarOffline()) agendarSincronizacaoPendenciasGoogleCalendar();
+    window.addEventListener("online", agendarSincronizacaoPendenciasGoogleCalendar);
+    return () => {
+      window.removeEventListener("online", agendarSincronizacaoPendenciasGoogleCalendar);
+      if (googleCalendarAutoSyncDebounceRef.current) {
+        window.clearTimeout(googleCalendarAutoSyncDebounceRef.current);
+        googleCalendarAutoSyncDebounceRef.current = null;
+      }
+    };
+  }, [agendarSincronizacaoPendenciasGoogleCalendar, session?.access_token]);
 
   const salvarAgendamento = async () => {
     if (!flowForm.clienteId || !flowForm.data) return toast.error("Selecione cliente e data da visita.");
@@ -354,7 +448,7 @@ export default function Agenda() {
     }
   };
 
-  const montarGoogleCalendarPayload = (acao: ProximaAcao) => {
+  const montarGoogleCalendarPayload = useCallback((acao: ProximaAcao) => {
     const cliente = clientes.find((item) => item.id === acao.clienteId);
     return {
       ...acao,
@@ -363,7 +457,7 @@ export default function Agenda() {
       cidade: cliente?.cidade,
       vendedor: acao.responsavel || cliente?.vendedor,
     };
-  };
+  }, [clientes]);
 
   const agendaItemGooglePayload = (acaoId?: string) => {
     const acao = proximasAcoes.find((item) => item.id === acaoId);
