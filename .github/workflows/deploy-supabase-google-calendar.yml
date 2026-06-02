@@ -76,11 +76,15 @@ jobs:
           set -euo pipefail
           supabase functions deploy google-calendar-oauth-start --project-ref "$SUPABASE_PROJECT_ID"
 
+      # The OAuth callback must accept the external redirect from Google, which does not
+      # include a Supabase Authorization Bearer header. Callback security relies on the
+      # signed state parameter being validated inside the function; all other Google
+      # Calendar Edge Functions remain protected by JWT verification.
       - name: Deploy google-calendar-oauth-callback Edge Function
         shell: bash
         run: |
           set -euo pipefail
-          supabase functions deploy google-calendar-oauth-callback --project-ref "$SUPABASE_PROJECT_ID"
+          supabase functions deploy google-calendar-oauth-callback --project-ref "$SUPABASE_PROJECT_ID" --no-verify-jwt
 
       - name: Deploy google-calendar-status Edge Function
         shell: bash
