@@ -4,6 +4,13 @@ import { calculateStoreComparison, LOCAL_TO_REMOTE_TABLE, summarizeComparison, t
 describe("supabaseSync", () => {
   it("maps local stores to Supabase tables", () => {
     expect(LOCAL_TO_REMOTE_TABLE.proximasAcoes).toBe("proximas_acoes");
+    expect(LOCAL_TO_REMOTE_TABLE.produtos).toBe("produtos");
+    expect(LOCAL_TO_REMOTE_TABLE.metasEmpresa).toBe("metas_empresa");
+    expect(LOCAL_TO_REMOTE_TABLE.metasVendedor).toBe("metas_vendedor");
+    expect(LOCAL_TO_REMOTE_TABLE.regrasComissao).toBe("regras_comissao");
+    expect(LOCAL_TO_REMOTE_TABLE.configuracoes).toBe("configuracoes");
+    expect(LOCAL_TO_REMOTE_TABLE.empresas).toBe("empresas");
+    expect(LOCAL_TO_REMOTE_TABLE.prioridadesP1).toBe("prioridades_p1");
     expect(LOCAL_TO_REMOTE_TABLE.formasPagamento).toBe("formas_pagamento");
     expect(LOCAL_TO_REMOTE_TABLE.prazosPagamento).toBe("prazos_pagamento");
     expect(LOCAL_TO_REMOTE_TABLE.appConfig).toBe("app_config");

@@ -2,6 +2,7 @@ import type { Session } from "@supabase/supabase-js";
 import { openAppDb, promisifyRequest, type StoreName } from "@/lib/db";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 import {
+  enqueueSyncItem,
   getPendingSyncItems,
   markSyncItemError,
   markSyncItemProcessing,
@@ -25,6 +26,15 @@ export type SyncableStore =
   | "negocios"
   | "proximasAcoes"
   | "relatoriosVisita"
+  | "metasEmpresa"
+  | "metasPessoais"
+  | "metasVendedor"
+  | "metasCategoria"
+  | "regrasComissao"
+  | "configuracoes"
+  | "empresas"
+  | "eventos"
+  | "prioridadesP1"
   | "vendedores"
   | "produtos"
   | "formasPagamento"
@@ -40,6 +50,15 @@ type RemoteTable =
   | "negocios"
   | "proximas_acoes"
   | "relatorios_visita"
+  | "metas_empresa"
+  | "metas_pessoais"
+  | "metas_vendedor"
+  | "metas_categoria"
+  | "regras_comissao"
+  | "configuracoes"
+  | "empresas"
+  | "eventos"
+  | "prioridades_p1"
   | "vendedores"
   | "produtos"
   | "formas_pagamento"
@@ -98,6 +117,15 @@ const SYNCABLE_STORES: SyncableStore[] = [
   "negocios",
   "proximasAcoes",
   "relatoriosVisita",
+  "metasEmpresa",
+  "metasPessoais",
+  "metasVendedor",
+  "metasCategoria",
+  "regrasComissao",
+  "configuracoes",
+  "empresas",
+  "eventos",
+  "prioridadesP1",
   "vendedores",
   "produtos",
   "formasPagamento",
@@ -114,6 +142,15 @@ export const LOCAL_TO_REMOTE_TABLE: Record<SyncableStore, RemoteTable> = {
   negocios: "negocios",
   proximasAcoes: "proximas_acoes",
   relatoriosVisita: "relatorios_visita",
+  metasEmpresa: "metas_empresa",
+  metasPessoais: "metas_pessoais",
+  metasVendedor: "metas_vendedor",
+  metasCategoria: "metas_categoria",
+  regrasComissao: "regras_comissao",
+  configuracoes: "configuracoes",
+  empresas: "empresas",
+  eventos: "eventos",
+  prioridadesP1: "prioridades_p1",
   vendedores: "vendedores",
   produtos: "produtos",
   formasPagamento: "formas_pagamento",
@@ -246,7 +283,25 @@ export async function syncPendingQueue(context: SyncContext): Promise<{ summary:
   return { summary, meta };
 }
 
+export async function enqueueFullLocalSnapshotForSync() {
+  const db = await openAppDb();
+  try {
+    const snapshot = await Promise.all(SYNCABLE_STORES.map(async (store) => {
+      const tx = db.transaction(store as StoreName, "readonly");
+      const records = (await promisifyRequest(tx.objectStore(store).getAll())) as Array<{ id?: string }>;
+      return [store, records.filter((record): record is { id: string } => Boolean(record.id))] as const;
+    }));
+
+    await Promise.all(snapshot.flatMap(([store, records]) => (
+      records.map((record) => enqueueSyncItem({ store, entityId: record.id, operation: "upsert", payload: record }))
+    )));
+  } finally {
+    db.close();
+  }
+}
+
 export async function runFirstUploadSync(context: SyncContext) {
+  await enqueueFullLocalSnapshotForSync();
   return syncPendingQueue(context);
 }
 

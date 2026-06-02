@@ -98,6 +98,14 @@ async function seedInitialData(db: IDBDatabase) {
   await writeDbMeta(db, { seeded: true, versaoSchema: DB_VERSION });
 }
 
+export async function getStoreIds(store: StoreName): Promise<string[]> {
+  return withDb(async (db) => {
+    const tx = db.transaction(store, "readonly");
+    const records = (await promisifyRequest(tx.objectStore(store).getAll())) as Array<{ id?: string }>;
+    return records.map((record) => record.id).filter((id): id is string => Boolean(id));
+  });
+}
+
 export async function saveStore<T extends { id: string }>(store: StoreName, list: T[]) {
   return withDb(async (db) => {
     try {

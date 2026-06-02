@@ -51,12 +51,27 @@ export interface TestRecordCandidate {
 
 const SYNCABLE_TEST_STORES: SyncableStore[] = [
   "clientes",
+  "vendedores",
+  "produtos",
   "lancamentos",
   "oportunidades",
+  "historicoFunil",
   "orcamentos",
   "negocios",
   "proximasAcoes",
-  "produtos",
+  "relatoriosVisita",
+  "metasEmpresa",
+  "metasPessoais",
+  "metasVendedor",
+  "metasCategoria",
+  "regrasComissao",
+  "configuracoes",
+  "empresas",
+  "eventos",
+  "prioridadesP1",
+  "formasPagamento",
+  "prazosPagamento",
+  "appConfig",
 ];
 
 const EMPTY_COUNTS: SyncQueueStatusCounts = { pending: 0, processing: 0, synced: 0, error: 0 };

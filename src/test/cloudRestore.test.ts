@@ -126,14 +126,14 @@ describe("cloudRestore", () => {
 
     const snapshot = buildAccountSnapshotFromRemoteRows({
       clientes: [activeRow("c1", { id: "c1", nome: "Nuvem" }), deletedRow("c2", { id: "c2", nome: "Deletado" })],
-      produtos: [activeRow("p1", { id: "p1", nome: "Produto" })],
+      produtos: [activeRow("p1", { id: "p1", nome: "Produto", precoLista: 100, custo: 60, estoqueAtual: 20, estoqueReservado: 3, controlaEstoque: true, localEstoque: "Depósito" })],
       appConfig: [activeRow("main", { id: "main", percentualAcertoEsperado: 15 })],
     });
 
     const result = await restoreAccountSnapshotToLocal(snapshot);
 
     expect(dbState.get("clientes")).toEqual([{ id: "c1", nome: "Nuvem" }]);
-    expect(dbState.get("produtos")).toEqual([{ id: "p1", nome: "Produto" }]);
+    expect(dbState.get("produtos")).toEqual([{ id: "p1", nome: "Produto", precoLista: 100, custo: 60, estoqueAtual: 20, estoqueReservado: 3, controlaEstoque: true, localEstoque: "Depósito" }]);
     expect(dbState.get("clientes")).not.toContainEqual(expect.objectContaining({ id: "c2" }));
     expect(dbState.get("importLogs")).toEqual([{ id: "log-1", file: "clientes.csv" }]);
     expect(dbState.get("syncQueue")).toEqual([{ id: "clientes:local", status: "synced" }]);

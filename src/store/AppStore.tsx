@@ -3,7 +3,7 @@ import {
   Cliente, Lancamento, MetaEmpresa, MetaPessoal, Evento, PrioridadeP1Item,
   Negocio, Produto, RegraComissao, Vendedor, MetaVendedor, MetaCategoria, TicketMedioRegra, Orcamento, Empresa, ProximaAcao, FormaPagamento, PrazoPagamento, AppConfig, OportunidadeComercial, RelatorioVisita, HistoricoFunil,
 } from "@/types";
-import { bootstrapLocalDatabase, saveStore } from "@/lib/localRepository";
+import { bootstrapLocalDatabase, getStoreIds, saveStore } from "@/lib/localRepository";
 import { restoreAccountSnapshotToLocal, type AccountSnapshot, type CloudRestoreResult } from "@/lib/cloudRestore";
 import { enqueueSyncItem, getPendingSyncItems, shouldTrackSyncStore } from "@/lib/syncQueue";
 import { getAutoSyncCooldownRemaining, runControlledUploadSync, type AutoSyncAccessStatus, type AutoSyncContext, type AutoSyncResult } from "@/lib/autoSync";
@@ -222,6 +222,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     setIsSaving(true);
     setSaveError(null);
     try {
+      const previousIds = shouldTrackSyncStore(store) ? await getStoreIds(store) : [];
       await saveStore(store, data);
       if (shouldTrackSyncStore(store)) {
         const isOnlySyncMetaChange = store === "appConfig" && (() => {
@@ -233,7 +234,12 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           return unchanged;
         })();
         if (!isOnlySyncMetaChange) {
-          await Promise.all(data.map((item) => enqueueSyncItem({ store, entityId: item.id, operation: "upsert", payload: item })));
+          const nextIds = new Set(data.map((item) => item.id));
+          const deletedIds = previousIds.filter((id) => !nextIds.has(id));
+          await Promise.all([
+            ...data.map((item) => enqueueSyncItem({ store, entityId: item.id, operation: "upsert", payload: item })),
+            ...deletedIds.map((entityId) => enqueueSyncItem({ store, entityId, operation: "delete" })),
+          ]);
         }
       }
       setLastSavedAt(new Date().toISOString());
@@ -278,6 +284,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       const result = await restoreAccountSnapshotToLocal(snapshot);
       skipNextPersistStoresRef.current = new Set([
         "clientes", "lancamentos", "oportunidades", "historicoFunil", "orcamentos", "negocios", "proximasAcoes", "relatoriosVisita",
+        "metasEmpresa", "metasPessoais", "metasVendedor", "metasCategoria", "regrasComissao", "configuracoes", "empresas", "eventos", "prioridadesP1",
         "vendedores", "produtos", "formasPagamento", "prazosPagamento", "appConfig",
       ]);
       setClientes(result.snapshot.clientes as Cliente[]);
@@ -288,6 +295,15 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       setNegocios(result.snapshot.negocios as Negocio[]);
       setProximasAcoes(result.snapshot.proximasAcoes as ProximaAcao[]);
       setRelatoriosVisita(result.snapshot.relatoriosVisita as RelatorioVisita[]);
+      setMetasEmpresa(result.snapshot.metasEmpresa as MetaEmpresa[]);
+      setMetasPessoais(result.snapshot.metasPessoais as MetaPessoal[]);
+      setMetasVendedor(result.snapshot.metasVendedor as MetaVendedor[]);
+      setMetasCategoria(result.snapshot.metasCategoria as MetaCategoria[]);
+      setRegras(result.snapshot.regrasComissao as RegraComissao[]);
+      setTicketsMedios(result.snapshot.configuracoes as TicketMedioRegra[]);
+      setEmpresas(result.snapshot.empresas as Empresa[]);
+      setEventos(result.snapshot.eventos as Evento[]);
+      setPrioridadesP1(result.snapshot.prioridadesP1 as PrioridadeP1Item[]);
       setVendedores(result.snapshot.vendedores as Vendedor[]);
       setProdutos(result.snapshot.produtos as Produto[]);
       setFormasPagamento(result.snapshot.formasPagamento as FormaPagamento[]);
@@ -355,12 +371,12 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     setSyncStatus("syncing");
     setSyncError(null);
     const result = await runControlledUploadSync(
-      { session: syncSession, accessStatus: syncAccessStatus, firstUploadConfirmed: true },
+      { session: syncSession, accessStatus: syncAccessStatus, firstUploadConfirmed },
       { mode: "manual", bypassCooldown: true },
     );
     await applySyncResult(result, "manual");
     return result;
-  }, [accessStatus, applySyncResult, session]);
+  }, [accessStatus, applySyncResult, firstUploadConfirmed, session]);
 
   const applyAccountSyncStatus = useCallback((status: AccountSyncStatus, source: "auto-check" | "sync-now" = "auto-check") => {
     setAccountSyncStatus(status);
