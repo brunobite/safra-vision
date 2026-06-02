@@ -28,7 +28,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { buildAgendaItemIcs, buildCalendarEventFromAgendaItem, ensureGoogleCalendarAccess, getGoogleCalendarBackendStatus, getGoogleCalendarClientId, isGoogleCalendarPreferenceEnabled, metadataAfterGoogleCalendarDelete, metadataAfterGoogleCalendarError, metadataAfterGoogleCalendarReschedule, metadataAfterGoogleCalendarSuccess, setGoogleCalendarPreferenceEnabled, upsertGoogleCalendarEventForAgendaItem, upsertGoogleCalendarEventViaBackend } from "@/lib/googleCalendar";
+import { GOOGLE_CALENDAR_OFFLINE_MANUAL_SYNC_MESSAGE, GOOGLE_CALENDAR_OFFLINE_SYNC_TOAST, buildAgendaItemIcs, buildCalendarEventFromAgendaItem, ensureGoogleCalendarAccess, getGoogleCalendarBackendStatus, getGoogleCalendarClientId, isGoogleCalendarOffline, isGoogleCalendarPreferenceEnabled, metadataAfterGoogleCalendarDelete, metadataAfterGoogleCalendarError, metadataAfterGoogleCalendarOfflinePending, metadataAfterGoogleCalendarReschedule, metadataAfterGoogleCalendarSuccess, setGoogleCalendarPreferenceEnabled, upsertGoogleCalendarEventForAgendaItem, upsertGoogleCalendarEventViaBackend } from "@/lib/googleCalendar";
 
 const TIPOS: TipoProximaAcao[] = ["Visita", "Ligação", "WhatsApp", "Reunião", "Follow-up", "Enviar orçamento", "Cobrar retorno", "Pós-venda", "Renovação", "Outro"];
 const STATUS: StatusProximaAcao[] = ["Pendente", "Em andamento", "Realizada", "Reagendada", "Cancelada", "Concluída"];
@@ -85,18 +85,26 @@ export default function Agenda() {
   const valorEstimadoTotal = useMemo(() => oppItems.reduce((total, item) => total + (Number(item.quantidade) || 0) * (Number(item.precoUnitario) || 0), 0), [oppItems]);
   const googleCalendarClientIdConfigurado = Boolean(getGoogleCalendarClientId());
   const [googleCalendarBackendConnected, setGoogleCalendarBackendConnected] = useState(false);
+  const googleCalendarDisponivelParaSalvar = googleCalendarBackendConnected || googleCalendarClientIdConfigurado;
   const googleCalendarPreferenciaAtiva = isGoogleCalendarPreferenceEnabled() || googleCalendarBackendConnected;
 
   useEffect(() => {
     let cancelled = false;
-    if (!session?.access_token) {
-      setGoogleCalendarBackendConnected(false);
-      return;
-    }
-    void getGoogleCalendarBackendStatus()
-      .then((status) => { if (!cancelled) setGoogleCalendarBackendConnected(status.connected); })
-      .catch(() => { if (!cancelled) setGoogleCalendarBackendConnected(false); });
-    return () => { cancelled = true; };
+    const atualizarStatusBackendGoogleCalendar = () => {
+      if (!session?.access_token || isGoogleCalendarOffline()) {
+        if (!session?.access_token) setGoogleCalendarBackendConnected(false);
+        return;
+      }
+      void getGoogleCalendarBackendStatus()
+        .then((status) => { if (!cancelled) setGoogleCalendarBackendConnected(status.connected); })
+        .catch(() => { if (!cancelled) setGoogleCalendarBackendConnected(false); });
+    };
+    atualizarStatusBackendGoogleCalendar();
+    window.addEventListener("online", atualizarStatusBackendGoogleCalendar);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("online", atualizarStatusBackendGoogleCalendar);
+    };
   }, [session?.access_token]);
 
   useEffect(() => {
@@ -161,6 +169,7 @@ export default function Agenda() {
   };
 
   const executarUpsertGoogleCalendar = async (payload: ReturnType<typeof montarGoogleCalendarPayload>) => {
+    if (isGoogleCalendarOffline()) throw new Error(GOOGLE_CALENDAR_OFFLINE_MANUAL_SYNC_MESSAGE);
     if (googleCalendarBackendConnected && session?.access_token) {
       const event = await upsertGoogleCalendarEventViaBackend(payload);
       return { ...event, calendarId: event.calendarId || payload.googleCalendarCalendarId };
@@ -179,7 +188,7 @@ export default function Agenda() {
     const acaoLocal = { ...acao, observacoes: flowForm.observacao || "Status Agenda e Visitas: Agendada" };
     setProximasAcoes((atuais) => [acaoLocal, ...atuais]);
     setModal(null);
-    if (!enviarGoogleCalendarNoSalvar || !googleCalendarClientIdConfigurado) {
+    if (!enviarGoogleCalendarNoSalvar || !googleCalendarDisponivelParaSalvar) {
       toast.success("Visita futura agendada sem entrar no funil de vendas.");
       return;
     }
@@ -289,7 +298,7 @@ export default function Agenda() {
     if (!acao) return toast.error("Selecione um cliente para a nova ação.");
     setProximasAcoes((atuais) => [acao, ...atuais]);
     setModal(null);
-    if (!enviarGoogleCalendarNoSalvar || !googleCalendarClientIdConfigurado) {
+    if (!enviarGoogleCalendarNoSalvar || !googleCalendarDisponivelParaSalvar) {
       toast.success("Próxima ação salva na Agenda e Visitas e vinculada ao fluxo atual.");
       return;
     }
@@ -363,6 +372,12 @@ export default function Agenda() {
   };
 
   const sincronizarAcaoCriadaNoGoogleCalendar = async (acao: ProximaAcao, mensagemSucesso: string, mensagemErro: string) => {
+    if (isGoogleCalendarOffline()) {
+      const metadata = metadataAfterGoogleCalendarOfflinePending(acao);
+      setProximasAcoes((atuais) => atuais.map((item) => item.id === acao.id ? { ...item, ...metadata, googleCalendarSyncStatus: "pending" } : item));
+      toast.success(GOOGLE_CALENDAR_OFFLINE_SYNC_TOAST);
+      return;
+    }
     try {
       const payload = montarGoogleCalendarPayload(acao);
       buildCalendarEventFromAgendaItem(payload);
@@ -379,6 +394,11 @@ export default function Agenda() {
 
   const sincronizarGoogleCalendar = async (acaoId?: string) => {
     if (!acaoId) return;
+    if (isGoogleCalendarOffline()) {
+      setProximasAcoes((atuais) => atuais.map((acao) => acao.id === acaoId ? { ...acao, ...metadataAfterGoogleCalendarOfflinePending(acao), googleCalendarSyncStatus: "pending" } : acao));
+      toast.error(GOOGLE_CALENDAR_OFFLINE_MANUAL_SYNC_MESSAGE);
+      return;
+    }
     try {
       const payload = agendaItemGooglePayload(acaoId);
       buildCalendarEventFromAgendaItem(payload);

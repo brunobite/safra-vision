@@ -111,10 +111,21 @@ let lastAuthError: string | null = null;
 let pendingTokenRequest: { resolve: (token: string) => void; reject: (error: Error) => void; timeoutId?: number } | null = null;
 
 export const GOOGLE_CALENDAR_ENABLED_STORAGE_KEY = "safraVision.googleCalendar.enabled";
+export const GOOGLE_CALENDAR_OFFLINE_PENDING_MESSAGE = "Sincronização pendente: dispositivo offline.";
+export const GOOGLE_CALENDAR_OFFLINE_SYNC_TOAST = "Ação salva offline. O envio ao Google Calendar ficará pendente até reconectar.";
+export const GOOGLE_CALENDAR_OFFLINE_MANUAL_SYNC_MESSAGE = "Você está offline. Reconecte para enviar ao Google Calendar.";
 
 const GOOGLE_CALENDAR_AUTH_TIMEOUT_MS = 120_000;
 const GOOGLE_CALENDAR_AUTH_TIMEOUT_MESSAGE = "Autorização não concluída. Verifique se você rolou até o final da tela do Google e tocou em Continuar/Permitir.";
 const GOOGLE_CALENDAR_RECONNECT_MESSAGE = "Precisa renovar autorização do Google Calendar. Acesse Configurações e conecte novamente neste dispositivo.";
+
+export function isGoogleCalendarOffline(): boolean {
+  return typeof navigator !== "undefined" && navigator.onLine === false;
+}
+
+function assertGoogleCalendarOnline(): void {
+  if (isGoogleCalendarOffline()) throw new Error(GOOGLE_CALENDAR_OFFLINE_PENDING_MESSAGE);
+}
 
 function safeGoogleCalendarDevLog(message: string, details?: Record<string, unknown>): void {
   if (!import.meta.env.DEV) return;
@@ -222,6 +233,7 @@ function ensureBrowser(): void {
 }
 
 export function loadGoogleIdentityScript(): Promise<void> {
+  assertGoogleCalendarOnline();
   ensureBrowser();
   if (window.google?.accounts?.oauth2) {
     safeGoogleCalendarDevLog("GSI carregado", { gsiLoaded: true });
@@ -291,6 +303,7 @@ export async function initGoogleCalendarClient(config: GoogleCalendarConfig = {}
 }
 
 export async function requestGoogleCalendarAccess(config: GoogleCalendarAccessOptions = {}): Promise<string> {
+  assertGoogleCalendarOnline();
   const requestedClientId = config.clientId || getGoogleCalendarClientId();
   const requestedScope = config.scope || GOOGLE_CALENDAR_SCOPE;
   const requestedPrompt = config.prompt ?? (hasGoogleCalendarAccess() ? "" : "consent");
@@ -317,6 +330,7 @@ export async function requestGoogleCalendarAccess(config: GoogleCalendarAccessOp
 }
 
 export async function ensureGoogleCalendarAccess(options: EnsureGoogleCalendarAccessOptions = {}): Promise<string> {
+  assertGoogleCalendarOnline();
   if (hasGoogleCalendarAccess() && accessToken) return accessToken;
   const shouldAskConsent = options.interactive ?? !isGoogleCalendarPreferenceEnabled();
   try {
@@ -329,6 +343,7 @@ export async function ensureGoogleCalendarAccess(options: EnsureGoogleCalendarAc
 }
 
 async function fetchGoogleCalendar(path: string, init: RequestInit): Promise<GoogleCalendarApiEvent> {
+  assertGoogleCalendarOnline();
   if (!hasGoogleCalendarAccess()) throw new Error("Conecte o Google Calendar antes de sincronizar. O token não é armazenado permanentemente.");
   const response = await fetch(`${GOOGLE_CALENDAR_API_BASE}${path}`, {
     ...init,
@@ -381,6 +396,7 @@ export function isGoogleCalendarBackendAvailable(): boolean {
 }
 
 async function invokeGoogleCalendarBackend<T>(functionName: string, body?: unknown): Promise<T> {
+  assertGoogleCalendarOnline();
   if (!supabase || !isSupabaseConfigured) throw new Error("Supabase não configurado para Google Calendar persistente.");
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
   if (sessionError) throw new Error(sessionError.message);
@@ -543,6 +559,13 @@ export function metadataAfterGoogleCalendarSuccess(event: GoogleCalendarApiEvent
 
 export function metadataAfterGoogleCalendarError(error: unknown): Pick<GoogleCalendarSyncMetadata, "googleCalendarStatus" | "googleCalendarLastError"> {
   return { googleCalendarStatus: "error", googleCalendarLastError: friendlyGoogleError(error) };
+}
+
+export function metadataAfterGoogleCalendarOfflinePending(item: { googleCalendarEventId?: string } = {}): Pick<GoogleCalendarSyncMetadata, "googleCalendarStatus" | "googleCalendarLastError"> {
+  return {
+    googleCalendarStatus: item.googleCalendarEventId ? "update_pending" : "not_synced",
+    googleCalendarLastError: GOOGLE_CALENDAR_OFFLINE_PENDING_MESSAGE,
+  };
 }
 
 export function metadataAfterGoogleCalendarReschedule<T extends { googleCalendarEventId?: string; googleCalendarStatus?: GoogleCalendarStatus }>(item: T): Partial<T> {

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  GOOGLE_CALENDAR_OFFLINE_PENDING_MESSAGE,
   buildAgendaItemIcs,
   buildCalendarEventFromAgendaItem,
   buildGoogleCalendarReminders,
@@ -11,9 +12,11 @@ import {
   getGoogleCalendarAgendaActionState,
   getGoogleCalendarAuthStatus,
   hasGoogleCalendarAccess,
+  isGoogleCalendarOffline,
   isGoogleCalendarPreferenceEnabled,
   metadataAfterGoogleCalendarDelete,
   metadataAfterGoogleCalendarError,
+  metadataAfterGoogleCalendarOfflinePending,
   metadataAfterGoogleCalendarReschedule,
   metadataAfterGoogleCalendarSuccess,
   requestGoogleCalendarAccess,
@@ -159,9 +162,28 @@ describe("status de sincronização", () => {
   it("remoção marca deleted e limpa vínculo", () => {
     expect(metadataAfterGoogleCalendarDelete("2026-06-01T10:00:00.000Z")).toMatchObject({ googleCalendarStatus: "deleted", googleCalendarEventId: undefined, googleCalendarHtmlLink: undefined });
   });
+
+  it("offline marca pendência sem vínculo como not_synced", () => {
+    expect(metadataAfterGoogleCalendarOfflinePending()).toEqual({ googleCalendarStatus: "not_synced", googleCalendarLastError: GOOGLE_CALENDAR_OFFLINE_PENDING_MESSAGE });
+  });
+
+  it("offline marca evento já vinculado como update_pending", () => {
+    expect(metadataAfterGoogleCalendarOfflinePending({ googleCalendarEventId: "evt1" })).toEqual({ googleCalendarStatus: "update_pending", googleCalendarLastError: GOOGLE_CALENDAR_OFFLINE_PENDING_MESSAGE });
+  });
 });
 
 describe("token e autorização", () => {
+  it("offline bloqueia OAuth e API remota antes de chamar Google", async () => {
+    vi.stubGlobal("navigator", { onLine: false });
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(isGoogleCalendarOffline()).toBe(true);
+    await expect(ensureGoogleCalendarAccess({ clientId: "client-id" })).rejects.toThrow(GOOGLE_CALENDAR_OFFLINE_PENDING_MESSAGE);
+    await expect(createGoogleCalendarEvent(buildCalendarEventFromAgendaItem(item))).rejects.toThrow(GOOGLE_CALENDAR_OFFLINE_PENDING_MESSAGE);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("sem token bloqueia chamada à API", async () => {
     await expect(createGoogleCalendarEvent(buildCalendarEventFromAgendaItem(item))).rejects.toThrow("Conecte o Google Calendar antes de sincronizar");
   });
