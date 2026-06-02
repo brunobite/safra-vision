@@ -10,9 +10,11 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Switch } from "@/components/ui/switch";
 import { useAppStore } from "@/store/AppStore";
 import { Produto, CATEGORIAS_PRODUTO } from "@/types";
 import { fmtBRL, fmtNum } from "@/utils/calculations";
+import { controlaEstoqueProduto, estoqueDisponivelProduto } from "@/utils/productStock";
 import { ArrowLeft, Boxes, Eye, Pencil, Plus, Search, Trash2, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 
@@ -29,16 +31,13 @@ const empty: Omit<Produto, "id"> = {
   precoMinimo: 0,
   custo: 0,
   margem: 0,
+  controlaEstoque: false,
   estoqueAtual: 0,
   estoqueReservado: 0,
   localEstoque: "",
   ativo: true,
   observacoes: "",
 };
-
-function estoqueDisponivel(produto: Pick<Produto, "estoqueAtual" | "estoqueReservado">) {
-  return produto.estoqueAtual - produto.estoqueReservado;
-}
 
 function estoqueStatus(disponivel: number) {
   if (disponivel < 0) return { label: "Reservado acima do estoque", cls: "bg-destructive/15 text-destructive" };
@@ -53,6 +52,7 @@ export default function Produtos() {
   const [fCat, setFCat] = useState("");
   const [fForn, setFForn] = useState("");
   const [fStatus, setFStatus] = useState("");
+  const [fControleEstoque, setFControleEstoque] = useState("");
   const [open, setOpen] = useState(false);
   const [edit, setEdit] = useState<Produto | null>(null);
   const [form, setForm] = useState(empty);
@@ -64,8 +64,9 @@ export default function Produtos() {
   const list = useMemo(() => produtos.filter((p) =>
     (!busca || p.nome.toLowerCase().includes(busca.toLowerCase()) || p.codigo.toLowerCase().includes(busca.toLowerCase())) &&
     (!fCat || p.categoria === fCat) && (!fForn || p.fornecedor === fForn) &&
-    (!fStatus || (fStatus === "ativo" ? p.ativo : !p.ativo))
-  ), [produtos, busca, fCat, fForn, fStatus]);
+    (!fStatus || (fStatus === "ativo" ? p.ativo : !p.ativo)) &&
+    (!fControleEstoque || (fControleEstoque === "com" ? controlaEstoqueProduto(p) : !controlaEstoqueProduto(p)))
+  ), [produtos, busca, fCat, fForn, fStatus, fControleEstoque]);
 
   const selectedProduct = useMemo(() => produtos.find((p) => p.id === selectedId) ?? null, [produtos, selectedId]);
 
@@ -88,21 +89,22 @@ export default function Produtos() {
     setEdit(p);
     const { id, ...rest } = p;
     void id;
-    setForm({ ...empty, ...rest });
+    setForm({ ...empty, ...rest, controlaEstoque: controlaEstoqueProduto(p) });
     setOpen(true);
   };
 
   const save = () => {
     if (!form.nome || !form.codigo) return toast.error("Código e nome obrigatórios.");
-    const disponivel = estoqueDisponivel(form);
+    const controlaEstoque = controlaEstoqueProduto(form);
+    const disponivel = estoqueDisponivelProduto(form);
     const margem = form.precoLista > 0 ? (((form.precoLista - form.custo) / form.precoLista) * 100) : 0;
     const now = new Date().toISOString();
-    if (disponivel < 0) toast.warning("Estoque disponível negativo: revise estoque atual e reservado.");
+    if (controlaEstoque && disponivel < 0) toast.warning("Estoque disponível negativo: revise estoque atual e reservado.");
 
     if (edit) {
-      setProdutos((prev) => prev.map((p) => p.id === edit.id ? { ...p, ...form, margem, id: edit.id, createdAt: p.createdAt, updatedAt: now, ultimaAtualizacao: now.slice(0, 10) } : p));
+      setProdutos((prev) => prev.map((p) => p.id === edit.id ? { ...p, ...form, controlaEstoque, margem, id: edit.id, createdAt: p.createdAt, updatedAt: now, ultimaAtualizacao: now.slice(0, 10) } : p));
     } else {
-      const novo: Produto = { ...form, margem, id: `p${Date.now()}`, createdAt: now, updatedAt: now, ultimaAtualizacao: now.slice(0, 10) };
+      const novo: Produto = { ...form, controlaEstoque, margem, id: `p${Date.now()}`, createdAt: now, updatedAt: now, ultimaAtualizacao: now.slice(0, 10) };
       setProdutos((prev) => [...prev, novo]);
       setSelectedId(novo.id);
     }
@@ -119,7 +121,7 @@ export default function Produtos() {
 
   const ajustarEstoque = (p: Produto) => {
     openEdit(p);
-    toast.info("Ajuste estoque atual, reservado e local na ficha do produto.");
+    toast.info(controlaEstoqueProduto(p) ? "Ajuste estoque atual, reservado e local na ficha do produto." : "Produto sem controle de estoque: ative o controle para editar estoque.");
   };
 
   const renderStatus = (p: Produto) => p.ativo
@@ -127,13 +129,15 @@ export default function Produtos() {
     : <Badge variant="outline">Inativo</Badge>;
 
   const renderEstoqueBadge = (p: Produto) => {
-    const status = estoqueStatus(estoqueDisponivel(p));
+    if (!controlaEstoqueProduto(p)) return <Badge variant="outline">Representação</Badge>;
+    const status = estoqueStatus(estoqueDisponivelProduto(p));
     return <Badge className={status.cls}>{status.label}</Badge>;
   };
 
   if (selectedProduct) {
-    const disponivel = estoqueDisponivel(selectedProduct);
-    const status = estoqueStatus(disponivel);
+    const controlaEstoque = controlaEstoqueProduto(selectedProduct);
+    const disponivel = estoqueDisponivelProduto(selectedProduct);
+    const status = controlaEstoque ? estoqueStatus(disponivel) : { label: "Sem controle de estoque", cls: "bg-muted text-muted-foreground" };
     return (
       <div className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -148,7 +152,7 @@ export default function Produtos() {
           </div>
         </div>
 
-        {disponivel < 0 && (
+        {controlaEstoque && disponivel < 0 && (
           <Alert className="border-destructive/30 bg-destructive/5 text-destructive">
             <TriangleAlert className="h-4 w-4" />
             <AlertTitle>Estoque disponível negativo</AlertTitle>
@@ -164,11 +168,12 @@ export default function Produtos() {
                 <h3 className="text-xl font-semibold">{selectedProduct.nome}</h3>
                 <p className="text-sm text-muted-foreground">{selectedProduct.categoria} · {selectedProduct.unidade}</p>
               </div>
-              <div className="flex flex-wrap gap-2">{renderStatus(selectedProduct)}<Badge className={status.cls}>{status.label}</Badge></div>
+              <div className="flex flex-wrap gap-2">{renderStatus(selectedProduct)}<Badge className={status.cls}>{controlaEstoque ? status.label : "Sem controle de estoque"}</Badge></div>
             </div>
             <div className="grid gap-3 md:grid-cols-2">
               <Info label="Fornecedor/empresa" value={selectedProduct.fornecedor || "Não informado"} />
-              <Info label="Local de estoque" value={selectedProduct.localEstoque || "Não informado"} />
+              <Info label="Controle de estoque" value={controlaEstoque ? "Com controle de estoque" : "Sem controle de estoque"} />
+              <Info label="Local de estoque" value={controlaEstoque ? selectedProduct.localEstoque || "Não informado" : "Não aplicável"} />
               <Info label="Preço de venda" value={fmtBRL(selectedProduct.precoLista)} />
               <Info label="Preço mínimo" value={fmtBRL(selectedProduct.precoMinimo)} />
               <Info label="Custo" value={fmtBRL(selectedProduct.custo)} />
@@ -181,12 +186,18 @@ export default function Produtos() {
 
           <Card className="p-4">
             <h3 className="mb-3 flex items-center gap-2 font-semibold"><Boxes className="h-4 w-4" />Estoque do produto</h3>
-            <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
-              <Metric label="Estoque atual" value={fmtNum(selectedProduct.estoqueAtual)} />
-              <Metric label="Estoque reservado" value={fmtNum(selectedProduct.estoqueReservado)} />
-              <Metric label="Estoque disponível" value={fmtNum(disponivel)} danger={disponivel < 0} />
-            </div>
-            <p className="mt-3 text-xs text-muted-foreground">Disponível = estoque atual − estoque reservado.</p>
+            {controlaEstoque ? (
+              <>
+                <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
+                  <Metric label="Estoque atual" value={fmtNum(selectedProduct.estoqueAtual)} />
+                  <Metric label="Estoque reservado" value={fmtNum(selectedProduct.estoqueReservado)} />
+                  <Metric label="Estoque disponível" value={fmtNum(disponivel)} danger={disponivel < 0} />
+                </div>
+                <p className="mt-3 text-xs text-muted-foreground">Disponível = estoque atual − estoque reservado.</p>
+              </>
+            ) : (
+              <div className="rounded-md border bg-muted/40 p-3 text-sm text-muted-foreground">Produto sem controle de estoque — representação/comissão. Indicadores de estoque não aplicáveis.</div>
+            )}
           </Card>
         </div>
 
@@ -224,6 +235,12 @@ export default function Produtos() {
           </div>
           <FilterSelect label="Categoria" value={fCat} width="w-40" options={categorias} onChange={setFCat} />
           <FilterSelect label="Fornecedor" value={fForn} width="w-40" options={fornecedores} onChange={setFForn} />
+          <div><Label className="text-xs">Controle estoque</Label>
+            <Select value={fControleEstoque || ALL} onValueChange={(v) => setFControleEstoque(v === ALL ? "" : v)}>
+              <SelectTrigger className="w-48"><SelectValue placeholder="Todos" /></SelectTrigger>
+              <SelectContent><SelectItem value={ALL}>Todos</SelectItem><SelectItem value="com">Com controle de estoque</SelectItem><SelectItem value="sem">Sem controle de estoque</SelectItem></SelectContent>
+            </Select>
+          </div>
           <div><Label className="text-xs">Status</Label>
             <Select value={fStatus || ALL} onValueChange={(v) => setFStatus(v === ALL ? "" : v)}>
               <SelectTrigger className="w-32"><SelectValue placeholder="Todos" /></SelectTrigger>
@@ -256,10 +273,10 @@ export default function Produtos() {
       <Card className="hidden overflow-x-auto p-0 md:block">
         <Table>
           <TableHeader><TableRow>
-            <TableHead>Código</TableHead><TableHead>Nome</TableHead><TableHead>Categoria</TableHead><TableHead>Un.</TableHead><TableHead>Fornecedor</TableHead><TableHead>Local</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Ações</TableHead>
+            <TableHead>Código</TableHead><TableHead>Nome</TableHead><TableHead>Categoria</TableHead><TableHead>Un.</TableHead><TableHead>Fornecedor</TableHead><TableHead>Controle</TableHead><TableHead>Local</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Ações</TableHead>
           </TableRow></TableHeader>
           <TableBody>{list.map((p) => <TableRow key={p.id}>
-            <TableCell className="font-mono text-xs">{p.codigo}</TableCell><TableCell className="font-medium">{p.nome}</TableCell><TableCell>{p.categoria}</TableCell><TableCell>{p.unidade}</TableCell><TableCell>{p.fornecedor}</TableCell><TableCell>{p.localEstoque || "-"}</TableCell><TableCell>{renderStatus(p)}</TableCell><TableCell className="text-right">{renderActions(p)}</TableCell>
+            <TableCell className="font-mono text-xs">{p.codigo}</TableCell><TableCell className="font-medium">{p.nome}</TableCell><TableCell>{p.categoria}</TableCell><TableCell>{p.unidade}</TableCell><TableCell>{p.fornecedor}</TableCell><TableCell>{controlaEstoqueProduto(p) ? <Badge variant="outline">Com estoque</Badge> : <Badge variant="outline">Representação</Badge>}</TableCell><TableCell>{controlaEstoqueProduto(p) ? p.localEstoque || "-" : "Não aplicável"}</TableCell><TableCell>{renderStatus(p)}</TableCell><TableCell className="text-right">{renderActions(p)}</TableCell>
           </TableRow>)}</TableBody>
         </Table>
       </Card>
@@ -282,19 +299,19 @@ export default function Produtos() {
       <Card className="hidden overflow-x-auto p-0 md:block">
         <Table>
           <TableHeader><TableRow><TableHead>Produto</TableHead><TableHead>Un.</TableHead><TableHead className="text-right">Atual</TableHead><TableHead className="text-right">Reservado</TableHead><TableHead className="text-right">Disponível</TableHead><TableHead>Local</TableHead><TableHead>Status estoque</TableHead><TableHead className="text-right">Ações</TableHead></TableRow></TableHeader>
-          <TableBody>{list.map((p) => { const disp = estoqueDisponivel(p); return <TableRow key={p.id}><TableCell><button className="text-left font-medium hover:underline" onClick={() => setSelectedId(p.id)}>{p.nome}<span className="block font-mono text-xs text-muted-foreground">{p.codigo}</span></button></TableCell><TableCell>{p.unidade}</TableCell><TableCell className="text-right">{fmtNum(p.estoqueAtual)}</TableCell><TableCell className="text-right">{fmtNum(p.estoqueReservado)}</TableCell><TableCell className={disp < 0 ? "text-right font-semibold text-destructive" : "text-right"}>{fmtNum(disp)}</TableCell><TableCell>{p.localEstoque || "-"}</TableCell><TableCell>{renderEstoqueBadge(p)}</TableCell><TableCell className="text-right">{renderActions(p, true)}</TableCell></TableRow>; })}</TableBody>
+          <TableBody>{list.map((p) => { const controla = controlaEstoqueProduto(p); const disp = estoqueDisponivelProduto(p); return <TableRow key={p.id}><TableCell><button className="text-left font-medium hover:underline" onClick={() => setSelectedId(p.id)}>{p.nome}<span className="block font-mono text-xs text-muted-foreground">{p.codigo}</span></button></TableCell><TableCell>{p.unidade}</TableCell><TableCell className="text-right">{controla ? fmtNum(p.estoqueAtual) : "N/A"}</TableCell><TableCell className="text-right">{controla ? fmtNum(p.estoqueReservado) : "N/A"}</TableCell><TableCell className={controla && disp < 0 ? "text-right font-semibold text-destructive" : "text-right"}>{controla ? fmtNum(disp) : "Não aplicável"}</TableCell><TableCell>{controla ? p.localEstoque || "-" : "Não aplicável"}</TableCell><TableCell>{renderEstoqueBadge(p)}</TableCell><TableCell className="text-right">{renderActions(p, true)}</TableCell></TableRow>; })}</TableBody>
         </Table>
       </Card>
     );
   }
 
   function renderReservasTable() {
-    const reservados = list.filter((p) => p.estoqueReservado > 0);
+    const reservados = list.filter((p) => controlaEstoqueProduto(p) && p.estoqueReservado > 0);
     return (
       <Card className="hidden overflow-x-auto p-0 md:block">
         <Table>
           <TableHeader><TableRow><TableHead>Produto</TableHead><TableHead className="text-right">Estoque atual</TableHead><TableHead className="text-right">Reservado</TableHead><TableHead className="text-right">Disponível</TableHead><TableHead>Local</TableHead><TableHead>Alerta</TableHead><TableHead className="text-right">Ações</TableHead></TableRow></TableHeader>
-          <TableBody>{reservados.map((p) => { const disp = estoqueDisponivel(p); return <TableRow key={p.id}><TableCell><button className="text-left font-medium hover:underline" onClick={() => setSelectedId(p.id)}>{p.nome}<span className="block font-mono text-xs text-muted-foreground">{p.codigo}</span></button></TableCell><TableCell className="text-right">{fmtNum(p.estoqueAtual)}</TableCell><TableCell className="text-right">{fmtNum(p.estoqueReservado)}</TableCell><TableCell className={disp < 0 ? "text-right font-semibold text-destructive" : "text-right"}>{fmtNum(disp)}</TableCell><TableCell>{p.localEstoque || "-"}</TableCell><TableCell>{disp < 0 ? <Badge className="bg-destructive/15 text-destructive">Reserva acima do estoque</Badge> : <Badge variant="outline">Reserva vinculada ao produto</Badge>}</TableCell><TableCell className="text-right">{renderActions(p, true)}</TableCell></TableRow>; })}</TableBody>
+          <TableBody>{reservados.map((p) => { const disp = estoqueDisponivelProduto(p); return <TableRow key={p.id}><TableCell><button className="text-left font-medium hover:underline" onClick={() => setSelectedId(p.id)}>{p.nome}<span className="block font-mono text-xs text-muted-foreground">{p.codigo}</span></button></TableCell><TableCell className="text-right">{fmtNum(p.estoqueAtual)}</TableCell><TableCell className="text-right">{fmtNum(p.estoqueReservado)}</TableCell><TableCell className={disp < 0 ? "text-right font-semibold text-destructive" : "text-right"}>{fmtNum(disp)}</TableCell><TableCell>{p.localEstoque || "-"}</TableCell><TableCell>{disp < 0 ? <Badge className="bg-destructive/15 text-destructive">Reserva acima do estoque</Badge> : <Badge variant="outline">Reserva vinculada ao produto</Badge>}</TableCell><TableCell className="text-right">{renderActions(p, true)}</TableCell></TableRow>; })}</TableBody>
         </Table>
         {reservados.length === 0 && <p className="p-4 text-sm text-muted-foreground">Nenhum produto com estoque reservado nos filtros atuais.</p>}
       </Card>
@@ -305,7 +322,8 @@ export default function Produtos() {
     return (
       <div className="space-y-2 md:hidden">
         {list.map((p) => {
-          const disp = estoqueDisponivel(p);
+          const controla = controlaEstoqueProduto(p);
+          const disp = estoqueDisponivelProduto(p);
           return (
             <Card key={p.id} className="space-y-2 p-3">
               <div className="flex items-start justify-between gap-2">
@@ -314,8 +332,10 @@ export default function Produtos() {
               </div>
               <div className="grid grid-cols-2 gap-1 text-xs">
                 <span>Preço: <b>{fmtBRL(p.precoLista)}</b></span><span>Custo: <b>{fmtBRL(p.custo)}</b></span>
-                <span>Atual: <b>{fmtNum(p.estoqueAtual)}</b></span><span>Reservado: <b>{fmtNum(p.estoqueReservado)}</b></span>
-                <span className={disp < 0 ? "text-destructive" : ""}>Disponível: <b>{fmtNum(disp)}</b></span><span>Local: <b>{p.localEstoque || "-"}</b></span>
+                {controla ? (<>
+                  <span>Atual: <b>{fmtNum(p.estoqueAtual)}</b></span><span>Reservado: <b>{fmtNum(p.estoqueReservado)}</b></span>
+                  <span className={disp < 0 ? "text-destructive" : ""}>Disponível: <b>{fmtNum(disp)}</b></span><span>Local: <b>{p.localEstoque || "-"}</b></span>
+                </>) : <span className="col-span-2"><Badge variant="outline">Representação</Badge> Produto sem controle de estoque</span>}
               </div>
               <div className="flex justify-end gap-1">{renderActions(p, true)}</div>
             </Card>
@@ -330,7 +350,8 @@ export default function Produtos() {
   }
 
   function renderDialog() {
-    const disponivel = estoqueDisponivel(form);
+    const controlaEstoque = controlaEstoqueProduto(form);
+    const disponivel = estoqueDisponivelProduto(form);
     return (
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-3xl">
@@ -345,14 +366,31 @@ export default function Produtos() {
             <div><Label>Preço mínimo</Label><Input type="number" step="0.01" value={form.precoMinimo} onChange={(e) => setForm({ ...form, precoMinimo: +e.target.value })} /></div>
             <div><Label>Custo</Label><Input type="number" step="0.01" value={form.custo} onChange={(e) => setForm({ ...form, custo: +e.target.value })} /></div>
             <div><Label>Margem (%)</Label><Input type="number" value={form.precoLista > 0 ? (((form.precoLista - form.custo) / form.precoLista) * 100).toFixed(2) : 0} disabled /></div>
-            <div><Label>Estoque atual</Label><Input type="number" value={form.estoqueAtual} onChange={(e) => setForm({ ...form, estoqueAtual: +e.target.value })} /></div>
-            <div><Label>Estoque reservado</Label><Input type="number" value={form.estoqueReservado} onChange={(e) => setForm({ ...form, estoqueReservado: +e.target.value })} /></div>
-            <div><Label>Estoque disponível</Label><Input className={disponivel < 0 ? "border-destructive text-destructive" : ""} type="number" value={disponivel} disabled /></div>
-            <div><Label>Local estoque</Label><Input value={form.localEstoque} onChange={(e) => setForm({ ...form, localEstoque: e.target.value })} /></div>
+            <div className="rounded-md border p-3 md:col-span-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <Label>Controla estoque?</Label>
+                  <p className="text-xs text-muted-foreground">Marque “Sim” apenas para produtos com controle físico de estoque.</p>
+                </div>
+                <div className="flex items-center gap-2 text-sm">
+                  <span>Não</span>
+                  <Switch checked={controlaEstoque} onCheckedChange={(checked) => setForm({ ...form, controlaEstoque: checked })} />
+                  <span>Sim</span>
+                </div>
+              </div>
+            </div>
+            {controlaEstoque ? (<>
+              <div><Label>Estoque atual</Label><Input type="number" value={form.estoqueAtual} onChange={(e) => setForm({ ...form, estoqueAtual: +e.target.value })} /></div>
+              <div><Label>Estoque reservado</Label><Input type="number" value={form.estoqueReservado} onChange={(e) => setForm({ ...form, estoqueReservado: +e.target.value })} /></div>
+              <div><Label>Estoque disponível</Label><Input className={disponivel < 0 ? "border-destructive text-destructive" : ""} type="number" value={disponivel} disabled /></div>
+              <div><Label>Local estoque</Label><Input value={form.localEstoque} onChange={(e) => setForm({ ...form, localEstoque: e.target.value })} /></div>
+            </>) : (
+              <div className="rounded-md bg-muted/50 p-3 text-sm text-muted-foreground md:col-span-3">Produto sem controle de estoque — representação/comissão. Preço, custo, fornecedor, categoria e uso comercial continuam disponíveis; dados de estoque existentes são preservados.</div>
+            )}
             <div><Label>Status</Label><Select value={form.ativo ? "1" : "0"} onValueChange={(v) => setForm({ ...form, ativo: v === "1" })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="1">Ativo</SelectItem><SelectItem value="0">Inativo</SelectItem></SelectContent></Select></div>
             <div className="md:col-span-3"><Label>Observações</Label><Textarea rows={2} value={form.observacoes || ""} onChange={(e) => setForm({ ...form, observacoes: e.target.value })} /></div>
           </div>
-          {disponivel < 0 && <p className="text-sm text-destructive">Alerta: estoque disponível negativo ({fmtNum(disponivel)}). O produto será salvo para preservar dados, mas deve ser revisado.</p>}
+          {controlaEstoque && disponivel < 0 && <p className="text-sm text-destructive">Alerta: estoque disponível negativo ({fmtNum(disponivel)}). O produto será salvo para preservar dados, mas deve ser revisado.</p>}
           <DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button><Button onClick={save}>Salvar</Button></DialogFooter>
         </DialogContent>
       </Dialog>
