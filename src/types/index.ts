@@ -384,6 +384,7 @@ export interface Produto {
   validadePreco?: string;
   custo: number;
   margem?: number;
+  controlaEstoque?: boolean;
   estoqueAtual: number;
   estoqueReservado: number;
   localEstoque?: string;

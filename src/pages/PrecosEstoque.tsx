@@ -7,10 +7,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useAppStore } from "@/store/AppStore";
 import { fmtNum } from "@/utils/calculations";
+import { controlaEstoqueProduto } from "@/utils/productStock";
 import { Save, Lock, Unlock } from "lucide-react";
 import { toast } from "sonner";
 
-function estoqueStatus(disp: number) {
+function estoqueStatus(controlaEstoque: boolean, disp: number) {
+  if (!controlaEstoque) return { cls: "bg-muted text-muted-foreground", label: "Representação" };
   if (disp <= 0) return { cls: "bg-destructive/15 text-destructive", label: "Sem estoque" };
   if (disp < 20) return { cls: "bg-warning/15 text-warning", label: "Baixo" };
   return { cls: "bg-success/15 text-success", label: "Adequado" };
@@ -41,6 +43,11 @@ export default function PrecosEstoque() {
   };
 
   const reservar = (id: string, qtd: number) => {
+    const produto = produtos.find((p) => p.id === id);
+    if (produto && !controlaEstoqueProduto(produto)) {
+      toast.info("Produto sem controle de estoque: reservas físicas não se aplicam.");
+      return;
+    }
     setProdutos(prev => prev.map(p => p.id === id ? { ...p, estoqueReservado: Math.max(0, p.estoqueReservado + qtd) } : p));
     toast.success(qtd > 0 ? "Estoque reservado." : "Reserva liberada.");
   };
@@ -99,21 +106,22 @@ export default function PrecosEstoque() {
                   const e = edits[p.id] || {};
                   const at = e.estoqueAtual ?? p.estoqueAtual;
                   const re = e.estoqueReservado ?? p.estoqueReservado;
+                  const controla = controlaEstoqueProduto(p);
                   const disp = at - re;
-                  const st = estoqueStatus(disp);
+                  const st = estoqueStatus(controla, disp);
                   return (
                     <TableRow key={p.id}>
                       <TableCell className="font-medium">{p.nome}</TableCell>
                       <TableCell>{p.unidade}</TableCell>
-                      <TableCell><Input type="number" className="h-8 w-24" value={at} onChange={ev => upd(p.id, "estoqueAtual", +ev.target.value)} /></TableCell>
-                      <TableCell><Input type="number" className="h-8 w-24" value={re} onChange={ev => upd(p.id, "estoqueReservado", +ev.target.value)} /></TableCell>
-                      <TableCell className="text-right font-semibold">{fmtNum(disp)}</TableCell>
-                      <TableCell>{p.localEstoque}</TableCell>
+                      <TableCell>{controla ? <Input type="number" className="h-8 w-24" value={at} onChange={ev => upd(p.id, "estoqueAtual", +ev.target.value)} /> : "N/A"}</TableCell>
+                      <TableCell>{controla ? <Input type="number" className="h-8 w-24" value={re} onChange={ev => upd(p.id, "estoqueReservado", +ev.target.value)} /> : "N/A"}</TableCell>
+                      <TableCell className="text-right font-semibold">{controla ? fmtNum(disp) : "Não aplicável"}</TableCell>
+                      <TableCell>{controla ? p.localEstoque : "Não aplicável"}</TableCell>
                       <TableCell>{p.ultimaAtualizacao}</TableCell>
                       <TableCell><Badge className={st.cls}>{st.label}</Badge></TableCell>
                       <TableCell className="text-right">
-                        <Button size="sm" variant="ghost" onClick={() => reservar(p.id, 10)} title="Reservar 10"><Lock className="h-3.5 w-3.5" /></Button>
-                        <Button size="sm" variant="ghost" onClick={() => reservar(p.id, -10)} title="Liberar 10"><Unlock className="h-3.5 w-3.5" /></Button>
+                        <Button size="sm" variant="ghost" disabled={!controla} onClick={() => reservar(p.id, 10)} title="Reservar 10"><Lock className="h-3.5 w-3.5" /></Button>
+                        <Button size="sm" variant="ghost" disabled={!controla} onClick={() => reservar(p.id, -10)} title="Liberar 10"><Unlock className="h-3.5 w-3.5" /></Button>
                         <Button size="sm" variant="outline" disabled={!edits[p.id]} onClick={() => salvarLinha(p.id)}><Save className="mr-1 h-3 w-3" /> Salvar</Button>
                       </TableCell>
                     </TableRow>

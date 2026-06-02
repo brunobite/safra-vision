@@ -87,7 +87,7 @@ export default function Relatorios() {
           <TableRow><TableCell>Alerta visual</TableCell><TableCell>{alertLevel(pctMeta)}</TableCell></TableRow>
         </TableBody></Table>}
 
-        {filters.reportType === "produtos-estoque" && <Table><TableHeader><TableRow><TableHead>Produto</TableHead><TableHead>Disponível</TableHead><TableHead>Preço lista</TableHead></TableRow></TableHeader><TableBody>{store.produtos.map((p) => <TableRow key={p.id}><TableCell>{p.nome}</TableCell><TableCell>{p.estoqueAtual - p.estoqueReservado}</TableCell><TableCell>{fmtBRL(p.precoLista)}</TableCell></TableRow>)}</TableBody></Table>}
+        {filters.reportType === "produtos-estoque" && <Table><TableHeader><TableRow><TableHead>Produto</TableHead><TableHead>Controle</TableHead><TableHead>Disponível</TableHead><TableHead>Preço lista</TableHead></TableRow></TableHeader><TableBody>{store.produtos.map((p) => <TableRow key={p.id}><TableCell>{p.nome}</TableCell><TableCell>{controlaEstoqueProduto(p) ? "Com controle" : "Representação"}</TableCell><TableCell>{controlaEstoqueProduto(p) ? estoqueDisponivelProduto(p) : "Não aplicável"}</TableCell><TableCell>{fmtBRL(p.precoLista)}</TableCell></TableRow>)}</TableBody></Table>}
 
         {["geral", "semanal", "mensal"].includes(filters.reportType) && <p className="text-sm">Visitas realizadas: {lancs.filter(l => l.tipo === "Visita").length} • Lançamentos: {lancs.length} • Eventos lançados: {store.eventos.length}</p>}
       </ReportSection>
