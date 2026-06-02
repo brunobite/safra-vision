@@ -9,5 +9,5 @@ export function controlaEstoqueProduto(produto: Pick<Produto, "controlaEstoque" 
 }
 
 export function estoqueDisponivelProduto(produto: Pick<Produto, "estoqueAtual" | "estoqueReservado">) {
-  return produto.estoqueAtual - produto.estoqueReservado;
+  return (produto.estoqueAtual ?? 0) - (produto.estoqueReservado ?? 0);
 }

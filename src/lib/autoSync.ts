@@ -1,7 +1,7 @@
 import type { Session } from "@supabase/supabase-js";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import { getPendingSyncItems } from "@/lib/syncQueue";
-import { syncPendingQueue, type SyncMetaPayload, type SyncSummary } from "@/lib/supabaseSync";
+import { enqueueFullLocalSnapshotForSync, syncPendingQueue, type SyncMetaPayload, type SyncSummary } from "@/lib/supabaseSync";
 
 export type AutoSyncAccessStatus = "pending" | "active" | "blocked" | "inactive" | null;
 export type AutoSyncMode = "auto" | "manual";
@@ -62,6 +62,9 @@ export async function runControlledUploadSync(
 
   let pendingItems;
   try {
+    if (options.mode === "manual" && !context.firstUploadConfirmed) {
+      await enqueueFullLocalSnapshotForSync();
+    }
     pendingItems = await getPendingSyncItems();
   } catch (error) {
     const message = error instanceof Error ? error.message : "Erro desconhecido ao verificar pendências locais.";

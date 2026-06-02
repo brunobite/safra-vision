@@ -18,8 +18,28 @@ export interface SyncQueueItem {
 
 const STORE_NAME: StoreName = "syncQueue";
 const TRACKED_STORES = new Set<StoreName>([
-  "clientes", "lancamentos", "oportunidades", "historicoFunil", "orcamentos", "negocios", "proximasAcoes", "relatoriosVisita",
-  "vendedores", "produtos", "formasPagamento", "prazosPagamento", "appConfig",
+  "clientes",
+  "vendedores",
+  "produtos",
+  "lancamentos",
+  "oportunidades",
+  "historicoFunil",
+  "orcamentos",
+  "negocios",
+  "proximasAcoes",
+  "relatoriosVisita",
+  "metasEmpresa",
+  "metasPessoais",
+  "metasVendedor",
+  "metasCategoria",
+  "regrasComissao",
+  "configuracoes",
+  "empresas",
+  "eventos",
+  "prioridadesP1",
+  "formasPagamento",
+  "prazosPagamento",
+  "appConfig",
 ]);
 
 const now = () => new Date().toISOString();
@@ -86,7 +106,17 @@ async function updateSyncItem(id: string, updater: (item: SyncQueueItem) => Sync
 }
 
 export const markSyncItemProcessing = (id: string) => updateSyncItem(id, (item) => ({ ...item, status: "processing", updatedAt: now(), attempts: item.attempts + 1 }));
-export const markSyncItemSynced = (id: string) => updateSyncItem(id, (item) => ({ ...item, status: "synced", updatedAt: now(), lastError: undefined }));
+export async function markSyncItemSynced(id: string) {
+  return withDb(async (db) => {
+    const tx = db.transaction(STORE_NAME, "readwrite");
+    tx.objectStore(STORE_NAME).delete(id);
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error ?? new Error("Erro ao remover sync item sincronizado."));
+      tx.onabort = () => reject(tx.error ?? new Error("Remoção de sync item sincronizado abortada."));
+    });
+  });
+}
 export const markSyncItemError = (id: string, error: string) => updateSyncItem(id, (item) => ({ ...item, status: "error", updatedAt: now(), lastError: error }));
 
 export async function getAllSyncItems() {
