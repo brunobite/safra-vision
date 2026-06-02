@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { KpiCard } from "@/components/dashboard/KpiCard";
 import { useAppStore } from "@/store/AppStore";
 import { fmtBRL, fmtNum, fmtPct } from "@/utils/calculations";
-import { AlertTriangle, Award, CalendarDays, Clock, FileText, Layers, Percent, TrendingUp, Users } from "lucide-react";
+import { AlertTriangle, Award, CalendarDays, ChevronDown, Clock, FileText, Filter, Layers, Percent, TrendingUp, Users } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,6 +31,17 @@ const OPEN_OPPORTUNITY_STAGES = [
 const CLOSED_OPPORTUNITY_STAGES = ["Ganha", "Perdida", "Cancelada"];
 const ACTION_OPEN_STATUSES: StatusProximaAcao[] = ["Pendente", "Em andamento", "Reagendada"];
 const STUCK_DAYS_LIMIT = 30;
+
+const buildDefaultFilters = (hoje: string) => ({
+  dataInicial: hoje.slice(0, 7) + "-01",
+  dataFinal: hoje,
+  vendedor: "",
+  clienteId: "",
+  rota: "",
+  etapa: "",
+  statusOportunidade: "",
+  statusAcao: "",
+});
 
 function todayIso() {
   return new Date().toISOString().slice(0, 10);
@@ -86,16 +97,9 @@ export default function Dashboard() {
   } = useAppStore();
   const nav = useNavigate();
   const hoje = todayIso();
-  const [filters, setFilters] = useState({
-    dataInicial: hoje.slice(0, 7) + "-01",
-    dataFinal: hoje,
-    vendedor: "",
-    clienteId: "",
-    rota: "",
-    etapa: "",
-    statusOportunidade: "",
-    statusAcao: "",
-  });
+  const defaultFilters = useMemo(() => buildDefaultFilters(hoje), [hoje]);
+  const [filters, setFilters] = useState(defaultFilters);
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   const rotas = useMemo(() => Array.from(new Set(clientes.map((c) => c.rota).filter(Boolean))).sort(), [clientes]);
   const etapas = useMemo(() => Array.from(new Set([...OPEN_OPPORTUNITY_STAGES, ...oportunidades.map((o) => o.etapa)])).sort(), [oportunidades]);
@@ -254,8 +258,12 @@ export default function Dashboard() {
     };
   }, [clienteMap, hoje, scoped]);
 
+  const activeFiltersCount = useMemo(
+    () => (Object.keys(defaultFilters) as Array<keyof typeof defaultFilters>).filter((key) => filters[key] !== defaultFilters[key]).length,
+    [defaultFilters, filters]
+  );
   const updateFilter = (key: keyof typeof filters, value: string) => setFilters((prev) => ({ ...prev, [key]: value === ALL ? "" : value }));
-  const clearFilters = () => setFilters({ dataInicial: hoje.slice(0, 7) + "-01", dataFinal: hoje, vendedor: "", clienteId: "", rota: "", etapa: "", statusOportunidade: "", statusAcao: "" });
+  const clearFilters = () => setFilters(defaultFilters);
 
   return (
     <div className="space-y-5">
@@ -275,20 +283,39 @@ export default function Dashboard() {
       </Card>
 
       <Card className="p-4">
-        <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-          <h2 className="text-sm font-semibold text-foreground">Filtros do painel</h2>
-          <Button type="button" variant="ghost" size="sm" onClick={clearFilters}>Limpar filtros</Button>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <Button
+              type="button"
+              variant="outline"
+              className="justify-start"
+              aria-expanded={filtersOpen}
+              aria-controls="dashboard-filters-panel"
+              onClick={() => setFiltersOpen((open) => !open)}
+            >
+              <Filter className="mr-2 h-4 w-4" />
+              Filtros
+              {activeFiltersCount > 0 && <Badge className="ml-2" variant="secondary">{activeFiltersCount}</Badge>}
+              <ChevronDown className={`ml-2 h-4 w-4 transition-transform ${filtersOpen ? "rotate-180" : ""}`} />
+            </Button>
+            {activeFiltersCount > 0 && !filtersOpen && (
+              <p className="mt-2 text-xs text-muted-foreground">{activeFiltersCount} filtro(s) ativo(s) no painel.</p>
+            )}
+          </div>
+          <Button type="button" variant="ghost" size="sm" onClick={clearFilters} disabled={activeFiltersCount === 0}>Limpar filtros</Button>
         </div>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
-          <div><Label className="text-xs">Período inicial</Label><Input type="date" value={filters.dataInicial} onChange={(e) => updateFilter("dataInicial", e.target.value)} /></div>
-          <div><Label className="text-xs">Período final</Label><Input type="date" value={filters.dataFinal} onChange={(e) => updateFilter("dataFinal", e.target.value)} /></div>
-          <div><Label className="text-xs">Vendedor</Label><Select value={filters.vendedor || ALL} onValueChange={(value) => updateFilter("vendedor", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todos</SelectItem>{vendedores.map((vendedor) => <SelectItem key={vendedor.id} value={vendedor.nome}>{vendedor.nome}</SelectItem>)}</SelectContent></Select></div>
-          <div><Label className="text-xs">Cliente</Label><Select value={filters.clienteId || ALL} onValueChange={(value) => updateFilter("clienteId", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todos</SelectItem>{clientes.map((cliente) => <SelectItem key={cliente.id} value={cliente.id}>{cliente.nome}</SelectItem>)}</SelectContent></Select></div>
-          <div><Label className="text-xs">Rota</Label><Select value={filters.rota || ALL} onValueChange={(value) => updateFilter("rota", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todas</SelectItem>{rotas.map((rota) => <SelectItem key={rota} value={rota}>{rota}</SelectItem>)}</SelectContent></Select></div>
-          <div><Label className="text-xs">Etapa do funil</Label><Select value={filters.etapa || ALL} onValueChange={(value) => updateFilter("etapa", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todas</SelectItem>{etapas.map((etapa) => <SelectItem key={etapa} value={etapa}>{etapa}</SelectItem>)}</SelectContent></Select></div>
-          <div><Label className="text-xs">Status oportunidade</Label><Select value={filters.statusOportunidade || ALL} onValueChange={(value) => updateFilter("statusOportunidade", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todos</SelectItem><SelectItem value="aberta">Aberta</SelectItem><SelectItem value="ganha">Ganha</SelectItem><SelectItem value="perdida">Perdida</SelectItem><SelectItem value="cancelada">Cancelada</SelectItem></SelectContent></Select></div>
-          <div><Label className="text-xs">Status da ação</Label><Select value={filters.statusAcao || ALL} onValueChange={(value) => updateFilter("statusAcao", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todos</SelectItem>{statusAcoes.map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}</SelectContent></Select></div>
-        </div>
+        {filtersOpen && (
+          <div id="dashboard-filters-panel" className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
+            <div><Label className="text-xs">Período inicial</Label><Input type="date" value={filters.dataInicial} onChange={(e) => updateFilter("dataInicial", e.target.value)} /></div>
+            <div><Label className="text-xs">Período final</Label><Input type="date" value={filters.dataFinal} onChange={(e) => updateFilter("dataFinal", e.target.value)} /></div>
+            <div><Label className="text-xs">Vendedor</Label><Select value={filters.vendedor || ALL} onValueChange={(value) => updateFilter("vendedor", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todos</SelectItem>{vendedores.map((vendedor) => <SelectItem key={vendedor.id} value={vendedor.nome}>{vendedor.nome}</SelectItem>)}</SelectContent></Select></div>
+            <div><Label className="text-xs">Cliente</Label><Select value={filters.clienteId || ALL} onValueChange={(value) => updateFilter("clienteId", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todos</SelectItem>{clientes.map((cliente) => <SelectItem key={cliente.id} value={cliente.id}>{cliente.nome}</SelectItem>)}</SelectContent></Select></div>
+            <div><Label className="text-xs">Rota</Label><Select value={filters.rota || ALL} onValueChange={(value) => updateFilter("rota", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todas</SelectItem>{rotas.map((rota) => <SelectItem key={rota} value={rota}>{rota}</SelectItem>)}</SelectContent></Select></div>
+            <div><Label className="text-xs">Etapa do funil</Label><Select value={filters.etapa || ALL} onValueChange={(value) => updateFilter("etapa", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todas</SelectItem>{etapas.map((etapa) => <SelectItem key={etapa} value={etapa}>{etapa}</SelectItem>)}</SelectContent></Select></div>
+            <div><Label className="text-xs">Status oportunidade</Label><Select value={filters.statusOportunidade || ALL} onValueChange={(value) => updateFilter("statusOportunidade", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todos</SelectItem><SelectItem value="aberta">Aberta</SelectItem><SelectItem value="ganha">Ganha</SelectItem><SelectItem value="perdida">Perdida</SelectItem><SelectItem value="cancelada">Cancelada</SelectItem></SelectContent></Select></div>
+            <div><Label className="text-xs">Status da ação</Label><Select value={filters.statusAcao || ALL} onValueChange={(value) => updateFilter("statusAcao", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todos</SelectItem>{statusAcoes.map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}</SelectContent></Select></div>
+          </div>
+        )}
       </Card>
 
       <div className="grid grid-cols-2 gap-2 sm:gap-3 md:grid-cols-3 xl:grid-cols-6">
