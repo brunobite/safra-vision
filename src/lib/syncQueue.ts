@@ -18,7 +18,7 @@ export interface SyncQueueItem {
 
 const STORE_NAME: StoreName = "syncQueue";
 const TRACKED_STORES = new Set<StoreName>([
-  "clientes", "lancamentos", "oportunidades", "orcamentos", "negocios", "proximasAcoes",
+  "clientes", "lancamentos", "oportunidades", "orcamentos", "negocios", "proximasAcoes", "relatoriosVisita",
   "vendedores", "produtos", "formasPagamento", "prazosPagamento", "appConfig",
 ]);
 

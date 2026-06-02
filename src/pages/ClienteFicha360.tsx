@@ -34,9 +34,10 @@ function acaoTemLancamento(acao: ProximaAcao, lancamentos: Lancamento[]) {
 export default function ClienteFicha360() {
   const nav = useNavigate();
   const { id } = useParams();
-  const { clienteById, lancamentos, proximasAcoes, orcamentos, negocios, empresas, oportunidades } = useAppStore();
+  const { clienteById, lancamentos, proximasAcoes, relatoriosVisita, orcamentos, negocios, empresas, oportunidades } = useAppStore();
   const cliente = clienteById(id || "");
 
+  const relatoriosCliente = useMemo(() => relatoriosVisita.filter((relatorio) => relatorio.clienteId === id).sort((a, b) => `${b.dataVisita}T${b.horario || ""}`.localeCompare(`${a.dataVisita}T${a.horario || ""}`)), [relatoriosVisita, id]);
   const lancamentosVisita = useMemo(() => lancamentos.filter((l) => l.clienteId === id && l.tipo === "Visita" && !isLancamentoCancelado(l.status)), [lancamentos, id]);
   const acoesCliente = useMemo(() => proximasAcoes.filter((a) => a.clienteId === id), [proximasAcoes, id]);
   const visitas = useMemo<VisitaConsolidada[]>(() => {
@@ -67,12 +68,13 @@ export default function ClienteFicha360() {
       }
       itens.push({ id: `a-${a.id}`, data: a.data, tipo: "Próxima ação", titulo: `${a.tipo}: ${a.descricao}`, detalhe: a.objetivo, status: a.status });
     });
+    relatoriosCliente.forEach((relatorio) => itens.push({ id: `rv-${relatorio.id}`, data: relatorio.dataVisita, tipo: "Relatório de visita", titulo: relatorio.resumoVisita, detalhe: relatorio.necessidadeIdentificada || relatorio.resultadoVisita, status: relatorio.resultadoVisita }));
     lancamentos.filter((l) => l.clienteId === id && !isLancamentoCancelado(l.status)).forEach((l) => itens.push({ id: `l-${l.id}`, data: l.data, tipo: l.tipo, titulo: l.oQueFoiRealizado || l.eventoAcao || l.tipo, detalhe: l.observacao, status: l.status }));
     oportunidades.filter((o) => o.clienteId === id).forEach((o) => itens.push({ id: `op-${o.id}`, data: o.updatedAt || o.createdAt, tipo: "Oportunidade", titulo: o.necessidade || o.segmento || "Oportunidade comercial", detalhe: fmtBRL(o.valorFinal || o.valorEstimado || 0), status: o.etapa }));
     orcamentos.filter((o) => o.clienteId === id).forEach((o) => itens.push({ id: `o-${o.id}`, data: o.data, tipo: "Orçamento", titulo: `Orçamento ${o.codigo}`, detalhe: fmtBRL(o.valorTotal), status: o.status }));
     negocios.filter((n) => n.clienteId === id).forEach((n) => itens.push({ id: `n-${n.id}`, data: n.ultimaAtualizacao || n.dataCriacao, tipo: "Negócio", titulo: n.nome || n.categoria, detalhe: fmtBRL(n.valorFechado || n.valorPotencial), status: n.status }));
     return itens.sort((a, b) => b.data.localeCompare(a.data));
-  }, [id, acoesCliente, lancamentos, lancamentosVisita, oportunidades, orcamentos, negocios]);
+  }, [id, acoesCliente, lancamentos, lancamentosVisita, relatoriosCliente, oportunidades, orcamentos, negocios]);
 
   if (!cliente) return <Card className="p-4">Cliente não encontrado.</Card>;
 
@@ -104,7 +106,7 @@ export default function ClienteFicha360() {
       <h2 className="mb-3 text-sm font-semibold">Resumo comercial</h2>
       <div className="grid grid-cols-2 gap-2 text-sm md:grid-cols-5">
         <div>Potencial: <b>{fmtBRL(cliente.potencialTotal || 0)}</b></div><div>Realizado: <b>{fmtBRL(realizadoCliente)}</b></div><div>Gap: <b>{fmtBRL((cliente.potencialTotal || 0) - realizadoCliente)}</b></div><div>Última visita: <b>{formatDateBR(ultimaVisita) || "—"}</b></div><div>Próxima ação: <b>{proximaPendente ? formatDateBR(proximaPendente.data) : "—"}</b></div>
-        <div>Dias sem contato: <b>{diasSemContato}</b></div><div>Total visitas: <b>{visitas.length}</b></div><div>Ações abertas: <b>{acoesAbertas}</b></div><div>Ações vencidas: <b>{acoesVencidas}</b></div><div>Orç. abertos: <b>{orcAbertos}</b></div><div>Orç. enviados: <b>{orcEnviados}</b></div><div>Orç. aprovados: <b>{orcAprovados}</b></div><div>Orç. perdidos: <b>{orcPerdidos}</b></div><div>Negócios ganhos: <b>{negociosGanhos}</b></div>
+        <div>Dias sem contato: <b>{diasSemContato}</b></div><div>Total visitas: <b>{visitas.length}</b></div><div>Relatórios de visita: <b>{relatoriosCliente.length}</b></div><div>Ações abertas: <b>{acoesAbertas}</b></div><div>Ações vencidas: <b>{acoesVencidas}</b></div><div>Orç. abertos: <b>{orcAbertos}</b></div><div>Orç. enviados: <b>{orcEnviados}</b></div><div>Orç. aprovados: <b>{orcAprovados}</b></div><div>Orç. perdidos: <b>{orcPerdidos}</b></div><div>Negócios ganhos: <b>{negociosGanhos}</b></div>
       </div>
     </Card>
 
@@ -127,6 +129,30 @@ export default function ClienteFicha360() {
       </div>
     </Card>
 
+
+
+    <Card className="p-4">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-sm font-semibold">Histórico comercial e relatórios de visita</h2>
+        <Badge variant="outline">{relatoriosCliente.length} relatório(s)</Badge>
+      </div>
+      <div className="space-y-2">
+        {relatoriosCliente.length === 0 && <div className="rounded border border-dashed p-3 text-sm text-muted-foreground">Nenhum relatório de visita registrado para este cliente.</div>}
+        {relatoriosCliente.slice(0, 5).map((relatorio) => <div key={relatorio.id} className="rounded border p-3 text-sm">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <b>{formatDateBR(relatorio.dataVisita)} {relatorio.horario ? `às ${relatorio.horario}` : ""}</b>
+              <div className="text-xs text-muted-foreground">{relatorio.vendedor || "Sem vendedor"} • {relatorio.fazenda || "Fazenda não informada"} • {relatorio.cidade || "Cidade não informada"}</div>
+            </div>
+            <Badge variant={relatorio.oportunidadeId ? "default" : "outline"}>{relatorio.resultadoVisita}</Badge>
+          </div>
+          <div className="mt-2"><b>Resumo:</b> {relatorio.resumoVisita}</div>
+          <div className="mt-1 text-muted-foreground"><b className="text-foreground">Necessidade:</b> {relatorio.necessidadeIdentificada || "—"}</div>
+          <div className="mt-1 text-muted-foreground"><b className="text-foreground">Próxima ação recomendada:</b> {relatorio.proximaAcaoRecomendada || "—"}</div>
+          <div className="mt-1 text-xs text-muted-foreground">Vínculos: ação {relatorio.acaoId || "—"} • lançamento {relatorio.lancamentoId || "—"} • oportunidade {relatorio.oportunidadeId || "—"}</div>
+        </div>)}
+      </div>
+    </Card>
 
 
     <Card className="p-4">

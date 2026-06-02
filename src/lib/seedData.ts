@@ -27,6 +27,7 @@ export const seedData = {
   orcamentoItens: [],
   empresas: [],
   proximasAcoes: [],
+  relatoriosVisita: [],
   formasPagamento: [],
   importLogs: [],
   prazosPagamento: [],

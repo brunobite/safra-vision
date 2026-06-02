@@ -23,6 +23,7 @@ export type SyncableStore =
   | "orcamentos"
   | "negocios"
   | "proximasAcoes"
+  | "relatoriosVisita"
   | "vendedores"
   | "produtos"
   | "formasPagamento"
@@ -36,6 +37,7 @@ type RemoteTable =
   | "orcamentos"
   | "negocios"
   | "proximas_acoes"
+  | "relatorios_visita"
   | "vendedores"
   | "produtos"
   | "formas_pagamento"
@@ -92,6 +94,7 @@ const SYNCABLE_STORES: SyncableStore[] = [
   "orcamentos",
   "negocios",
   "proximasAcoes",
+  "relatoriosVisita",
   "vendedores",
   "produtos",
   "formasPagamento",
@@ -106,6 +109,7 @@ export const LOCAL_TO_REMOTE_TABLE: Record<SyncableStore, RemoteTable> = {
   orcamentos: "orcamentos",
   negocios: "negocios",
   proximasAcoes: "proximas_acoes",
+  relatoriosVisita: "relatorios_visita",
   vendedores: "vendedores",
   produtos: "produtos",
   formasPagamento: "formas_pagamento",
