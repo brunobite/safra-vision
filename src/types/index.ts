@@ -17,8 +17,8 @@ export const STATUS_FUNIL: StatusFunil[] = [
 
 export type OrigemNegocio = "Visita" | "Ligação" | "WhatsApp" | "Evento" | "Indicação" | "Manual" | "Outro";
 
-export type OrigemOportunidade = "Visita" | "WhatsApp" | "Ligação" | "Indicação" | "Manual" | "Outro";
-export type EtapaOportunidade = "Identificada" | "Qualificação" | "Necessidade definida" | "Orçamento em elaboração" | "Orçamento enviado" | "Negociação" | "Ganha" | "Perdida" | "Cancelada";
+export type OrigemOportunidade = "Visita" | "WhatsApp" | "Ligação" | "Indicação" | "Manual" | "Relatório de visita" | "Orçamento" | "Outro";
+export type EtapaOportunidade = "Oportunidade identificada" | "Qualificação técnica/comercial" | "Orçamento solicitado" | "Orçamento enviado" | "Negociação" | "Fechamento encaminhado" | "Ganha" | "Perdida" | "Suspensa/Sem timing" | "Identificada" | "Qualificação" | "Necessidade definida" | "Orçamento em elaboração" | "Cancelada";
 export type MotivoPerdaOportunidade = "Preço" | "Prazo" | "Concorrente" | "Condição de pagamento" | "Cliente adiou decisão" | "Sem interesse" | "Crédito" | "Produto indisponível" | "Outro";
 
 export type CategoriaProduto = string;
@@ -269,9 +269,13 @@ export interface OportunidadeItemEstimado {
 export interface OportunidadeComercial {
   id: string;
   clienteId: string;
+  clienteNome?: string;
+  vendedor?: string;
   origem: OrigemOportunidade;
+  origemTipo?: string;
   segmento?: string;
   necessidade?: string;
+  produtosInteresse?: string[];
   valorEstimado?: number;
   responsavel?: string;
   etapa: EtapaOportunidade;
@@ -279,14 +283,30 @@ export interface OportunidadeComercial {
   probabilidade?: number;
   observacoes?: string;
   itensEstimados?: OportunidadeItemEstimado[];
+  relatorioVisitaId?: string;
+  acaoId?: string;
   lancamentoId?: string;
+  orcamentoId?: string;
   negocioId?: string;
+  proximaAcaoId?: string;
   dataFechamento?: string;
   valorFinal?: number;
-  motivoPerda?: MotivoPerdaOportunidade;
+  motivoPerda?: MotivoPerdaOportunidade | string;
   concorrente?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface HistoricoFunil {
+  id: string;
+  oportunidadeId: string;
+  clienteId: string;
+  etapaAnterior?: EtapaOportunidade | string;
+  etapaNova: EtapaOportunidade | string;
+  dataMovimento: string;
+  vendedor?: string;
+  observacao?: string;
+  createdAt: string;
 }
 export interface MetaEmpresa {
   id: string;

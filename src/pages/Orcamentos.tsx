@@ -22,7 +22,7 @@ const validade7 = (base: string) => new Date(new Date(base).getTime() + 7 * 8640
 const novoItem = (idx: number, areaHa = 0): OrcamentoItem => ({ id: `i${Date.now()}-${idx}`, produtoId: "", produtoNome: "", categoria: "", unidadeProduto: "LT", dosePorHa: 0, unidadeDose: "L/ha", areaHa, quantidadeTotal: 0, precoUnitario: 0, valorTotalItem: 0, custoPorHaItem: 0 });
 
 export default function Orcamentos() {
-  const { orcamentos, setOrcamentos, clientes, produtos, empresas, oportunidades, vendedores, formasPagamento, prazosPagamento, proximasAcoes, setProximasAcoes, setOportunidades } = useAppStore();
+  const { orcamentos, setOrcamentos, clientes, produtos, empresas, oportunidades, vendedores, formasPagamento, prazosPagamento, proximasAcoes, setProximasAcoes, setOportunidades, setHistoricoFunil } = useAppStore();
   const [params] = useSearchParams();
   const vendedoresAtivos = vendedores.filter((v) => v.ativo);
   const formasPagamentoAtivas = formasPagamento.filter((f) => f.ativo);
@@ -40,7 +40,7 @@ export default function Orcamentos() {
   const [form, setForm] = useState<Orcamento>({ id: "", codigo: `ORC-${Date.now()}`, versao: 1, clienteId: "", empresaId: empresaPadrao, vendedor: "", data: now.slice(0, 10), validade: validade7(now.slice(0, 10)), status: "Rascunho", areaAplicacaoHa: 0, itens: [], subtotal: 0, descontoTotal: 0, valorTotal: 0, custoPorHectare: 0, createdAt: now, updatedAt: now, prazoPagamento: prazoPagamentoPadrao, formaPagamento: formaPagamentoPadrao });
 
   const isLegacy = Boolean(edit?.id && !edit?.oportunidadeId);
-  const oportunidadesAbertasCliente = oportunidades.filter((o) => o.clienteId === form.clienteId && !["Ganha", "Perdida", "Cancelada"].includes(o.etapa));
+  const oportunidadesAbertasCliente = oportunidades.filter((o) => o.clienteId === form.clienteId && !["Ganha", "Perdida", "Cancelada", "Suspensa/Sem timing"].includes(o.etapa));
   const statusOptions = Array.from(new Set([...(isLegacy ? [...STATUS_LEGADO, ...STATUS_OFICIAIS] : STATUS_OFICIAIS), form.status]));
   const orcamentoBloqueado = isOrcamentoBloqueado(form, oportunidades);
 
@@ -84,14 +84,24 @@ export default function Orcamentos() {
     setOrcamentos((prev) => edit ? prev.map((o) => (o.id === edit.id ? payload : o)) : [{ ...payload, id: idNovo, createdAt: new Date().toISOString(), orcamentoOrigemId: payload.orcamentoOrigemId || idNovo }, ...prev]);
 
     if (payload.oportunidadeId && payload.status === "Enviado") {
-      setOportunidades((prev) => prev.map((o) => o.id === payload.oportunidadeId && !["Ganha", "Perdida", "Cancelada"].includes(o.etapa) ? { ...o, etapa: "Orçamento enviado", updatedAt: new Date().toISOString() } : o));
+      const oportunidadeAtual = oportunidades.find((o) => o.id === payload.oportunidadeId);
+      setOportunidades((prev) => prev.map((o) => o.id === payload.oportunidadeId && !["Ganha", "Perdida", "Cancelada", "Suspensa/Sem timing"].includes(o.etapa) ? { ...o, etapa: "Orçamento enviado", orcamentoId: idNovo, updatedAt: new Date().toISOString() } : o));
+      if (oportunidadeAtual && oportunidadeAtual.etapa !== "Orçamento enviado") {
+        const current = new Date().toISOString();
+        setHistoricoFunil((prev) => [{ id: `hf${Date.now()}-${idNovo}`, oportunidadeId: oportunidadeAtual.id, clienteId: oportunidadeAtual.clienteId, etapaAnterior: oportunidadeAtual.etapa, etapaNova: "Orçamento enviado", dataMovimento: current, vendedor: oportunidadeAtual.vendedor || oportunidadeAtual.responsavel || payload.responsavel || payload.vendedor, observacao: `Orçamento ${payload.codigo} marcado como enviado.`, createdAt: current }, ...prev]);
+      }
       if (!payload.proximaAcaoId) {
         setProximasAcoes((prev) => [{ id: `pa${Date.now()}`, clienteId: payload.clienteId, oportunidadeId: payload.oportunidadeId, orcamentoId: idNovo, responsavel: payload.responsavel || payload.vendedor || "", descricao: `Follow-up de orçamento enviado ${payload.codigo} v${payload.versao || 1}`, tipo: "Follow-up", data: payload.validade || payload.data, status: "Pendente", origem: "Orçamento", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }, ...prev]);
       }
     }
 
     if (payload.oportunidadeId && ["Em revisão", "Reenviado"].includes(payload.status)) {
-      setOportunidades((prev) => prev.map((o) => o.id === payload.oportunidadeId && !["Ganha", "Perdida", "Cancelada"].includes(o.etapa) ? { ...o, etapa: "Negociação", updatedAt: new Date().toISOString() } : o));
+      const oportunidadeAtual = oportunidades.find((o) => o.id === payload.oportunidadeId);
+      setOportunidades((prev) => prev.map((o) => o.id === payload.oportunidadeId && !["Ganha", "Perdida", "Cancelada", "Suspensa/Sem timing"].includes(o.etapa) ? { ...o, etapa: "Negociação", orcamentoId: idNovo, updatedAt: new Date().toISOString() } : o));
+      if (oportunidadeAtual && oportunidadeAtual.etapa !== "Negociação") {
+        const current = new Date().toISOString();
+        setHistoricoFunil((prev) => [{ id: `hf${Date.now()}-${idNovo}-neg`, oportunidadeId: oportunidadeAtual.id, clienteId: oportunidadeAtual.clienteId, etapaAnterior: oportunidadeAtual.etapa, etapaNova: "Negociação", dataMovimento: current, vendedor: oportunidadeAtual.vendedor || oportunidadeAtual.responsavel || payload.responsavel || payload.vendedor, observacao: `Orçamento ${payload.codigo} entrou em ${payload.status}.`, createdAt: current }, ...prev]);
+      }
     }
 
     if (payload.status === "Aprovado") toast.message("Orçamento aprovado. Feche a oportunidade como Ganha para criar negócio.");

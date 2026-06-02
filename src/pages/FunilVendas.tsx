@@ -9,41 +9,245 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useAppStore } from "@/store/AppStore";
-import { EtapaOportunidade, MotivoPerdaOportunidade, OportunidadeComercial, OrigemOportunidade, CATEGORIAS_PRODUTO, TipoProximaAcao } from "@/types";
-import { fmtBRL, fmtNum, fmtPct } from "@/utils/calculations";
+import { EtapaOportunidade, HistoricoFunil, MotivoPerdaOportunidade, OportunidadeComercial, OrigemOportunidade, TipoProximaAcao } from "@/types";
+import { fmtBRL, fmtPct } from "@/utils/calculations";
+import { formatDateBR } from "@/utils/dateUtils";
 import { GlobalFilters } from "@/components/GlobalFilters";
 import { KpiCard } from "@/components/dashboard/KpiCard";
-import { Plus, Pencil, Trash2 } from "lucide-react";
+import { Plus, Pencil, Trash2, AlertTriangle, ArrowLeft, ArrowRight, Eye } from "lucide-react";
 import { toast } from "sonner";
 import { getOrcamentoAtualDaOportunidade } from "@/lib/orcamentoUtils";
-const ORIGENS: OrigemOportunidade[] = ["Visita", "Ligação", "WhatsApp", "Indicação", "Manual", "Outro"];
-const ETAPAS: EtapaOportunidade[] = ["Identificada", "Qualificação", "Necessidade definida", "Orçamento em elaboração", "Orçamento enviado", "Negociação", "Ganha", "Perdida", "Cancelada"];
+
+const ORIGENS: OrigemOportunidade[] = ["Visita", "Relatório de visita", "Ligação", "WhatsApp", "Indicação", "Manual", "Orçamento", "Outro"];
+const ETAPAS_FUNIL: EtapaOportunidade[] = ["Oportunidade identificada", "Qualificação técnica/comercial", "Orçamento solicitado", "Orçamento enviado", "Negociação", "Fechamento encaminhado", "Ganha", "Perdida", "Suspensa/Sem timing"];
+const ETAPAS_FECHADAS: EtapaOportunidade[] = ["Ganha", "Perdida", "Suspensa/Sem timing", "Cancelada"];
 const MOTIVOS_PERDA: MotivoPerdaOportunidade[] = ["Preço", "Prazo", "Concorrente", "Condição de pagamento", "Cliente adiou decisão", "Sem interesse", "Crédito", "Produto indisponível", "Outro"];
 const POS_VENDA_TIPOS: TipoProximaAcao[] = ["Entrega", "Acompanhamento técnico", "Conferir aplicação", "Visita pós-venda", "Cobrança comercial futura", "Outro"];
 
-export default function FunilVendas(){const { oportunidades, setOportunidades, negocios, setNegocios, clientes, clienteById, vendedores, filtered, orcamentos, formasPagamento, prazosPagamento, proximasAcoes, setProximasAcoes }=useAppStore(); const nav=useNavigate(); const [params,setParams]=useSearchParams();
-const [open,setOpen]=useState(false); const [edit,setEdit]=useState<OportunidadeComercial|null>(null); type OportunidadeForm = Omit<OportunidadeComercial, "id">;
-const [form,setForm]=useState<OportunidadeForm>({clienteId:"",origem:"Visita",etapa:"Identificada",createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()});
-const [closeTarget,setCloseTarget]=useState<OportunidadeComercial|null>(null); const [closeType,setCloseType]=useState<"Ganha"|"Perdida"|"Cancelada">("Ganha");
-type CloseForm = {data:string; orcamentoId:string; valorFinal:number; formaPagamento:string; prazoPagamento:string; responsavel:string; observacoes:string; motivoPerda:MotivoPerdaOportunidade; concorrente:string; createPos:boolean; tipoPos:TipoProximaAcao; dataPos:string; objetivoPos:string};
-const [closeForm,setCloseForm]=useState<CloseForm>({data:new Date().toISOString().slice(0,10),orcamentoId:"",valorFinal:0,formaPagamento:"",prazoPagamento:"",responsavel:"",observacoes:"",motivoPerda:"Preço",concorrente:"",createPos:false,tipoPos:"Entrega",dataPos:new Date().toISOString().slice(0,10),objetivoPos:""});
-const list=filtered.oportunidades??oportunidades;
-const metrics=useMemo(()=>{const ab=list.filter(o=>!["Ganha","Perdida","Cancelada"].includes(o.etapa)); const g=list.filter(o=>o.etapa==="Ganha"); const p=list.filter(o=>o.etapa==="Perdida"); return {ab:ab.length,g:g.length,p:p.length,taxa:(g.length+p.length)?g.length/(g.length+p.length):0,valorAberto:ab.reduce((s,o)=>s+(o.valorEstimado||0),0)};},[list]);
-const getCloseFormFromOrcamento=(orcamentoId:string,current:CloseForm):CloseForm=>{const orc=orcamentos.find(o=>o.id===orcamentoId); if(!orc) return current; return {...current,orcamentoId:orc.id,valorFinal:orc.valorTotal??current.valorFinal,formaPagamento:orc.formaPagamento||current.formaPagamento||"",prazoPagamento:orc.prazoPagamento||current.prazoPagamento||"",observacoes:orc.observacoes||current.observacoes||""};};
-useEffect(()=>{const c=params.get("clienteId"); const novo=params.get("new"); if(c||novo){setEdit(null); setForm({clienteId:c||"",origem:"Manual",etapa:"Identificada",createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()}); setOpen(true); setParams({});}},[params,setParams]);
-const save=()=>{if(!form.clienteId) return toast.error("Selecione cliente"); const payload={...form,updatedAt:new Date().toISOString()}; if(edit){setOportunidades(p=>p.map(o=>o.id===edit.id?{...payload,id:edit.id}:o));} else setOportunidades(p=>[{...payload,id:`op${Date.now()}`},...p]); setOpen(false); toast.success("Oportunidade salva");};
-const openClose=(o:OportunidadeComercial,t:"Ganha"|"Perdida"|"Cancelada")=>{setCloseTarget(o); setCloseType(t); const orc=getOrcamentoAtualDaOportunidade(o.id, orcamentos); const defaultForm={data:new Date().toISOString().slice(0,10),orcamentoId:orc?.id||"",valorFinal:o.valorFinal||orc?.valorTotal||o.valorEstimado||0,formaPagamento:formasPagamento.find(f=>f.ativo&&f.padrao)?.nome||"",prazoPagamento:prazosPagamento.find(p=>p.ativo&&p.padrao)?.nome||"",responsavel:o.responsavel||"",observacoes:"",motivoPerda:"Preço",concorrente:"",createPos:false,tipoPos:"Entrega",dataPos:new Date().toISOString().slice(0,10),objetivoPos:""}; setCloseForm(orc?getCloseFormFromOrcamento(orc.id,defaultForm):defaultForm);};
-const confirmClose=()=>{if(!closeTarget)return; if(!closeForm.data) return toast.error("Informe data"); const now=new Date().toISOString();
-if(closeType==="Ganha"){ if(closeForm.valorFinal===undefined||closeForm.valorFinal===null||closeForm.valorFinal<0) return toast.error("Valor final inválido");
-setOportunidades(p=>p.map(o=>o.id===closeTarget.id?{...o,etapa:"Ganha",dataFechamento:closeForm.data,valorFinal:Number(closeForm.valorFinal),observacoes:[o.observacoes,closeForm.observacoes].filter(Boolean).join("\n"),updatedAt:now}:o));
-setNegocios(prev=>{const ex=prev.find(n=>n.oportunidadeId===closeTarget.id); const base={clienteId:closeTarget.clienteId,oportunidadeId:closeTarget.id,orcamentoId:closeForm.orcamentoId||undefined,vendedor:closeForm.responsavel||closeTarget.responsavel||"",origem:"Manual" as const,produtos:[],categoria:closeTarget.segmento||"Outros",valorPotencial:Number(closeForm.valorFinal),valorFechado:Number(closeForm.valorFinal),status:"Fechado ganho" as const,dataCriacao:closeForm.data,ultimaAtualizacao:closeForm.data,formaPagamento:closeForm.formaPagamento,prazoPagamento:closeForm.prazoPagamento,observacoes:closeForm.observacoes}; if(ex) return prev.map(n=>n.id===ex.id?{...n,...base}:n); return [{id:`n${Date.now()}`,...base},...prev];});
+const etapaCanonical = (etapa: EtapaOportunidade): EtapaOportunidade => {
+  const legacy: Partial<Record<EtapaOportunidade, EtapaOportunidade>> = {
+    Identificada: "Oportunidade identificada",
+    Qualificação: "Qualificação técnica/comercial",
+    "Necessidade definida": "Qualificação técnica/comercial",
+    "Orçamento em elaboração": "Orçamento solicitado",
+    Cancelada: "Suspensa/Sem timing",
+  };
+  return legacy[etapa] || etapa;
+};
+
+const diasDesde = (iso?: string) => {
+  if (!iso) return 0;
+  return Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+};
+
+type OportunidadeForm = Omit<OportunidadeComercial, "id">;
+type CloseType = "Ganha" | "Perdida" | "Suspensa/Sem timing";
+type CloseForm = { data: string; orcamentoId: string; valorFinal: number; observacoes: string; motivoPerda: MotivoPerdaOportunidade; concorrente: string; createPos: boolean; tipoPos: TipoProximaAcao; dataPos: string; objetivoPos: string };
+type MoveState = { oportunidade: OportunidadeComercial; etapaNova: EtapaOportunidade } | null;
+
+export default function FunilVendas() {
+  const {
+    oportunidades, setOportunidades, historicoFunil, setHistoricoFunil, clientes, clienteById, vendedores, filtered,
+    orcamentos, proximasAcoes, setProximasAcoes, relatoriosVisita,
+  } = useAppStore();
+  const nav = useNavigate();
+  const [params, setParams] = useSearchParams();
+  const [open, setOpen] = useState(false);
+  const [edit, setEdit] = useState<OportunidadeComercial | null>(null);
+  const [details, setDetails] = useState<OportunidadeComercial | null>(null);
+  const [move, setMove] = useState<MoveState>(null);
+  const [moveObs, setMoveObs] = useState("");
+  const [form, setForm] = useState<OportunidadeForm>({ clienteId: "", origem: "Manual", etapa: "Oportunidade identificada", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+  const [closeTarget, setCloseTarget] = useState<OportunidadeComercial | null>(null);
+  const [closeType, setCloseType] = useState<CloseType>("Ganha");
+  const [closeForm, setCloseForm] = useState<CloseForm>({ data: new Date().toISOString().slice(0, 10), orcamentoId: "", valorFinal: 0, observacoes: "", motivoPerda: "Preço", concorrente: "", createPos: false, tipoPos: "Entrega", dataPos: new Date().toISOString().slice(0, 10), objetivoPos: "" });
+
+  const list = filtered.oportunidades ?? oportunidades;
+  const normalizedList = useMemo(() => list.map((o) => ({ ...o, etapa: etapaCanonical(o.etapa) })), [list]);
+  const metrics = useMemo(() => {
+    const abertas = normalizedList.filter((o) => !ETAPAS_FECHADAS.includes(o.etapa));
+    const ganhas = normalizedList.filter((o) => o.etapa === "Ganha");
+    const perdidas = normalizedList.filter((o) => o.etapa === "Perdida");
+    return { abertas: abertas.length, ganhas: ganhas.length, perdidas: perdidas.length, taxa: ganhas.length + perdidas.length ? ganhas.length / (ganhas.length + perdidas.length) : 0, valorAberto: abertas.reduce((s, o) => s + (o.valorEstimado || 0), 0) };
+  }, [normalizedList]);
+
+  useEffect(() => {
+    const clienteId = params.get("clienteId");
+    const novo = params.get("new");
+    if (clienteId || novo) {
+      setEdit(null);
+      const cliente = clienteById(clienteId || "");
+      setForm({ clienteId: clienteId || "", clienteNome: cliente?.nome, origem: "Manual", etapa: "Oportunidade identificada", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+      setOpen(true);
+      setParams({});
+    }
+  }, [clienteById, params, setParams]);
+
+  const addHistorico = (oportunidade: OportunidadeComercial, etapaNova: EtapaOportunidade, observacao: string, etapaAnterior = oportunidade.etapa) => {
+    const now = new Date().toISOString();
+    const registro: HistoricoFunil = { id: `hf${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, oportunidadeId: oportunidade.id, clienteId: oportunidade.clienteId, etapaAnterior, etapaNova, dataMovimento: now, vendedor: oportunidade.vendedor || oportunidade.responsavel, observacao, createdAt: now };
+    setHistoricoFunil((prev) => [registro, ...prev]);
+  };
+
+  const save = () => {
+    if (!form.clienteId) return toast.error("Selecione cliente");
+    const cliente = clienteById(form.clienteId);
+    const now = new Date().toISOString();
+    const payload: OportunidadeForm = { ...form, clienteNome: cliente?.nome || form.clienteNome, vendedor: form.vendedor || form.responsavel, etapa: etapaCanonical(form.etapa), updatedAt: now };
+    if (edit) {
+      setOportunidades((prev) => prev.map((o) => (o.id === edit.id ? { ...payload, id: edit.id, createdAt: edit.createdAt } : o)));
+      if (edit.etapa !== payload.etapa) addHistorico({ ...payload, id: edit.id }, payload.etapa, "Etapa ajustada na edição da oportunidade.", edit.etapa);
+    } else {
+      const nova = { ...payload, id: `op${Date.now()}`, createdAt: now };
+      setOportunidades((prev) => [nova, ...prev]);
+      addHistorico(nova, nova.etapa, "Oportunidade criada no funil.", undefined);
+    }
+    setOpen(false);
+    toast.success("Oportunidade salva");
+  };
+
+  const requestMove = (oportunidade: OportunidadeComercial, delta: -1 | 1) => {
+    const etapaAtual = etapaCanonical(oportunidade.etapa);
+    const index = ETAPAS_FUNIL.indexOf(etapaAtual);
+    const etapaNova = ETAPAS_FUNIL[Math.max(0, Math.min(ETAPAS_FUNIL.length - 1, index + delta))];
+    if (!etapaNova || etapaNova === etapaAtual) return;
+    if (etapaNova === "Ganha" || etapaNova === "Perdida") return openClose(oportunidade, etapaNova);
+    setMove({ oportunidade, etapaNova });
+    setMoveObs("");
+  };
+
+  const confirmMove = () => {
+    if (!move) return;
+    const now = new Date().toISOString();
+    const etapaAnterior = move.oportunidade.etapa;
+    setOportunidades((prev) => prev.map((o) => (o.id === move.oportunidade.id ? { ...o, etapa: move.etapaNova, updatedAt: now } : o)));
+    addHistorico(move.oportunidade, move.etapaNova, moveObs || "Movimentação confirmada pelo usuário.", etapaAnterior);
+    setMove(null);
+    toast.success("Etapa atualizada com histórico");
+  };
+
+  const openClose = (o: OportunidadeComercial, tipo: CloseType) => {
+    setCloseTarget(o);
+    setCloseType(tipo);
+    const orcamento = getOrcamentoAtualDaOportunidade(o.id, orcamentos);
+    setCloseForm({ data: new Date().toISOString().slice(0, 10), orcamentoId: orcamento?.id || o.orcamentoId || "", valorFinal: o.valorFinal || orcamento?.valorTotal || o.valorEstimado || 0, observacoes: "", motivoPerda: "Preço", concorrente: o.concorrente || "", createPos: false, tipoPos: "Entrega", dataPos: new Date().toISOString().slice(0, 10), objetivoPos: "" });
+  };
+
+  const confirmClose = () => {
+    if (!closeTarget) return;
+    if (!closeForm.data) return toast.error("Informe data de fechamento");
+    if (!closeForm.observacoes.trim()) return toast.error("Informe uma observação de conclusão");
+    if (closeType === "Ganha" && (!closeForm.valorFinal || closeForm.valorFinal <= 0)) return toast.error("Oportunidade ganha exige valor final maior que zero");
+    if (closeType === "Perdida" && !closeForm.motivoPerda) return toast.error("Oportunidade perdida exige motivo da perda");
+
+    const now = new Date().toISOString();
+    setOportunidades((prev) => prev.map((o) => (o.id === closeTarget.id ? { ...o, etapa: closeType, dataFechamento: closeForm.data, valorFinal: closeType === "Ganha" ? Number(closeForm.valorFinal) : o.valorFinal, motivoPerda: closeType === "Perdida" ? closeForm.motivoPerda : o.motivoPerda, concorrente: closeForm.concorrente || o.concorrente, orcamentoId: closeForm.orcamentoId || o.orcamentoId, observacoes: [o.observacoes, closeForm.observacoes].filter(Boolean).join("\n"), updatedAt: now } : o)));
+    addHistorico(closeTarget, closeType, closeForm.observacoes, closeTarget.etapa);
+
+    if (closeForm.createPos) {
+      setProximasAcoes((prev) => [{ id: `pa${Date.now()}`, clienteId: closeTarget.clienteId, oportunidadeId: closeTarget.id, orcamentoId: closeForm.orcamentoId || undefined, responsavel: closeTarget.vendedor || closeTarget.responsavel || "", descricao: closeForm.objetivoPos || `Próxima ação - ${closeType}`, tipo: closeForm.tipoPos, data: closeForm.dataPos, status: "Pendente", origem: "Negócio", createdAt: now, updatedAt: now }, ...prev]);
+    }
+
+    setCloseTarget(null);
+    toast.success(`Oportunidade marcada como ${closeType}`);
+  };
+
+  const oportunidadeAlertas = (o: OportunidadeComercial) => {
+    const orcamentoAtual = getOrcamentoAtualDaOportunidade(o.id, orcamentos);
+    const proxima = proximasAcoes.find((a) => a.oportunidadeId === o.id && ["Pendente", "Em andamento", "Reagendada"].includes(a.status));
+    const alertas: string[] = [];
+    if (!proxima && !ETAPAS_FECHADAS.includes(o.etapa)) alertas.push("sem próxima ação");
+    if (diasDesde(o.updatedAt || o.createdAt) >= 14 && !ETAPAS_FECHADAS.includes(o.etapa)) alertas.push("parada há muitos dias");
+    if (!o.previsaoFechamento && !ETAPAS_FECHADAS.includes(o.etapa)) alertas.push("sem previsão de fechamento");
+    if (o.etapa === "Negociação" && !orcamentoAtual && !o.orcamentoId) alertas.push("negociação sem orçamento");
+    return alertas;
+  };
+
+  const renderVinculos = (o: OportunidadeComercial) => {
+    const orcamento = o.orcamentoId ? orcamentos.find((item) => item.id === o.orcamentoId) : getOrcamentoAtualDaOportunidade(o.id, orcamentos);
+    const relatorio = relatoriosVisita.find((r) => r.id === o.relatorioVisitaId || r.oportunidadeId === o.id);
+    const proxima = proximasAcoes.find((a) => a.id === o.proximaAcaoId || (a.oportunidadeId === o.id && ["Pendente", "Em andamento", "Reagendada"].includes(a.status)));
+    return <div className="mt-2 grid gap-1 text-xs text-muted-foreground">
+      <span>Cliente: {o.clienteNome || clienteById(o.clienteId)?.nome || o.clienteId}</span>
+      <span>Relatório de visita: {relatorio ? `${formatDateBR(relatorio.dataVisita)} · ${relatorio.resultadoVisita}` : o.relatorioVisitaId || "—"}</span>
+      <span>Orçamento: {orcamento ? `${orcamento.codigo} · ${fmtBRL(orcamento.valorTotal)}` : "—"}</span>
+      <span>Próxima ação: {proxima ? `${proxima.tipo} em ${formatDateBR(proxima.data)}` : "—"}</span>
+    </div>;
+  };
+
+  return <div className="space-y-4">
+    <GlobalFilters />
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <div>
+        <h1 className="text-2xl font-semibold">Funil de Vendas</h1>
+        <p className="text-sm text-muted-foreground">Safra Vision é a fonte oficial do pipeline; agenda/calendário permanecem somente como espelho operacional.</p>
+      </div>
+      <Button onClick={() => { setEdit(null); setForm({ clienteId: "", origem: "Manual", etapa: "Oportunidade identificada", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }); setOpen(true); }}><Plus className="mr-2 h-4 w-4" />Nova oportunidade</Button>
+    </div>
+
+    <div className="grid gap-3 md:grid-cols-4">
+      <KpiCard title="Abertas" value={metrics.abertas} />
+      <KpiCard title="Valor aberto" value={fmtBRL(metrics.valorAberto)} />
+      <KpiCard title="Ganhas" value={metrics.ganhas} />
+      <KpiCard title="Taxa ganho/perda" value={fmtPct(metrics.taxa)} />
+    </div>
+
+    <div className="grid gap-3 lg:grid-cols-3 xl:grid-cols-5">
+      {ETAPAS_FUNIL.map((etapa) => {
+        const cards = normalizedList.filter((o) => o.etapa === etapa);
+        return <div key={etapa} className="rounded-lg border bg-muted/20 p-2">
+          <div className="mb-2 flex items-center justify-between gap-2"><h2 className="text-sm font-semibold">{etapa}</h2><Badge variant="outline">{cards.length}</Badge></div>
+          <div className="space-y-2">
+            {cards.length === 0 && <div className="rounded border border-dashed bg-background p-3 text-xs text-muted-foreground">Sem oportunidades nesta etapa.</div>}
+            {cards.map((o) => {
+              const alertas = oportunidadeAlertas(o);
+              const index = ETAPAS_FUNIL.indexOf(o.etapa);
+              return <Card key={o.id} className="p-3 text-sm">
+                <div className="flex items-start justify-between gap-2">
+                  <div><b>{o.necessidade || o.segmento || "Oportunidade comercial"}</b><div className="text-xs text-muted-foreground">{o.vendedor || o.responsavel || "Sem vendedor"} · {o.origemTipo || o.origem}</div></div>
+                  <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => setDetails(o)}><Eye className="h-3 w-3" /></Button>
+                </div>
+                <div className="mt-2 grid grid-cols-2 gap-1 text-xs"><span>Estimado: <b>{fmtBRL(o.valorEstimado || 0)}</b></span><span>Prob.: <b>{fmtPct((o.probabilidade || 0) / 100)}</b></span><span className="col-span-2">Fechamento: <b>{formatDateBR(o.previsaoFechamento) || "—"}</b></span></div>
+                {renderVinculos(o)}
+                {alertas.length > 0 && <div className="mt-2 flex flex-wrap gap-1">{alertas.map((a) => <Badge key={a} variant="destructive" className="gap-1"><AlertTriangle className="h-3 w-3" />{a}</Badge>)}</div>}
+                <div className="mt-2 flex flex-wrap gap-1">
+                  <Button size="sm" variant="outline" className="h-7 px-2 text-[10px]" disabled={index <= 0} onClick={() => requestMove(o, -1)}><ArrowLeft className="h-3 w-3" /></Button>
+                  <Button size="sm" variant="outline" className="h-7 px-2 text-[10px]" disabled={index >= ETAPAS_FUNIL.length - 1} onClick={() => requestMove(o, 1)}><ArrowRight className="h-3 w-3" /></Button>
+                  <Button size="sm" variant="outline" className="h-7 px-2 text-[10px]" onClick={() => openClose(o, "Ganha")}>Ganha</Button>
+                  <Button size="sm" variant="outline" className="h-7 px-2 text-[10px]" onClick={() => openClose(o, "Perdida")}>Perdida</Button>
+                  <Button size="sm" variant="outline" className="h-7 px-2 text-[10px]" onClick={() => nav(`/orcamentos?oportunidadeId=${o.id}`)}>Orçamento</Button>
+                  <Button size="sm" variant="outline" className="h-7 px-2 text-[10px]" onClick={() => nav(`/proximas-acoes?clienteId=${o.clienteId}&oportunidadeId=${o.id}`)}>Ação</Button>
+                  <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => { setEdit(o); const { id, ...rest } = o; setForm({ ...rest, etapa: etapaCanonical(rest.etapa) }); setOpen(true); }}><Pencil className="h-3 w-3" /></Button>
+                  <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => setOportunidades((prev) => prev.filter((x) => x.id !== o.id))}><Trash2 className="h-3 w-3" /></Button>
+                </div>
+              </Card>;
+            })}
+          </div>
+        </div>;
+      })}
+    </div>
+
+    <Dialog open={open} onOpenChange={setOpen}><DialogContent className="max-w-3xl"><DialogHeader><DialogTitle>{edit ? "Editar" : "Nova"} oportunidade</DialogTitle></DialogHeader><div className="grid gap-3 md:grid-cols-2">
+      <div><Label>Cliente</Label><Select value={form.clienteId || ""} onValueChange={(v) => { const c = clienteById(v); setForm({ ...form, clienteId: v, clienteNome: c?.nome }); }}><SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger><SelectContent>{clientes.map((c) => <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>)}</SelectContent></Select></div>
+      <div><Label>Vendedor</Label><Select value={form.vendedor || form.responsavel || ""} onValueChange={(v) => setForm({ ...form, vendedor: v, responsavel: v })}><SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger><SelectContent>{vendedores.filter((v) => v.ativo).map((v) => <SelectItem key={v.id} value={v.nome}>{v.nome}</SelectItem>)}</SelectContent></Select></div>
+      <div><Label>Etapa atual</Label><Select value={form.etapa} onValueChange={(v: EtapaOportunidade) => setForm({ ...form, etapa: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{ETAPAS_FUNIL.map((e) => <SelectItem key={e} value={e}>{e}</SelectItem>)}</SelectContent></Select></div>
+      <div><Label>Origem</Label><Select value={form.origem || "Manual"} onValueChange={(v: OrigemOportunidade) => setForm({ ...form, origem: v, origemTipo: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{ORIGENS.map((o) => <SelectItem key={o} value={o}>{o}</SelectItem>)}</SelectContent></Select></div>
+      <div><Label>Valor estimado</Label><Input type="number" value={form.valorEstimado || 0} onChange={(e) => setForm({ ...form, valorEstimado: Number(e.target.value) })} /></div>
+      <div><Label>Probabilidade (%)</Label><Input type="number" min={0} max={100} value={form.probabilidade || 0} onChange={(e) => setForm({ ...form, probabilidade: Number(e.target.value) })} /></div>
+      <div><Label>Previsão de fechamento</Label><Input type="date" value={form.previsaoFechamento || ""} onChange={(e) => setForm({ ...form, previsaoFechamento: e.target.value })} /></div>
+      <div><Label>Produtos de interesse</Label><Input value={(form.produtosInteresse || []).join(", ")} onChange={(e) => setForm({ ...form, produtosInteresse: e.target.value.split(",").map((x) => x.trim()).filter(Boolean) })} /></div>
+      <div className="md:col-span-2"><Label>Necessidade / critérios de avanço</Label><Textarea value={form.necessidade || ""} onChange={(e) => setForm({ ...form, necessidade: e.target.value })} placeholder="Descreva necessidade, critério técnico/comercial e próximos passos para avançar." /></div>
+      <div><Label>Relatório de visita ID</Label><Input value={form.relatorioVisitaId || ""} onChange={(e) => setForm({ ...form, relatorioVisitaId: e.target.value })} /></div>
+      <div><Label>Ação ID</Label><Input value={form.acaoId || ""} onChange={(e) => setForm({ ...form, acaoId: e.target.value })} /></div>
+      <div><Label>Lançamento ID</Label><Input value={form.lancamentoId || ""} onChange={(e) => setForm({ ...form, lancamentoId: e.target.value })} /></div>
+      <div><Label>Orçamento ID</Label><Input value={form.orcamentoId || ""} onChange={(e) => setForm({ ...form, orcamentoId: e.target.value })} /></div>
+      <div className="md:col-span-2"><Label>Observações</Label><Textarea value={form.observacoes || ""} onChange={(e) => setForm({ ...form, observacoes: e.target.value })} /></div>
+    </div><DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button><Button onClick={save}>Salvar</Button></DialogFooter></DialogContent></Dialog>
+
+    <Dialog open={!!move} onOpenChange={(v) => !v && setMove(null)}><DialogContent><DialogHeader><DialogTitle>Mover etapa do funil</DialogTitle></DialogHeader><div className="space-y-3 text-sm"><div>{move?.oportunidade.etapa} → <b>{move?.etapaNova}</b></div><div><Label>Observação da movimentação</Label><Textarea value={moveObs} onChange={(e) => setMoveObs(e.target.value)} placeholder="Registre por que a oportunidade avançou ou retrocedeu." /></div></div><DialogFooter><Button variant="outline" onClick={() => setMove(null)}>Cancelar</Button><Button onClick={confirmMove}>Confirmar movimento</Button></DialogFooter></DialogContent></Dialog>
+
+    <Dialog open={!!closeTarget} onOpenChange={(v) => !v && setCloseTarget(null)}><DialogContent className="max-w-2xl"><DialogHeader><DialogTitle>Marcar oportunidade como {closeType}</DialogTitle></DialogHeader><div className="grid gap-3 md:grid-cols-2"><div><Label>Data de fechamento/conclusão</Label><Input type="date" value={closeForm.data} onChange={(e) => setCloseForm({ ...closeForm, data: e.target.value })} /></div>{closeType === "Ganha" && <><div><Label>Orçamento vinculado</Label><Select value={closeForm.orcamentoId || "none"} onValueChange={(v) => { const orc = orcamentos.find((o) => o.id === v); setCloseForm({ ...closeForm, orcamentoId: v === "none" ? "" : v, valorFinal: orc?.valorTotal || closeForm.valorFinal }); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">Sem orçamento</SelectItem>{orcamentos.filter((o) => o.oportunidadeId === closeTarget?.id).map((o) => <SelectItem key={o.id} value={o.id}>{o.codigo} - {fmtBRL(o.valorTotal)}</SelectItem>)}</SelectContent></Select></div><div><Label>Valor final obrigatório</Label><Input type="number" value={closeForm.valorFinal || 0} onChange={(e) => setCloseForm({ ...closeForm, valorFinal: Number(e.target.value) })} /></div></>}{closeType === "Perdida" && <><div><Label>Motivo da perda obrigatório</Label><Select value={closeForm.motivoPerda} onValueChange={(v: MotivoPerdaOportunidade) => setCloseForm({ ...closeForm, motivoPerda: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{MOTIVOS_PERDA.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select></div><div><Label>Concorrente</Label><Input value={closeForm.concorrente} onChange={(e) => setCloseForm({ ...closeForm, concorrente: e.target.value })} /></div></>}<div className="md:col-span-2"><Label>Observação obrigatória</Label><Textarea value={closeForm.observacoes} onChange={(e) => setCloseForm({ ...closeForm, observacoes: e.target.value })} /></div><div><Label>Criar próxima ação?</Label><Select value={closeForm.createPos ? "sim" : "nao"} onValueChange={(v) => setCloseForm({ ...closeForm, createPos: v === "sim" })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="nao">Não</SelectItem><SelectItem value="sim">Sim</SelectItem></SelectContent></Select></div>{closeForm.createPos && <><div><Label>Tipo</Label><Select value={closeForm.tipoPos} onValueChange={(v: TipoProximaAcao) => setCloseForm({ ...closeForm, tipoPos: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{POS_VENDA_TIPOS.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent></Select></div><div><Label>Data ação</Label><Input type="date" value={closeForm.dataPos} onChange={(e) => setCloseForm({ ...closeForm, dataPos: e.target.value })} /></div><div><Label>Objetivo</Label><Input value={closeForm.objetivoPos} onChange={(e) => setCloseForm({ ...closeForm, objetivoPos: e.target.value })} /></div></>}</div><DialogFooter><Button variant="outline" onClick={() => setCloseTarget(null)}>Cancelar</Button><Button onClick={confirmClose}>Confirmar conclusão</Button></DialogFooter></DialogContent></Dialog>
+
+    <Dialog open={!!details} onOpenChange={(v) => !v && setDetails(null)}><DialogContent className="max-w-2xl"><DialogHeader><DialogTitle>Detalhes da oportunidade</DialogTitle></DialogHeader>{details && <div className="space-y-3 text-sm"><div><b>{details.necessidade || "Oportunidade comercial"}</b><div className="text-muted-foreground">{details.clienteNome || clienteById(details.clienteId)?.nome} · {details.etapa}</div></div>{renderVinculos(details)}<div>Valor estimado: <b>{fmtBRL(details.valorEstimado || 0)}</b> · Probabilidade: <b>{fmtPct((details.probabilidade || 0) / 100)}</b> · Previsão: <b>{formatDateBR(details.previsaoFechamento) || "—"}</b></div><div>Observações: {details.observacoes || "—"}</div><div><h3 className="font-semibold">Histórico de movimentações</h3><div className="mt-2 space-y-2">{historicoFunil.filter((h) => h.oportunidadeId === details.id).sort((a, b) => b.dataMovimento.localeCompare(a.dataMovimento)).map((h) => <div key={h.id} className="rounded border p-2 text-xs"><b>{h.etapaAnterior || "—"} → {h.etapaNova}</b><div>{formatDateBR(h.dataMovimento)} · {h.vendedor || "Sem vendedor"}</div><div className="text-muted-foreground">{h.observacao || "—"}</div></div>)}</div></div></div>}</DialogContent></Dialog>
+  </div>;
 }
-if(closeType==="Perdida"){ if(!closeForm.motivoPerda) return toast.error("Informe motivo da perda"); setOportunidades(p=>p.map(o=>o.id===closeTarget.id?{...o,etapa:"Perdida",dataFechamento:closeForm.data,motivoPerda:closeForm.motivoPerda,concorrente:closeForm.concorrente||undefined,observacoes:[o.observacoes,closeForm.observacoes].filter(Boolean).join("\n"),updatedAt:now}:o)); }
-if(closeType==="Cancelada"){ setOportunidades(p=>p.map(o=>o.id===closeTarget.id?{...o,etapa:"Cancelada",dataFechamento:closeForm.data,updatedAt:now}:o)); }
-if(closeForm.createPos){const negId=negocios.find(n=>n.oportunidadeId===closeTarget.id)?.id; setProximasAcoes(p=>[{id:`pa${Date.now()}`,clienteId:closeTarget.clienteId,oportunidadeId:closeTarget.id,negocioId:negId,descricao:closeForm.objetivoPos||`Ação de ${closeType==="Ganha"?"pós-venda":"retomada"}`,objetivo:closeForm.objetivoPos,observacoes:closeForm.observacoes,tipo:closeForm.tipoPos,data:closeForm.dataPos||closeForm.data,status:"Pendente",origem:"Avulsa",createdAt:now,updatedAt:now,responsavel:closeForm.responsavel||closeTarget.responsavel},...p]);}
-setCloseTarget(null); toast.success(`Oportunidade fechada como ${closeType}`);};
-return <div className="space-y-4"><GlobalFilters/><div className="grid grid-cols-2 gap-3 md:grid-cols-6"><KpiCard label="Abertas" value={fmtNum(metrics.ab)}/><KpiCard label="Ganhas" value={fmtNum(metrics.g)} tone="success"/><KpiCard label="Perdidas" value={fmtNum(metrics.p)} tone="destructive"/><KpiCard label="Valor aberto" value={fmtBRL(metrics.valorAberto)} tone="muted"/><KpiCard label="Conversão" value={fmtPct(metrics.taxa)} tone="warning"/></div><div className="flex justify-end"><Button onClick={()=>{setEdit(null);setOpen(true);}}><Plus className="mr-1 h-4 w-4"/>Nova oportunidade</Button></div>
-<div className="grid grid-flow-col auto-cols-[300px] gap-3 overflow-x-auto pb-3">{ETAPAS.map(col=>{const items=list.filter(o=>o.etapa===col);return <div key={col} className="rounded-md border p-2"><div className="mb-2 flex justify-between"><h3 className="text-sm font-semibold">{col}</h3><Badge variant="outline">{items.length}</Badge></div><div className="space-y-2">{items.map(o=>{const orcamentoAtual=getOrcamentoAtualDaOportunidade(o.id, orcamentos); const oportunidadeFechada=["Ganha","Perdida","Cancelada"].includes(o.etapa); return <Card key={o.id} className="p-3 text-xs"><div className="font-semibold">{clienteById(o.clienteId)?.nome}</div><p>{fmtBRL(o.valorFinal||o.valorEstimado||0)}</p><p>{o.motivoPerda?`Motivo: ${o.motivoPerda}`:""}</p><div className="mt-2 flex flex-wrap gap-1">{orcamentoAtual?(<Button size="sm" variant="outline" className="h-7 px-2 text-[10px]" onClick={()=>nav(`/orcamentos?edit=${orcamentoAtual.id}`)}>{oportunidadeFechada?"Ver orçamento":"Editar orçamento"}</Button>):(!oportunidadeFechada&&<Button size="sm" variant="outline" className="h-7 px-2 text-[10px]" onClick={()=>nav(`/orcamentos?oportunidadeId=${o.id}`)}>Criar orçamento</Button>)}<Button size="sm" variant="outline" className="h-7 px-2 text-[10px]" onClick={()=>openClose(o,"Ganha")}>Fechar ganha</Button><Button size="sm" variant="outline" className="h-7 px-2 text-[10px]" onClick={()=>openClose(o,"Perdida")}>Fechar perdida</Button><Button size="sm" variant="outline" className="h-7 px-2 text-[10px]" onClick={()=>openClose(o,"Cancelada")}>Cancelar</Button><Button size="sm" variant="outline" className="h-7 px-2 text-[10px]" onClick={()=>nav(`/proximas-acoes?clienteId=${o.clienteId}&oportunidadeId=${o.id}`)}>Criar próxima ação</Button><Button size="sm" variant="outline" className="h-7 px-2 text-[10px]" onClick={()=>nav(`/clientes/${o.clienteId}`)}>Abrir Ficha 360</Button><Button size="sm" variant="ghost" className="h-7 px-2 text-[10px]" onClick={()=>{setEdit(o);const{id,...r}=o;setForm(r);setOpen(true);}}><Pencil className="h-3 w-3"/></Button><Button size="sm" variant="ghost" className="h-7 px-2 text-[10px]" onClick={()=>setOportunidades(p=>p.filter(x=>x.id!==o.id))}><Trash2 className="h-3 w-3"/></Button></div></Card>})}</div></div>})}</div>
-<Dialog open={open} onOpenChange={setOpen}><DialogContent><DialogHeader><DialogTitle>{edit?"Editar":"Nova"} oportunidade</DialogTitle></DialogHeader><div className="grid gap-2 md:grid-cols-2"><div><Label>Cliente</Label><Select value={form.clienteId||""} onValueChange={(v)=>setForm({...form,clienteId:v})}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent>{clientes.map(c=><SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>)}</SelectContent></Select></div><div><Label>Origem</Label><Select value={form.origem||"Visita"} onValueChange={(v: OrigemOportunidade)=>setForm({...form,origem:v})}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent>{ORIGENS.map(o=><SelectItem key={o} value={o}>{o}</SelectItem>)}</SelectContent></Select></div><div><Label>Valor estimado</Label><Input type="number" value={form.valorEstimado||0} onChange={e=>setForm({...form,valorEstimado:+e.target.value})}/></div></div><DialogFooter><Button variant="outline" onClick={()=>setOpen(false)}>Cancelar</Button><Button onClick={save}>Salvar</Button></DialogFooter></DialogContent></Dialog>
-<Dialog open={!!closeTarget} onOpenChange={(v)=>!v&&setCloseTarget(null)}><DialogContent className="max-w-2xl"><DialogHeader><DialogTitle>Fechar oportunidade como {closeType}</DialogTitle></DialogHeader><div className="grid gap-2 md:grid-cols-2"><div><Label>Data</Label><Input type="date" value={closeForm.data||""} onChange={e=>setCloseForm({...closeForm,data:e.target.value})}/></div>{closeType==="Ganha"&&<><div><Label>Orçamento vinculado</Label><Select value={closeForm.orcamentoId||"none"} onValueChange={(v)=>setCloseForm(current=>v==='none'?{...current,orcamentoId:''}:getCloseFormFromOrcamento(v,current))}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="none">Sem orçamento</SelectItem>{orcamentos.filter(o=>o.oportunidadeId===closeTarget?.id).map(o=><SelectItem key={o.id} value={o.id}>{o.codigo} - {fmtBRL(o.valorTotal)}</SelectItem>)}</SelectContent></Select></div><div><Label>Valor final</Label><Input type="number" value={closeForm.valorFinal||0} onChange={e=>setCloseForm({...closeForm,valorFinal:+e.target.value})}/></div><div><Label>Forma pgto</Label><Input value={closeForm.formaPagamento||""} onChange={e=>setCloseForm({...closeForm,formaPagamento:e.target.value})}/></div><div><Label>Prazo pgto</Label><Input value={closeForm.prazoPagamento||""} onChange={e=>setCloseForm({...closeForm,prazoPagamento:e.target.value})}/></div><div><Label>Responsável</Label><Input value={closeForm.responsavel||""} onChange={e=>setCloseForm({...closeForm,responsavel:e.target.value})}/></div></>}{closeType==="Perdida"&&<><div><Label>Motivo da perda</Label><Select value={closeForm.motivoPerda} onValueChange={(v: MotivoPerdaOportunidade)=>setCloseForm({...closeForm,motivoPerda:v})}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent>{MOTIVOS_PERDA.map(m=><SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select></div><div><Label>Concorrente</Label><Input value={closeForm.concorrente||""} onChange={e=>setCloseForm({...closeForm,concorrente:e.target.value})}/></div></>}<div className="md:col-span-2"><Label>Observações</Label><Textarea value={closeForm.observacoes||""} onChange={e=>setCloseForm({...closeForm,observacoes:e.target.value})}/></div><div><Label>Criar próxima ação?</Label><Select value={closeForm.createPos?"sim":"nao"} onValueChange={(v)=>setCloseForm({...closeForm,createPos:v==='sim'})}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="nao">Não</SelectItem><SelectItem value="sim">Sim</SelectItem></SelectContent></Select></div>{closeForm.createPos&&<><div><Label>Tipo</Label><Select value={closeForm.tipoPos} onValueChange={(v: TipoProximaAcao)=>setCloseForm({...closeForm,tipoPos:v})}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent>{POS_VENDA_TIPOS.map(t=><SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent></Select></div><div><Label>Data ação</Label><Input type="date" value={closeForm.dataPos||""} onChange={e=>setCloseForm({...closeForm,dataPos:e.target.value})}/></div><div className="md:col-span-2"><Label>Objetivo</Label><Input value={closeForm.objetivoPos||""} onChange={e=>setCloseForm({...closeForm,objetivoPos:e.target.value})}/></div></>}</div><DialogFooter><Button variant="outline" onClick={()=>setCloseTarget(null)}>Cancelar</Button><Button onClick={confirmClose}>Confirmar fechamento</Button></DialogFooter></DialogContent></Dialog>
-</div>}
