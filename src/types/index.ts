@@ -120,6 +120,46 @@ export interface Cliente {
   ultimaVisita?: string;
 }
 
+
+export type ResultadoVisita =
+  | "Visita realizada sem oportunidade"
+  | "Visita realizada com oportunidade"
+  | "Cliente sem interesse no momento"
+  | "Coleta de dados pendente"
+  | "Orçamento solicitado"
+  | "Fechamento encaminhado"
+  | "Pós-venda realizado"
+  | "Outro";
+
+export interface RelatorioVisita {
+  id: string;
+  clienteId: string;
+  clienteNome: string;
+  fazenda?: string;
+  cidade?: string;
+  vendedor?: string;
+  dataVisita: string;
+  horario?: string;
+  tipoAcao: TipoProximaAcao | TipoLancamento | string;
+  objetivoOriginal?: string;
+  resumoVisita: string;
+  pontosAvaliados?: string;
+  dadosColetados?: string;
+  necessidadeIdentificada?: string;
+  produtosSolucoesDiscutidas?: string;
+  potencialNegocio?: string;
+  resultadoVisita: ResultadoVisita;
+  proximaAcaoRecomendada?: string;
+  observacoesGerais?: string;
+  origemAgendaId?: string;
+  acaoId?: string;
+  lancamentoId?: string;
+  oportunidadeId?: string;
+  negocioId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface SyncSummaryMeta {
   total: number;
   success: number;

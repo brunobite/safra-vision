@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, ReactNode } from "react";
 import {
   Cliente, Lancamento, MetaEmpresa, MetaPessoal, Evento, PrioridadeP1Item,
-  Negocio, Produto, RegraComissao, Vendedor, MetaVendedor, MetaCategoria, TicketMedioRegra, Orcamento, Empresa, ProximaAcao, FormaPagamento, PrazoPagamento, AppConfig, OportunidadeComercial,
+  Negocio, Produto, RegraComissao, Vendedor, MetaVendedor, MetaCategoria, TicketMedioRegra, Orcamento, Empresa, ProximaAcao, FormaPagamento, PrazoPagamento, AppConfig, OportunidadeComercial, RelatorioVisita,
 } from "@/types";
 import { bootstrapLocalDatabase, saveStore } from "@/lib/localRepository";
 import { restoreAccountSnapshotToLocal, type AccountSnapshot, type CloudRestoreResult } from "@/lib/cloudRestore";
@@ -42,6 +42,7 @@ interface AppStoreCtx {
   orcamentos: Orcamento[]; setOrcamentos: React.Dispatch<React.SetStateAction<Orcamento[]>>;
   empresas: Empresa[]; setEmpresas: React.Dispatch<React.SetStateAction<Empresa[]>>;
   proximasAcoes: ProximaAcao[]; setProximasAcoes: React.Dispatch<React.SetStateAction<ProximaAcao[]>>;
+  relatoriosVisita: RelatorioVisita[]; setRelatoriosVisita: React.Dispatch<React.SetStateAction<RelatorioVisita[]>>;
   formasPagamento: FormaPagamento[]; setFormasPagamento: React.Dispatch<React.SetStateAction<FormaPagamento[]>>;
   prazosPagamento: PrazoPagamento[]; setPrazosPagamento: React.Dispatch<React.SetStateAction<PrazoPagamento[]>>;
   appConfig: AppConfig; setAppConfig: React.Dispatch<React.SetStateAction<AppConfig>>;
@@ -93,6 +94,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const [orcamentos, setOrcamentos] = useState<Orcamento[]>([]);
   const [empresas, setEmpresas] = useState<Empresa[]>([]);
   const [proximasAcoes, setProximasAcoes] = useState<ProximaAcao[]>([]);
+  const [relatoriosVisita, setRelatoriosVisita] = useState<RelatorioVisita[]>([]);
   const [formasPagamento, setFormasPagamento] = useState<FormaPagamento[]>([]);
   const [prazosPagamento, setPrazosPagamento] = useState<PrazoPagamento[]>([]);
   const [appConfig, setAppConfig] = useState<AppConfig>({ id: "main", percentualAcertoEsperado: 12 });
@@ -187,6 +189,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         setOrcamentos(localData.orcamentos || []);
         setEmpresas((localData as {empresas?: Empresa[]}).empresas || []);
         setProximasAcoes((localData as {proximasAcoes?: ProximaAcao[]}).proximasAcoes || []);
+        setRelatoriosVisita((localData as {relatoriosVisita?: RelatorioVisita[]}).relatoriosVisita || []);
         setFormasPagamento((localData as {formasPagamento?: FormaPagamento[]}).formasPagamento || []);
         setPrazosPagamento((localData as {prazosPagamento?: PrazoPagamento[]}).prazosPagamento || []);
         const hydratedAppConfig = (localData as {appConfig?: AppConfig[]}).appConfig?.[0] || { id: "main", percentualAcertoEsperado: 12 };
@@ -257,6 +260,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => { void persistStore("orcamentos", orcamentos as never); }, [orcamentos, persistStore]);
   useEffect(() => { void persistStore("empresas", empresas as never); }, [empresas, persistStore]);
   useEffect(() => { void persistStore("proximasAcoes", proximasAcoes as never); }, [proximasAcoes, persistStore]);
+  useEffect(() => { void persistStore("relatoriosVisita", relatoriosVisita as never); }, [relatoriosVisita, persistStore]);
   useEffect(() => { void persistStore("formasPagamento", formasPagamento as never); }, [formasPagamento, persistStore]);
   useEffect(() => { void persistStore("prazosPagamento", prazosPagamento as never); }, [prazosPagamento, persistStore]);
   useEffect(() => { void persistStore("appConfig", [appConfig] as never); }, [appConfig, persistStore]);
@@ -269,7 +273,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     try {
       const result = await restoreAccountSnapshotToLocal(snapshot);
       skipNextPersistStoresRef.current = new Set([
-        "clientes", "lancamentos", "oportunidades", "orcamentos", "negocios", "proximasAcoes",
+        "clientes", "lancamentos", "oportunidades", "orcamentos", "negocios", "proximasAcoes", "relatoriosVisita",
         "vendedores", "produtos", "formasPagamento", "prazosPagamento", "appConfig",
       ]);
       setClientes(result.snapshot.clientes as Cliente[]);
@@ -278,6 +282,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       setOrcamentos(result.snapshot.orcamentos as Orcamento[]);
       setNegocios(result.snapshot.negocios as Negocio[]);
       setProximasAcoes(result.snapshot.proximasAcoes as ProximaAcao[]);
+      setRelatoriosVisita(result.snapshot.relatoriosVisita as RelatorioVisita[]);
       setVendedores(result.snapshot.vendedores as Vendedor[]);
       setProdutos(result.snapshot.produtos as Produto[]);
       setFormasPagamento(result.snapshot.formasPagamento as FormaPagamento[]);
@@ -633,7 +638,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       metasVendedor, setMetasVendedor, metasCategoria, setMetasCategoria,
       eventos, setEventos, prioridadesP1, setPrioridadesP1,
       negocios, setNegocios, oportunidades, setOportunidades, produtos, setProdutos,
-      regras, setRegras, vendedores, setVendedores, ticketsMedios, setTicketsMedios, orcamentos, setOrcamentos, empresas, setEmpresas, proximasAcoes, setProximasAcoes, formasPagamento, setFormasPagamento, prazosPagamento, setPrazosPagamento, appConfig, setAppConfig,
+      regras, setRegras, vendedores, setVendedores, ticketsMedios, setTicketsMedios, orcamentos, setOrcamentos, empresas, setEmpresas, proximasAcoes, setProximasAcoes, relatoriosVisita, setRelatoriosVisita, formasPagamento, setFormasPagamento, prazosPagamento, setPrazosPagamento, appConfig, setAppConfig,
       isLoading, isReady, dbError, isSaving, lastSavedAt, saveError, pendingSyncCount, refreshPendingSyncCount, syncStatus, syncError, lastAutoSyncAt, accountSyncStatus, accountSyncHistory, runManualUploadSync, runAccountSyncNowForAccount, restoreAccountSnapshot,
       filters, setFilters,
       filtered: { lancamentos: filteredLancs, negocios: filteredNegs, oportunidades: filteredOportunidades },
