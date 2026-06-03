@@ -1,6 +1,6 @@
 import { Cliente, Evento, Lancamento, MetaEmpresa, MetaPessoal, MetaVendedor, Negocio, Produto, RegraComissao, StatusFunil, Vendedor } from "@/types";
 
-export type ReportType = "geral" | "semanal" | "mensal" | "cliente" | "funil" | "metas-comissao" | "produtos-estoque";
+export type ReportType = "geral" | "semanal" | "mensal" | "cliente" | "funil" | "metas-comissao" | "produtos-estoque" | "visitas";
 
 export interface ReportFilters {
   reportType: ReportType;
