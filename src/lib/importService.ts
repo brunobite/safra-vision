@@ -38,6 +38,7 @@ export const PRODUCT_IMPORT_HEADERS = [
   "fornecedor",
   "marca",
   "precoVenda",
+  "precoMinimo",
   "custo",
   "controlaEstoque",
   "estoqueAtual",
@@ -57,6 +58,7 @@ export const PRODUCT_IMPORT_EXAMPLES: Record<string, string>[] = [
     fornecedor: "Safra Insumos",
     marca: "Safra",
     precoVenda: "120,50",
+    precoMinimo: "110,00",
     custo: "82,30",
     controlaEstoque: "sim",
     estoqueAtual: "150",
@@ -74,6 +76,7 @@ export const PRODUCT_IMPORT_EXAMPLES: Record<string, string>[] = [
     fornecedor: "Parceiro Representado",
     marca: "Marca Parceira",
     precoVenda: "95,00",
+    precoMinimo: "0",
     custo: "0",
     controlaEstoque: "não",
     estoqueAtual: "",
@@ -146,7 +149,7 @@ const aliases: Record<ImportEntity, Record<string, string>> = {
   vendedores: { nome: "nome", vendedor: "nome", responsavel: "nome", email: "email", "e-mail": "email", ativo: "ativo" },
   lancamentos: { data: "data", cliente: "cliente", tipo: "tipo", status: "status", descricao: "oQueFoiRealizado" },
   negocios: { cliente: "cliente", oportunidade: "nome", negocio: "nome", produtos: "produtos", categoria: "categoria", "valor potencial": "valorPotencial", "valor fechado": "valorFechado", status: "status", probabilidade: "probabilidade", vendedor: "vendedor" },
-  produtos: { codigo: "codigo", código: "codigo", sku: "sku", produto: "nome", nome: "nome", "nome do produto": "nome", "nome comercial": "nome", descricao: "nome", "linha/categoria": "categoria", linha: "categoria", categoria: "categoria", unidade: "unidade", "unidade comercial": "unidade", un: "unidade", embalagem: "unidade", precoVenda: "precoVenda", precovenda: "precoVenda", "preco venda": "precoVenda", "preço venda": "precoVenda", "preco lista": "precoLista", "preço lista": "precoLista", preco: "precoVenda", "valor unitario": "precoVenda", "valor venda": "precoVenda", "preco minimo": "precoMinimo", custo: "custo", margem: "margem", fornecedor: "fornecedor", empresa: "fornecedor", marca: "marca", controlaEstoque: "controlaEstoque", controlaestoque: "controlaEstoque", "controla estoque": "controlaEstoque", "controle estoque": "controlaEstoque", "tem estoque": "controlaEstoque", estoqueAtual: "estoqueAtual", estoqueatual: "estoqueAtual", "estoque atual": "estoqueAtual", estoqueReservado: "estoqueReservado", estoquereservado: "estoqueReservado", "estoque reservado": "estoqueReservado", localEstoque: "localEstoque", localestoque: "localEstoque", "local estoque": "localEstoque", "local de estoque": "localEstoque", status: "status", ativo: "ativo", observacoes: "observacoes", observação: "observacoes" },
+  produtos: { codigo: "codigo", código: "codigo", sku: "sku", produto: "nome", nome: "nome", "nome do produto": "nome", "nome comercial": "nome", descricao: "nome", "linha/categoria": "categoria", linha: "categoria", categoria: "categoria", unidade: "unidade", "unidade comercial": "unidade", un: "unidade", embalagem: "unidade", precoVenda: "precoVenda", precovenda: "precoVenda", "preco venda": "precoVenda", "preço venda": "precoVenda", "preco lista": "precoLista", "preço lista": "precoLista", preco: "precoVenda", "valor unitario": "precoVenda", "valor venda": "precoVenda", "preco minimo": "precoMinimo", precominimo: "precoMinimo", "preço minimo": "precoMinimo", "preço mínimo": "precoMinimo", custo: "custo", margem: "margem", fornecedor: "fornecedor", empresa: "fornecedor", marca: "marca", controlaEstoque: "controlaEstoque", controlaestoque: "controlaEstoque", "controla estoque": "controlaEstoque", "controle estoque": "controlaEstoque", "tem estoque": "controlaEstoque", estoqueAtual: "estoqueAtual", estoqueatual: "estoqueAtual", "estoque atual": "estoqueAtual", estoqueReservado: "estoqueReservado", estoquereservado: "estoqueReservado", "estoque reservado": "estoqueReservado", localEstoque: "localEstoque", localestoque: "localEstoque", "local estoque": "localEstoque", "local de estoque": "localEstoque", status: "status", ativo: "ativo", observacoes: "observacoes", observação: "observacoes" },
   metasEmpresa: { mes: "mes", "meta total": "metaTotal", meta: "metaTotal", observacao: "observacao" },
   metasPessoais: { frente: "frente", "meta faturamento": "metaFaturamento", "comissao alvo": "comissaoAlvo", observacao: "observacao" },
   regrasComissao: { nome: "nome", tipo: "tipo", percentual: "percentual", "aplicar sobre": "aplicarSobre", alvo: "alvo", ativo: "ativo" },
@@ -246,7 +249,16 @@ function validateRow(entity: ImportEntity, row: Record<string, unknown>): string
 
 function warnRow(entity: ImportEntity, row: Record<string, unknown>): string[] {
   const warnings: string[] = [];
-  if (entity === "produtos" && parseNumber(row.precoVenda ?? row.precoLista) === undefined) warnings.push("Produto sem preço; será importado com preço 0.");
+  if (entity === "produtos") {
+    const precoVenda = parseNumber(row.precoVenda ?? row.precoLista);
+    const precoMinimo = parseNumber(row.precoMinimo);
+    const custo = parseNumber(row.custo) ?? 0;
+    if (precoVenda === undefined) warnings.push("Produto sem preço; será importado com preço 0.");
+    if (!hasValue(row.precoMinimo)) warnings.push("Preço mínimo vazio; será importado com preço mínimo 0.");
+    const precoMinimoEfetivo = hasValue(row.precoMinimo) ? precoMinimo : 0;
+    if (precoMinimo !== undefined && precoVenda !== undefined && precoMinimo > precoVenda) warnings.push("Preço mínimo maior que preço de venda.");
+    if (precoMinimoEfetivo !== undefined && precoMinimoEfetivo < custo) warnings.push("Preço mínimo menor que custo; revisar limite comercial.");
+  }
   return warnings;
 }
 
@@ -285,7 +297,7 @@ function normalizeEntityRow(entity: ImportEntity, n: Record<string, unknown>): u
     const custo = parseNumber(n.custo) ?? 0;
     const margem = parseNumber(n.margem) ?? (precoLista > 0 ? ((precoLista - custo) / precoLista) * 100 : undefined);
     const now = new Date().toISOString();
-    return { id, codigo: String(n.codigo || ""), sku: String(n.sku || ""), nome: String(n.nome || ""), categoria: String(n.categoria || "Outros"), unidade: String(n.unidade || "KG").toUpperCase(), fornecedor: String(n.fornecedor || ""), marca: String(n.marca || ""), precoLista, precoMinimo: parseNumber(n.precoMinimo) ?? precoLista, custo, margem, controlaEstoque, estoqueAtual, estoqueReservado, localEstoque: controlaEstoque ? String(n.localEstoque || "") : "", ativo: statusToActive(n.status, n.ativo), observacoes: String(n.observacoes || ""), ultimaAtualizacao: now, createdAt: now, updatedAt: now } as Produto;
+    return { id, codigo: String(n.codigo || ""), sku: String(n.sku || ""), nome: String(n.nome || ""), categoria: String(n.categoria || "Outros"), unidade: String(n.unidade || "KG").toUpperCase(), fornecedor: String(n.fornecedor || ""), marca: String(n.marca || ""), precoLista, precoMinimo: parseNumber(n.precoMinimo) ?? 0, custo, margem, controlaEstoque, estoqueAtual, estoqueReservado, localEstoque: controlaEstoque ? String(n.localEstoque || "") : "", ativo: statusToActive(n.status, n.ativo), observacoes: String(n.observacoes || ""), ultimaAtualizacao: now, createdAt: now, updatedAt: now } as Produto;
   }
   if (entity === "empresas") return { id, nomeFantasia: String(n.nomeFantasia || ""), razaoSocial: String(n.razaoSocial || ""), cnpj: String(n.cnpj || ""), inscricaoEstadual: String(n.inscricaoEstadual || ""), endereco: String(n.endereco || ""), cidadeUf: String(n.cidadeUf || ""), telefone: String(n.telefone || ""), email: String(n.email || ""), consultorPadrao: String(n.consultorPadrao || ""), observacoesComerciaisPadrao: String(n.observacoesComerciaisPadrao || ""), ativa: parseBoolean(n.ativa) ?? true, padrao: parseBoolean(n.padrao) ?? false, logoDataUrl: "" } as Empresa;
   if (entity === "formasPagamento") return { id, nome: String(n.nome || ""), ativo: parseBoolean(n.ativo) ?? true, padrao: parseBoolean(n.padrao) ?? false } as FormaPagamento;

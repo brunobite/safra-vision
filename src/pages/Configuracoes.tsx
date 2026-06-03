@@ -790,6 +790,9 @@ export default function Configuracoes() {
       { name: "Instruções", rows: [
         ["Campo", "Regra"],
         ["codigo/sku", "Chave principal para evitar duplicidade. Se ambos estiverem vazios, o app usa nome + fornecedor."],
+        ["precoVenda", "Alimenta o preço de lista interno do produto."],
+        ["precoMinimo", "Aceita número com vírgula ou ponto decimal. Se ficar vazio, será importado como 0 e a prévia exibirá aviso."],
+        ["custo", "Alimenta o custo interno do produto."],
         ["controlaEstoque", "Aceita sim, não, true, false, 1 ou 0."],
         ["estoqueAtual", "Obrigatório como número quando controlaEstoque = sim; pode ficar vazio quando controlaEstoque = não."],
         ["estoqueReservado", "Número válido ou 0 quando controlaEstoque = sim; pode ficar vazio quando controlaEstoque = não."],

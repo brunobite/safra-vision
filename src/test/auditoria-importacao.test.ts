@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { applyImport, buildImportPreview, parseCsv, parseNumber } from "@/lib/importService";
+import { applyImport, buildImportPreview, parseCsv, parseNumber, PRODUCT_IMPORT_HEADERS } from "@/lib/importService";
 import { calcularMetaCarteira, calcularPotencialCarteira, calcularRealizadoCarteira } from "@/utils/businessRules";
-import { Cliente, Orcamento, TicketMedioRegra } from "@/types";
+import { Cliente, Orcamento, Produto, TicketMedioRegra } from "@/types";
 
 describe("auditoria importação e cálculos", () => {
   it("parseNumber suporta formatos com vírgula/ponto e milhar", () => {
@@ -12,6 +12,55 @@ describe("auditoria importação e cálculos", () => {
     expect(parseNumber("2.300,50")).toBe(2300.5);
     expect(parseNumber("-30,123456")).toBe(-30.123456);
     expect(parseNumber("-30.123456")).toBe(-30.123456);
+  });
+
+  it("inclui precoMinimo no modelo oficial de produtos na ordem esperada", () => {
+    expect(PRODUCT_IMPORT_HEADERS).toEqual([
+      "codigo",
+      "sku",
+      "nome",
+      "categoria",
+      "unidade",
+      "fornecedor",
+      "marca",
+      "precoVenda",
+      "precoMinimo",
+      "custo",
+      "controlaEstoque",
+      "estoqueAtual",
+      "estoqueReservado",
+      "localEstoque",
+      "status",
+      "observacoes",
+    ]);
+  });
+
+  it("importa produtos preenchendo precoMinimo e mantendo precoVenda em precoLista", () => {
+    const csv = `codigo;sku;nome;categoria;unidade;fornecedor;marca;precoVenda;precoMinimo;custo;controlaEstoque;estoqueAtual;estoqueReservado;localEstoque;status;observacoes
+P1;SKU1;Produto 1;Adjuvantes;LT;Fornecedor;Marca;120,50;110.25;82,30;sim;10;2;Depósito;ativo;obs`;
+    const preview = buildImportPreview("produtos.csv", "produtos", parseCsv(csv));
+    const result = applyImport("produtos", "add", [], preview);
+    const produto = result.data[0] as Produto;
+    expect(produto.precoLista).toBe(120.5);
+    expect(produto.precoMinimo).toBe(110.25);
+    expect(produto.custo).toBe(82.3);
+  });
+
+  it("avisa sobre precoMinimo vazio, maior que venda e menor que custo sem bloquear importação", () => {
+    const csv = `codigo;nome;unidade;precoVenda;precoMinimo;custo
+VAZIO;Preço Mínimo Vazio;KG;100;;80
+MAIOR;Preço Mínimo Maior;KG;100;120;70
+MENOR;Preço Mínimo Menor;KG;100;60;70`;
+    const preview = buildImportPreview("produtos.csv", "produtos", parseCsv(csv));
+    expect(preview.validRows).toBe(3);
+    expect(preview.rows[0].warnings).toContain("Preço mínimo vazio; será importado com preço mínimo 0.");
+    expect(preview.rows[0].warnings).toContain("Preço mínimo menor que custo; revisar limite comercial.");
+    expect(preview.rows[1].warnings).toContain("Preço mínimo maior que preço de venda.");
+    expect(preview.rows[2].warnings).toContain("Preço mínimo menor que custo; revisar limite comercial.");
+
+    const result = applyImport("produtos", "add", [], preview);
+    const produtoVazio = result.data[0] as Produto;
+    expect(produtoVazio.precoMinimo).toBe(0);
   });
 
   it("importa clientes com persistência de campos oficiais", () => {
