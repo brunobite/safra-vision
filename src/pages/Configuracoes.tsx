@@ -579,16 +579,18 @@ export default function Configuracoes() {
       const freshSyncContext = assertFreshActiveSyncContext(freshAccessContext);
       const result = await publishLocalSnapshotAsOfficial(freshSyncContext);
       setSyncSummary(result.summary);
-      if (result.summary.error > 0) {
-        throw new Error(`Publicação incompleta: ${result.summary.error} store/item(ns) com erro. A base oficial não foi marcada como concluída.`);
+      setSyncComparison(result.afterComparison);
+      if (!result.completed) {
+        const { onlyLocal, onlyRemote, changedInBoth } = result.afterComparison.totals;
+        throw new Error(`Publicação incompleta: ${result.summary.error} erro(s), ${onlyLocal} só locais, ${onlyRemote} só na nuvem e ${changedInBoth} divergentes. A base oficial não foi marcada como concluída.`);
       }
       if (result.meta) setAppConfig((current) => ({ ...current, syncMeta: result.meta }));
       await refreshPendingSyncCount();
-      const postComparison = await compareLocalAndRemote(freshSyncContext);
-      setSyncComparison(postComparison);
       setConfirmPublishOpen(false);
       setPublishConfirmText("");
-      toast.success(`Base oficial publicada: ${result.summary.success} registro(s) enviados.`);
+      const tombstoned = Object.values(result.summary.byStore).reduce((total, item) => total + (item?.tombstoned ?? 0), 0);
+      const sent = Object.values(result.summary.byStore).reduce((total, item) => total + (item?.sent ?? 0), 0);
+      toast.success(`Base oficial publicada: ${sent} enviado(s), ${tombstoned} removido(s) da nuvem.`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Erro desconhecido ao publicar base oficial.";
       setSyncError(message);
@@ -1207,7 +1209,7 @@ export default function Configuracoes() {
           <div className="grid gap-2 md:grid-cols-3 text-sm">
             <div><b>Total:</b> {syncSummary.total}</div><div><b>Sucesso:</b> {syncSummary.success}</div><div><b>Erros:</b> {syncSummary.error}</div>
           </div>
-          <div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Store</TableHead><TableHead>Total</TableHead><TableHead>Sucesso</TableHead><TableHead>Erro</TableHead></TableRow></TableHeader><TableBody>{Object.entries(syncSummary.byStore).map(([store, item]) => <TableRow key={store}><TableCell>{store}</TableCell><TableCell>{item?.total ?? 0}</TableCell><TableCell>{item?.success ?? 0}</TableCell><TableCell>{item?.error ?? 0}</TableCell></TableRow>)}</TableBody></Table></div>
+          <div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Store</TableHead><TableHead>Total</TableHead><TableHead>Enviados</TableHead><TableHead>Tombstonados</TableHead><TableHead>Sucesso</TableHead><TableHead>Erro</TableHead></TableRow></TableHeader><TableBody>{Object.entries(syncSummary.byStore).map(([store, item]) => <TableRow key={store}><TableCell>{store}</TableCell><TableCell>{item?.total ?? 0}</TableCell><TableCell>{item?.sent ?? 0}</TableCell><TableCell>{item?.tombstoned ?? 0}</TableCell><TableCell>{item?.success ?? 0}</TableCell><TableCell>{item?.error ?? 0}</TableCell></TableRow>)}</TableBody></Table></div>
           {syncSummary.errors.length > 0 && <div className="text-sm text-destructive">{syncSummary.errors.map((error) => <div key={error.id}>{error.store}: {error.message}</div>)}</div>}
         </Card>}
 
