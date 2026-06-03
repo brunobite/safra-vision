@@ -14,7 +14,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAppStore } from "@/store/AppStore";
-import { BaseMode, ImportLog, RegraComissao, AplicarSobre, FaixaComissao, CATEGORIAS_PRODUTO_PADRAO, Empresa, FormaPagamento, PrazoPagamento } from "@/types";
+import { BaseMode, ImportLog, RegraComissao, AplicarSobre, FaixaComissao, CATEGORIAS_PRODUTO_PADRAO, Empresa, FormaPagamento, PrazoPagamento, Produto, Cliente } from "@/types";
 import { CalendarClock, ChevronDown, ChevronRight, Plus, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { deleteLocalItemsById, getLocalDbStats, LocalDbStats, replaceLocalDatabase, resetLocalDatabase, saveStore } from "@/lib/localRepository";
@@ -22,7 +22,7 @@ import { clearLocalAppDeviceData } from "@/lib/clientCleanup";
 import { exportAllEntitiesToCsv } from "@/lib/csvService";
 import { exportWorkbook } from "@/lib/excelService";
 import { downloadBackupJson, parseBackupPayload } from "@/lib/backupService";
-import { applyImport, buildImportPreview, IMPORT_TEMPLATES, ImportMode, ImportPreview, parseCsv } from "@/lib/importService";
+import { applyImport, buildImportPreview, IMPORT_TEMPLATES, ImportEntity, ImportMode, ImportPreview, PRODUCT_IMPORT_EXAMPLES, PRODUCT_IMPORT_HEADERS, isDuplicate, parseCsv } from "@/lib/importService";
 import { saveAsTextFile } from "@/lib/fileDownload";
 import { openAppDb, promisifyRequest } from "@/lib/db";
 import { isSupabaseConfigured } from "@/lib/supabase";
@@ -76,6 +76,7 @@ export default function Configuracoes() {
   const [stats, setStats] = useState<LocalDbStats | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const importFileRef = useRef<HTMLInputElement | null>(null);
+  const productImportFileRef = useRef<HTMLInputElement | null>(null);
   const [importMode, setImportMode] = useState<ImportMode>("add");
   const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -695,7 +696,7 @@ export default function Configuracoes() {
 
 
 
-  const handleImportFile = async (event: ChangeEvent<HTMLInputElement>) => {
+  const handleImportFile = async (event: ChangeEvent<HTMLInputElement>, entity: ImportEntity = "clientes") => {
     const file = event.target.files?.[0];
     if (!file) return;
     try {
@@ -721,7 +722,7 @@ export default function Configuracoes() {
         rows = parseCsv(text);
       }
       if (rows.length < 2) throw new Error();
-      const preview = buildImportPreview(file.name, "clientes", rows);
+      const preview = buildImportPreview(file.name, entity, rows);
       setImportPreview(preview);
       setPreviewOpen(true);
     } catch {
@@ -733,18 +734,21 @@ export default function Configuracoes() {
 
   const confirmImport = () => {
     if (!importPreview) return;
-    if (importMode === "replace" && !window.confirm("Esta ação substituirá todos os dados atuais desta entidade pelos dados importados. Essa ação não pode ser desfeita nesta versão. Deseja continuar?")) return;
-
-    const applyClientes = (current: never[], setter: (v: never[])=>void) => {
-      const result = applyImport("clientes", importMode, current as { id: string }[], importPreview);
-      setter(result.data as never[]);
-      toast.success(`Importação concluída: ${result.imported} criados, ${result.updated} atualizados, ${result.ignored} ignorados, ${result.duplicates} duplicidades.`);
-      return result;
-    };
+    const modeToApply: ImportMode = importPreview.entity === "produtos" && importMode === "replace" ? "add_update" : importMode;
+    if (modeToApply === "replace" && !window.confirm("Esta ação substituirá todos os dados atuais desta entidade pelos dados importados. Essa ação não pode ser desfeita nesta versão. Deseja continuar?")) return;
 
     let summary = { imported: 0, updated: 0, ignored: 0, duplicates: 0 };
-    summary = applyClientes(clientes as never[], setClientes) || summary;
-    const log: ImportLog = { id: `ilog-${Date.now()}`, arquivo: importPreview.fileName, dataHora: new Date().toISOString(), entidade: "clientes", registrosLidos: importPreview.totalRows, registrosCriados: summary.imported, registrosAtualizados: summary.updated, registrosIgnorados: summary.ignored, erros: importPreview.errorRows, avisos: importPreview.rows.reduce((a,r)=>a+r.warnings.length,0) };
+    if (importPreview.entity === "produtos") {
+      const result = applyImport("produtos", modeToApply, produtos as ({ id: string } & Record<string, unknown>)[], importPreview);
+      setProdutos(result.data as Produto[]);
+      summary = result;
+    } else {
+      const result = applyImport("clientes", modeToApply, clientes as ({ id: string } & Record<string, unknown>)[], importPreview);
+      setClientes(result.data as Cliente[]);
+      summary = result;
+    }
+    toast.success(`Importação concluída: ${summary.imported} criados, ${summary.updated} atualizados, ${summary.ignored} ignorados, ${summary.duplicates} duplicidades.`);
+    const log: ImportLog = { id: `ilog-${Date.now()}`, arquivo: importPreview.fileName, dataHora: new Date().toISOString(), entidade: importPreview.entity, registrosLidos: importPreview.totalRows, registrosCriados: summary.imported, registrosAtualizados: summary.updated, registrosIgnorados: summary.ignored, erros: importPreview.errorRows, avisos: importPreview.rows.reduce((a,r)=>a+r.warnings.length,0) };
     setImportLogs((prev)=>[log, ...prev]);
     void saveStore("importLogs", [log, ...importLogs]);
     setPreviewOpen(false);
@@ -752,21 +756,60 @@ export default function Configuracoes() {
     void loadStats();
   };
 
-  const downloadTemplateClientes = () => {
-    const headers = IMPORT_TEMPLATES.clientes;
-    const csv = `${headers.join(";")}\n`;
-    saveAsTextFile("modelo_clientes.csv", csv, "text/csv;charset=utf-8");
-    const ws = XLSX.utils.aoa_to_sheet([headers]);
+  const downloadXlsx = (fileName: string, sheets: Array<{ name: string; rows: unknown[][] }>) => {
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Clientes");
+    sheets.forEach((sheet) => XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sheet.rows), sheet.name));
     const out = XLSX.write(wb, { type: "array", bookType: "xlsx" });
     const blob = new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = "modelo_clientes.xlsx";
+    a.download = fileName;
     a.click();
     URL.revokeObjectURL(a.href);
   };
+
+  const escapeImportCsv = (value: unknown) => {
+    const text = String(value ?? "");
+    const escaped = text.replace(/"/g, '""');
+    return /[;\n\r"]/.test(escaped) ? `"${escaped}"` : escaped;
+  };
+
+  const downloadTemplateClientes = () => {
+    const headers = IMPORT_TEMPLATES.clientes;
+    const csv = `${headers.join(";")}\n`;
+    saveAsTextFile("modelo_clientes.csv", csv, "text/csv;charset=utf-8");
+    downloadXlsx("modelo_clientes.xlsx", [{ name: "Clientes", rows: [headers] }]);
+  };
+
+  const downloadTemplateProdutos = () => {
+    const rows = [PRODUCT_IMPORT_HEADERS, ...PRODUCT_IMPORT_EXAMPLES.map((example) => PRODUCT_IMPORT_HEADERS.map((header) => example[header] ?? ""))];
+    const csv = `\uFEFF${rows.map((row) => row.map(escapeImportCsv).join(";")).join("\n")}`;
+    saveAsTextFile("modelo_produtos.csv", csv, "text/csv;charset=utf-8");
+    downloadXlsx("modelo_produtos.xlsx", [
+      { name: "Produtos", rows },
+      { name: "Instruções", rows: [
+        ["Campo", "Regra"],
+        ["codigo/sku", "Chave principal para evitar duplicidade. Se ambos estiverem vazios, o app usa nome + fornecedor."],
+        ["controlaEstoque", "Aceita sim, não, true, false, 1 ou 0."],
+        ["estoqueAtual", "Obrigatório como número quando controlaEstoque = sim; pode ficar vazio quando controlaEstoque = não."],
+        ["estoqueReservado", "Número válido ou 0 quando controlaEstoque = sim; pode ficar vazio quando controlaEstoque = não."],
+        ["estoqueDisponivel", "Não importar: é calculado pelo app como estoqueAtual - estoqueReservado."],
+        ["status", "Aceita ativo, inativo ou vazio como ativo."],
+      ] },
+    ]);
+  };
+
+  const previewClassification = useMemo(() => {
+    if (!importPreview) return { novos: 0, atualizados: 0, ignorados: 0, erros: 0, duplicidades: 0 };
+    const current = (importPreview.entity === "produtos" ? produtos : clientes) as ({ id: string } & Record<string, unknown>)[];
+    return importPreview.rows.reduce((acc, row) => {
+      if (row.errors.length) { acc.erros += 1; acc.ignorados += 1; return acc; }
+      const exists = current.some((item) => isDuplicate(importPreview.entity, item, row.normalized as { id: string } & Record<string, unknown>));
+      if (exists) { acc.atualizados += 1; acc.duplicidades += 1; }
+      else acc.novos += 1;
+      return acc;
+    }, { novos: 0, atualizados: 0, ignorados: 0, erros: 0, duplicidades: importPreview.duplicateRows });
+  }, [clientes, importPreview, produtos]);
 
   const openNew = () => { setEdit(null); setForm(emptyRegra); setOpen(true); };
   const openEdit = (r: RegraComissao) => { setEdit(r); const { id, ...rest } = r; void id; setForm(rest); setOpen(true); };
@@ -1106,7 +1149,7 @@ export default function Configuracoes() {
           <div className="text-xs">Último backup manual: {lastBackupAt ? new Date(lastBackupAt).toLocaleString("pt-BR") : "não registrado"}</div>
           <div className="grid gap-2 md:grid-cols-2">
             <Select value={importMode} onValueChange={(v: ImportMode) => setImportMode(v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>
-              <SelectItem value="add">Adicionar novos registros</SelectItem><SelectItem value="update">Atualizar registros existentes</SelectItem><SelectItem value="replace">Substituir base de clientes</SelectItem>
+              <SelectItem value="add">Adicionar novos registros</SelectItem><SelectItem value="update">Atualizar apenas existentes</SelectItem><SelectItem value="add_update">Adicionar e atualizar</SelectItem><SelectItem value="replace">Substituir base de clientes</SelectItem>
             </SelectContent></Select>
             <Button variant="outline" onClick={() => { downloadBackupJson(exportPayload); setLastBackupAt(new Date().toISOString()); }}>Gerar backup antes de importar</Button>
           </div>
@@ -1114,7 +1157,24 @@ export default function Configuracoes() {
             <Button variant="outline" onClick={downloadTemplateClientes}>Baixar planilha modelo de clientes</Button>
             <Button onClick={() => importFileRef.current?.click()}>Importar planilha de clientes</Button>
           </div>
-          <input ref={importFileRef} type="file" accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="hidden" onChange={handleImportFile} />
+          <input ref={importFileRef} type="file" accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="hidden" onChange={(event) => handleImportFile(event, "clientes")} />
+        </Card>
+
+        <Card className="space-y-3 border-dashed p-3 text-sm">
+          <div className="font-semibold">Importação de produtos e estoque inicial</div>
+          <p className="text-xs text-muted-foreground">Baixe o modelo oficial, valide a prévia e importe produtos para o cadastro mestre com preço, custo e estoque inicial.</p>
+          <div className="grid gap-2 md:grid-cols-2">
+            <Select value={importMode} onValueChange={(v: ImportMode) => setImportMode(v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>
+              <SelectItem value="add">Adicionar novos</SelectItem><SelectItem value="update">Atualizar existentes</SelectItem><SelectItem value="add_update">Adicionar e atualizar</SelectItem>
+            </SelectContent></Select>
+            <Button variant="outline" onClick={() => { downloadBackupJson(exportPayload); setLastBackupAt(new Date().toISOString()); }}>Gerar backup antes de importar</Button>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <Button variant="outline" onClick={downloadTemplateProdutos}>Baixar modelo de produtos</Button>
+            <Button onClick={() => productImportFileRef.current?.click()}>Importar produtos</Button>
+          </div>
+          <p className="text-xs text-muted-foreground">O modelo baixa CSV e XLSX com exemplos de produto com estoque e produto sem controle de estoque/representação.</p>
+          <input ref={productImportFileRef} type="file" accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="hidden" onChange={(event) => handleImportFile(event, "produtos")} />
         </Card>
       </TabsContent>
 
@@ -1399,10 +1459,11 @@ export default function Configuracoes() {
     <Dialog open={open} onOpenChange={setOpen}><DialogContent className="max-w-2xl"><DialogHeader><DialogTitle>{edit ? "Editar regra" : "Nova regra de comissão"}</DialogTitle></DialogHeader><div className="grid gap-3 md:grid-cols-2"><div className="md:col-span-2"><Label>Nome da regra</Label><Input value={form.nome} onChange={e => setForm({ ...form, nome: e.target.value })} /></div><div><Label>Tipo</Label><Select value={form.tipo} onValueChange={(v: "fixa" | "escalonada") => setForm({ ...form, tipo: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="fixa">Fixa</SelectItem><SelectItem value="escalonada">Escalonada</SelectItem></SelectContent></Select></div><div><Label>Aplicar sobre</Label><Select value={form.aplicarSobre} onValueChange={(v: AplicarSobre) => setForm({ ...form, aplicarSobre: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{APLICAR.map(a => <SelectItem key={a.v} value={a.v}>{a.label}</SelectItem>)}</SelectContent></Select></div>{form.tipo === "fixa" && (<div><Label>Percentual (%)</Label><Input type="number" step="0.1" value={form.percentual || 0} onChange={e => setForm({ ...form, percentual: +e.target.value })} /></div>)}<div className="flex items-end gap-2"><Switch checked={form.ativo} onCheckedChange={v => setForm({ ...form, ativo: v })} /><Label>Ativo</Label></div></div>{form.tipo === "escalonada" && <div className="mt-3 rounded-md border border-border p-3"><div className="mb-2 flex items-center justify-between"><Label className="text-sm font-semibold">Faixas escalonadas</Label><Button size="sm" variant="outline" onClick={addFaixa}><Plus className="mr-1 h-3 w-3" /> Faixa</Button></div><div className="space-y-2">{(form.faixas || []).map((f, i) => <div key={i} className="grid grid-cols-4 gap-2"><Input type="number" placeholder="Mín %" value={f.min} onChange={e => updFaixa(i, "min", +e.target.value)} /><Input type="number" placeholder="Máx %" value={f.max} onChange={e => updFaixa(i, "max", +e.target.value)} /><Input type="number" step="0.1" placeholder="% comissão" value={f.percentual} onChange={e => updFaixa(i, "percentual", +e.target.value)} /><Button size="icon" variant="ghost" onClick={() => rmFaixa(i)}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button></div>)}</div></div>}<DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button><Button onClick={save}>Salvar</Button></DialogFooter></DialogContent></Dialog>
   
     <Dialog open={previewOpen} onOpenChange={setPreviewOpen}><DialogContent className="max-w-4xl"><DialogHeader><DialogTitle>Prévia da importação</DialogTitle></DialogHeader>{importPreview && <div className="space-y-2 text-sm">
-      <div><b>Arquivo:</b> {importPreview.fileName}</div><div><b>Entidade:</b> {importPreview.entity}</div><div><b>Modo:</b> {importMode}</div>
-      <div><b>Linhas lidas:</b> {importPreview.totalRows} | <b>Válidas:</b> {importPreview.validRows} | <b>Com erro:</b> {importPreview.errorRows} | <b>Com aviso:</b> {importPreview.warningRows}</div><div><b>Possíveis duplicidades:</b> {importPreview.duplicateRows} | <b>Obrigatórios ausentes:</b> {importPreview.missingRequiredRows}</div>
-      <div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Linha</TableHead><TableHead>Dados normalizados</TableHead><TableHead>Erros</TableHead></TableRow></TableHeader><TableBody>{importPreview.sample.map(r => <TableRow key={r.row}><TableCell>{r.row}</TableCell><TableCell className="max-w-md whitespace-pre-wrap text-xs">{JSON.stringify(r.normalized)}</TableCell><TableCell className="text-xs text-destructive">{r.errors.join("; ") || "—"}</TableCell></TableRow>)}</TableBody></Table></div>
+      <div><b>Arquivo:</b> {importPreview.fileName}</div><div><b>Entidade:</b> {importPreview.entity}</div><div><b>Modo:</b> {importPreview.entity === "produtos" && importMode === "replace" ? "add_update" : importMode}</div>
+      <div><b>Linhas lidas:</b> {importPreview.totalRows} | <b>Válidas:</b> {importPreview.validRows} | <b>Com erro:</b> {importPreview.errorRows} | <b>Com aviso:</b> {importPreview.warningRows}</div>
+      <div><b>Novos:</b> {previewClassification.novos} | <b>Serão atualizados:</b> {previewClassification.atualizados} | <b>Linhas ignoradas/erro:</b> {previewClassification.ignorados} | <b>Possíveis duplicidades:</b> {previewClassification.duplicidades} | <b>Obrigatórios ausentes:</b> {importPreview.missingRequiredRows}</div>
+      <div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Linha</TableHead><TableHead>Dados normalizados</TableHead><TableHead>Erros</TableHead><TableHead>Avisos</TableHead></TableRow></TableHeader><TableBody>{importPreview.sample.map(r => <TableRow key={r.row}><TableCell>{r.row}</TableCell><TableCell className="max-w-md whitespace-pre-wrap text-xs">{JSON.stringify(r.normalized)}</TableCell><TableCell className="text-xs text-destructive">{r.errors.join("; ") || "—"}</TableCell><TableCell className="text-xs text-amber-600">{r.warnings.join("; ") || "—"}</TableCell></TableRow>)}</TableBody></Table></div>
       <div className="text-xs text-muted-foreground">Colunas não reconhecidas: {importPreview.unmappedColumns.join(", ") || "nenhuma"}</div>
-    </div>}<DialogFooter><Button variant="outline" onClick={() => setPreviewOpen(false)}>Cancelar</Button><Button onClick={confirmImport}>Confirmar importação</Button></DialogFooter></DialogContent></Dialog>
+    </div>}<DialogFooter><Button variant="outline" onClick={() => setPreviewOpen(false)}>Cancelar</Button><Button onClick={confirmImport} disabled={importPreview?.validRows === 0}>Confirmar importação</Button></DialogFooter></DialogContent></Dialog>
 </div>;
 }

@@ -374,10 +374,12 @@ export interface PrioridadeP1Item {
 export interface Produto {
   id: string;
   codigo: string;
+  sku?: string;
   nome: string;
   categoria: CategoriaProduto;
   unidade: "LT" | "GAL" | "BD" | "TON" | "KG";
   fornecedor?: string;
+  marca?: string;
   precoLista: number;
   precoMinimo: number;
   precoPromocional?: number;
