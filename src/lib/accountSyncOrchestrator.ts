@@ -65,6 +65,7 @@ export type AccountSyncDecisionParams = {
   localCount: number;
   onlyLocal: number;
   onlyRemote: number;
+  changedInBoth?: number;
   remoteCount: number;
 };
 
@@ -128,6 +129,7 @@ export function shouldAutoRestoreAccount(params: AccountSyncDecisionParams): Acc
   if (params.accessStatus !== "active") return { allowed: false, reason: "inactive-profile", message: "Usuário ainda não aprovado para sincronização." };
   if (!params.isOnline) return { allowed: false, reason: "offline", message: "Sem conexão. Os dados locais continuam disponíveis." };
   if (params.pendingSyncCount > 0) return { allowed: false, reason: "pending-sync", message: "Há dados locais aguardando envio." };
+  if ((params.changedInBoth ?? 0) > 0) return { allowed: false, reason: "cloud-conflict", message: "Dados divergentes entre este dispositivo e a nuvem." };
   if (params.onlyLocal > 0 && params.onlyRemote > 0) return { allowed: false, reason: "cloud-conflict", message: "Conflito detectado. Revisão manual necessária." };
   if (params.onlyLocal > 0) return { allowed: false, reason: "local-conflict", message: "Conflito detectado. Revisão manual necessária." };
   if (params.remoteCount <= 0) return { allowed: false, reason: "no-cloud-data", message: "Este dispositivo está atualizado." };
@@ -258,7 +260,7 @@ export async function runAccountSyncNow(dependencies: AccountSyncContext): Promi
 
     const comparison = await (dependencies.compareLocalAndRemote ?? compareLocalAndRemote)(syncContext);
 
-    if (pendingSyncCount > 0 || comparison.totals.onlyLocal > 0) {
+    if (pendingSyncCount > 0 || comparison.totals.onlyLocal > 0 || comparison.totals.changedInBoth > 0) {
       return buildAccountSyncStatus({ code: "blocked", comparison, pendingSyncCount, uploadSummary: upload.uploadSummary });
     }
 
@@ -306,6 +308,7 @@ export async function runAccountSyncCheck(dependencies: AccountSyncContext): Pro
       localCount: comparison.totals.localCount,
       onlyLocal: comparison.totals.onlyLocal,
       onlyRemote: comparison.totals.onlyRemote,
+      changedInBoth: comparison.totals.changedInBoth,
       remoteCount: comparison.totals.remoteCount,
     });
 

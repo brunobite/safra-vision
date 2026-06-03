@@ -36,6 +36,7 @@ export type CloudRestoreDecisionParams = {
   pendingSyncCount: number;
   onlyLocal: number;
   onlyRemote: number;
+  changedInBoth?: number;
   remoteCount: number;
 };
 
@@ -139,12 +140,12 @@ export async function fetchAccountSnapshot(context: CloudRestoreContext): Promis
   return buildAccountSnapshotFromRemoteRows(rowsByStore);
 }
 
-async function readLocalIds(store: SyncableStore) {
+async function readLocalRecords(store: SyncableStore) {
   const db = await openAppDb();
   try {
     const tx = db.transaction(store as StoreName, "readonly");
     const records = (await promisifyRequest(tx.objectStore(store).getAll())) as Array<{ id: string }>;
-    return records.map((record) => record.id);
+    return records;
   } finally {
     db.close();
   }
@@ -153,7 +154,7 @@ async function readLocalIds(store: SyncableStore) {
 export async function compareLocalWithAccountSnapshot(context: CloudRestoreContext): Promise<LocalRemoteComparison> {
   const snapshot = await fetchAccountSnapshot(context);
   const stores = await Promise.all(SYNCABLE_CLOUD_STORES.map(async (store): Promise<StoreComparison> => {
-    const localIds = await readLocalIds(store);
+    const localRecords = await readLocalRecords(store);
     const remoteRows: RemoteRow[] = snapshot[store].map((payload) => ({
       id: String(payload.id),
       user_id: context.session?.user.id ?? "",
@@ -162,7 +163,7 @@ export async function compareLocalWithAccountSnapshot(context: CloudRestoreConte
       updated_at: null,
       deleted_at: null,
     }));
-    return calculateStoreComparison(store, localIds, remoteRows);
+    return calculateStoreComparison(store, localRecords, remoteRows);
   }));
 
   return { generatedAt: nowIso(), stores, totals: summarizeComparison(stores) };
@@ -174,10 +175,9 @@ export function shouldRestoreFromCloud(params: CloudRestoreDecisionParams): Clou
   if (params.accessStatus !== "active") return { allowed: false, reason: "inactive-profile", message: "Usuário ainda não aprovado para sincronização." };
   if (!params.isOnline) return { allowed: false, reason: "offline", message: "Sem conexão com a internet." };
   if (params.pendingSyncCount > 0) return { allowed: false, reason: "pending-sync", message: CONFLICT_MESSAGE };
-  if (params.onlyLocal > 0) return { allowed: false, reason: "local-conflict", message: CONFLICT_MESSAGE };
   if (params.remoteCount <= 0) return { allowed: false, reason: "no-cloud-data", message: "Não há dados ativos da conta na nuvem para carregar." };
-  if (params.onlyRemote <= 0) return { allowed: false, reason: "no-remote-only", message: "Este dispositivo já está alinhado com os dados ativos da conta." };
-  return { allowed: true, reason: "allowed", message: "Há dados da sua conta na nuvem. Carregar neste dispositivo?" };
+  if (params.onlyRemote <= 0 && params.onlyLocal <= 0 && (params.changedInBoth ?? 0) <= 0) return { allowed: false, reason: "no-remote-only", message: "Este dispositivo já está alinhado com os dados ativos da conta." };
+  return { allowed: true, reason: "allowed", message: params.onlyLocal > 0 || (params.changedInBoth ?? 0) > 0 ? "Dados divergentes entre este dispositivo e a nuvem. Carregar a nuvem substituirá os dados locais sincronizáveis." : "Há dados da sua conta na nuvem. Carregar neste dispositivo?" };
 }
 
 export function buildCloudRestoreSummary(snapshot: AccountSnapshot): CloudRestoreSummary {

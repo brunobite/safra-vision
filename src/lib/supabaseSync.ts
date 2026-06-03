@@ -92,6 +92,7 @@ export type StoreComparison = {
   onlyLocal: number;
   onlyRemote: number;
   inBoth: number;
+  changedInBoth: number;
   remoteDeleted: number;
 };
 
@@ -279,7 +280,7 @@ export async function syncPendingQueue(context: SyncContext): Promise<{ summary:
     }
   }
 
-  const meta = await persistRemoteSyncMeta(context, summary);
+  const meta = summary.error === 0 ? await persistRemoteSyncMeta(context, summary) : null;
   return { summary, meta };
 }
 
@@ -301,6 +302,11 @@ export async function enqueueFullLocalSnapshotForSync() {
 }
 
 export async function runFirstUploadSync(context: SyncContext) {
+  await enqueueFullLocalSnapshotForSync();
+  return syncPendingQueue(context);
+}
+
+export async function publishLocalSnapshotAsOfficial(context: SyncContext) {
   await enqueueFullLocalSnapshotForSync();
   return syncPendingQueue(context);
 }
@@ -335,16 +341,59 @@ async function readLocalSyncableStore(store: SyncableStore) {
   }
 }
 
-export function calculateStoreComparison(store: SyncableStore, localIds: string[], remoteRows: RemoteRow[]): StoreComparison {
-  const activeRemoteIds = new Set(remoteRows.filter((row) => !row.deleted_at).map((row) => row.id));
+const TECHNICAL_PAYLOAD_FIELDS = new Set(["syncMeta", "lastUploadAt", "lastDownloadAt", "lastSyncSummary", "deviceLabel"]);
+
+type LocalComparableRecord = string | { id: string; [key: string]: unknown };
+
+function normalizeComparablePayload(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(normalizeComparablePayload);
+  if (!value || typeof value !== "object") return value;
+
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([key]) => !TECHNICAL_PAYLOAD_FIELDS.has(key))
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => [key, normalizeComparablePayload(item)]),
+  );
+}
+
+export function stablePayloadHash(value: unknown): string {
+  return JSON.stringify(normalizeComparablePayload(value));
+}
+
+function getLocalRecordId(record: LocalComparableRecord) {
+  return typeof record === "string" ? record : record.id;
+}
+
+function normalizeRemotePayload(row: RemoteRow) {
+  if (row.payload && typeof row.payload === "object" && !Array.isArray(row.payload)) {
+    return { id: row.id, ...(row.payload as Record<string, unknown>) };
+  }
+  return { id: row.id };
+}
+
+export function calculateStoreComparison(store: SyncableStore, localRecords: LocalComparableRecord[], remoteRows: RemoteRow[]): StoreComparison {
+  const activeRemoteRows = remoteRows.filter((row) => !row.deleted_at);
+  const activeRemoteIds = new Set(activeRemoteRows.map((row) => row.id));
+  const activeRemoteById = new Map(activeRemoteRows.map((row) => [row.id, row]));
   const deletedRemoteIds = new Set(remoteRows.filter((row) => Boolean(row.deleted_at)).map((row) => row.id));
-  const localIdSet = new Set(localIds);
+  const localIdSet = new Set(localRecords.map(getLocalRecordId));
+  const localById = new Map(localRecords.filter((record): record is { id: string; [key: string]: unknown } => typeof record !== "string").map((record) => [record.id, record]));
   let onlyLocal = 0;
   let inBoth = 0;
+  let changedInBoth = 0;
 
   localIdSet.forEach((id) => {
-    if (activeRemoteIds.has(id)) inBoth += 1;
-    else onlyLocal += 1;
+    if (activeRemoteIds.has(id)) {
+      inBoth += 1;
+      const localRecord = localById.get(id);
+      const remoteRow = activeRemoteById.get(id);
+      if (localRecord && remoteRow && stablePayloadHash(localRecord) !== stablePayloadHash(normalizeRemotePayload(remoteRow))) {
+        changedInBoth += 1;
+      }
+    } else {
+      onlyLocal += 1;
+    }
   });
 
   let onlyRemote = 0;
@@ -360,6 +409,7 @@ export function calculateStoreComparison(store: SyncableStore, localIds: string[
     onlyLocal,
     onlyRemote,
     inBoth,
+    changedInBoth,
     remoteDeleted: deletedRemoteIds.size,
   };
 }
@@ -372,9 +422,10 @@ export function summarizeComparison(stores: StoreComparison[]): LocalRemoteCompa
       onlyLocal: totals.onlyLocal + store.onlyLocal,
       onlyRemote: totals.onlyRemote + store.onlyRemote,
       inBoth: totals.inBoth + store.inBoth,
+      changedInBoth: totals.changedInBoth + store.changedInBoth,
       remoteDeleted: totals.remoteDeleted + store.remoteDeleted,
     }),
-    { localCount: 0, remoteCount: 0, onlyLocal: 0, onlyRemote: 0, inBoth: 0, remoteDeleted: 0 },
+    { localCount: 0, remoteCount: 0, onlyLocal: 0, onlyRemote: 0, inBoth: 0, changedInBoth: 0, remoteDeleted: 0 },
   );
 }
 
@@ -386,7 +437,7 @@ export async function compareLocalAndRemote(context: SyncContext): Promise<Local
         readLocalSyncableStore(store),
         fetchRows(LOCAL_TO_REMOTE_TABLE[store], context, true),
       ]);
-      return calculateStoreComparison(store, local.map((item) => item.id), remote);
+      return calculateStoreComparison(store, local, remote);
     }),
   );
 

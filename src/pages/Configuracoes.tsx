@@ -27,7 +27,7 @@ import { saveAsTextFile } from "@/lib/fileDownload";
 import { openAppDb, promisifyRequest } from "@/lib/db";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import { getFreshSupabaseAccessContext, type FreshSupabaseAccessContext } from "@/lib/supabaseAccess";
-import { compareLocalAndRemote, getRemoteSyncMeta, type LocalRemoteComparison, type SyncSummary } from "@/lib/supabaseSync";
+import { compareLocalAndRemote, getRemoteSyncMeta, publishLocalSnapshotAsOfficial, type LocalRemoteComparison, type SyncSummary } from "@/lib/supabaseSync";
 import { fetchAccountSnapshot, shouldRestoreFromCloud, buildCloudRestoreSummary, type CloudRestoreSummary } from "@/lib/cloudRestore";
 import { enqueueSyncItem, requeueFailedAndStaleSyncItems } from "@/lib/syncQueue";
 import { findRemoteOnlyClientTestCandidates, softDeleteRemoteClientTests, type RemoteOnlyClientTestCandidate } from "@/lib/remoteCleanup";
@@ -90,8 +90,11 @@ export default function Configuracoes() {
   const [isComparingSync, setIsComparingSync] = useState(false);
   const [confirmUploadOpen, setConfirmUploadOpen] = useState(false);
   const [confirmRestoreOpen, setConfirmRestoreOpen] = useState(false);
+  const [confirmPublishOpen, setConfirmPublishOpen] = useState(false);
+  const [publishConfirmText, setPublishConfirmText] = useState("");
   const [restoreConfirmText, setRestoreConfirmText] = useState("");
   const [isRestoringCloud, setIsRestoringCloud] = useState(false);
+  const [isPublishingOfficial, setIsPublishingOfficial] = useState(false);
   const [restoreSummary, setRestoreSummary] = useState<CloudRestoreSummary | null>(null);
   const [isRefreshingSyncStatus, setIsRefreshingSyncStatus] = useState(false);
   const [syncQueryStatus, setSyncQueryStatus] = useState<SyncQueryStatus>("parado");
@@ -158,11 +161,13 @@ export default function Configuracoes() {
     pendingSyncCount,
     onlyLocal: syncComparison?.totals.onlyLocal ?? 0,
     onlyRemote: syncComparison?.totals.onlyRemote ?? 0,
+    changedInBoth: syncComparison?.totals.changedInBoth ?? 0,
     remoteCount: syncComparison?.totals.remoteCount ?? 0,
   });
   const showCloudRestoreCta = cloudRestoreDecision.allowed;
   const isOnline = typeof navigator === "undefined" ? true : navigator.onLine;
-  const hasSyncConflict = Boolean(syncComparison && syncComparison.totals.onlyLocal > 0 && syncComparison.totals.onlyRemote > 0);
+  const hasDivergentCloudData = Boolean(syncComparison && (syncComparison.totals.changedInBoth > 0 || syncComparison.totals.onlyLocal > 0 || syncComparison.totals.onlyRemote > 0));
+  const hasSyncConflict = Boolean(syncComparison && (syncComparison.totals.changedInBoth > 0 || (syncComparison.totals.onlyLocal > 0 && syncComparison.totals.onlyRemote > 0)));
   const userSyncMessage = getAccountSyncUserMessage({
     isOnline,
     cloudSessionExists,
@@ -417,7 +422,7 @@ export default function Configuracoes() {
       syncQueueAudit && syncQueueAudit.byStatus.error + syncQueueAudit.staleProcessing.length > 0 ? "- Reprocessar erros/travados." : "- Fila sem erros/travados detectados.",
       testCandidates.length > 0 ? "- Revisar candidatos de teste e limpar manualmente apenas clientes confirmados." : "- Nenhum registro de teste detectado pelos padrões configurados.",
       remoteOnlyCandidates.length > 0 ? "- Revisar testes somente na nuvem e limpar manualmente apenas candidatos confirmados." : "- Nenhum teste somente na nuvem carregado ou detectado.",
-      syncComparison && (syncComparison.totals.onlyLocal > 0 || syncComparison.totals.onlyRemote > 0) ? "- Revisar divergências local x nuvem." : "- Comparação local x nuvem sem divergências destacadas ou não executada.",
+      syncComparison && (syncComparison.totals.onlyLocal > 0 || syncComparison.totals.onlyRemote > 0 || syncComparison.totals.changedInBoth > 0) ? "- Revisar divergências local x nuvem." : "- Comparação local x nuvem sem divergências destacadas ou não executada.",
     ];
 
     await navigator.clipboard.writeText(lines.join("\n"));
@@ -540,6 +545,7 @@ export default function Configuracoes() {
         pendingSyncCount: freshPendingCount,
         onlyLocal: currentComparison.totals.onlyLocal,
         onlyRemote: currentComparison.totals.onlyRemote,
+        changedInBoth: currentComparison.totals.changedInBoth,
         remoteCount: currentComparison.totals.remoteCount,
       });
       if (!decision.allowed) throw new Error(decision.message);
@@ -559,6 +565,37 @@ export default function Configuracoes() {
       toast.error(message);
     } finally {
       setIsRestoringCloud(false);
+    }
+  };
+
+
+  const executePublishOfficial = async () => {
+    if (publishConfirmText !== "PUBLICAR ESTE DISPOSITIVO") return;
+    setIsPublishingOfficial(true);
+    setIsSyncing(true);
+    setSyncError(null);
+    try {
+      const freshAccessContext = await getFreshSyncContext();
+      const freshSyncContext = assertFreshActiveSyncContext(freshAccessContext);
+      const result = await publishLocalSnapshotAsOfficial(freshSyncContext);
+      setSyncSummary(result.summary);
+      if (result.summary.error > 0) {
+        throw new Error(`Publicação incompleta: ${result.summary.error} store/item(ns) com erro. A base oficial não foi marcada como concluída.`);
+      }
+      if (result.meta) setAppConfig((current) => ({ ...current, syncMeta: result.meta }));
+      await refreshPendingSyncCount();
+      const postComparison = await compareLocalAndRemote(freshSyncContext);
+      setSyncComparison(postComparison);
+      setConfirmPublishOpen(false);
+      setPublishConfirmText("");
+      toast.success(`Base oficial publicada: ${result.summary.success} registro(s) enviados.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Erro desconhecido ao publicar base oficial.";
+      setSyncError(message);
+      toast.error(message);
+    } finally {
+      setIsPublishingOfficial(false);
+      setIsSyncing(false);
     }
   };
 
@@ -1093,7 +1130,7 @@ export default function Configuracoes() {
                 </div>
                 <p className="text-sm text-muted-foreground">Use este botão para manter este dispositivo alinhado com os dados da sua conta.</p>
               </div>
-              <Button onClick={() => void handleAccountSyncNow()} disabled={isAccountSyncing || isSyncing || isComparingSync || isRefreshingSyncStatus || isRestoringCloud}>{isAccountSyncing ? "Sincronizando..." : "Sincronizar agora"}</Button>
+              <Button onClick={() => void handleAccountSyncNow()} disabled={isAccountSyncing || isSyncing || isComparingSync || isRefreshingSyncStatus || isRestoringCloud || isPublishingOfficial}>{isAccountSyncing ? "Sincronizando..." : "Sincronizar agora"}</Button>
             </div>
             <div className="grid gap-3 md:grid-cols-3">
               <div className="rounded-md border bg-background/60 p-3 text-sm"><div className="text-muted-foreground">Status da conta</div><div className="font-medium">{cloudSessionExists ? (cloudAccessStatus === "active" ? "A conta está ativa." : "Aguardando aprovação") : "Não autenticado"}</div></div>
@@ -1137,12 +1174,22 @@ export default function Configuracoes() {
               {!lastSyncAt && <div className="rounded-md border border-yellow-500/40 bg-yellow-500/10 p-3 text-sm text-yellow-800">Primeiro envio deve ser confirmado manualmente.</div>}
               {showCloudRestoreCta && <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm text-emerald-800">Há dados da sua conta disponíveis para carregar.</div>}
               {!cloudRestoreDecision.allowed && syncComparison && cloudRestoreDecision.reason !== "no-remote-only" && <div className="rounded-md border border-yellow-500/40 bg-yellow-500/10 p-3 text-sm text-yellow-800">Restauração bloqueada: {cloudRestoreDecision.message}</div>}
+              {hasDivergentCloudData && <div className="space-y-3 rounded-md border border-yellow-500/40 bg-yellow-500/10 p-3 text-sm text-yellow-900">
+                <div className="font-semibold">Dados divergentes entre este dispositivo e a nuvem.</div>
+                <div>Escolha uma ação manual: publicar este dispositivo como base oficial, carregar os dados da nuvem neste dispositivo ou não sincronizar agora.</div>
+                <div className="flex flex-wrap gap-2">
+                  <Button onClick={() => { setPublishConfirmText(""); setConfirmPublishOpen(true); }} disabled={isPublishingOfficial || isSyncing || isRestoringCloud}>Publicar este dispositivo como base oficial</Button>
+                  <Button variant="outline" onClick={() => { setRestoreConfirmText(""); setConfirmRestoreOpen(true); }} disabled={isRestoringCloud || isSyncing || isPublishingOfficial}>Carregar dados da nuvem neste dispositivo</Button>
+                  <Button variant="ghost" onClick={() => toast.message("Sincronização manual adiada.")}>Não sincronizar agora</Button>
+                </div>
+              </div>}
               {syncError && <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{syncError}</div>}
               <div className="flex flex-wrap gap-2">
                 <Button variant="secondary" onClick={() => void handleRefreshSyncPanel()} disabled={isRefreshingSyncStatus}>{isRefreshingSyncStatus ? "Atualizando..." : "Atualizar status e pendências"}</Button>
                 <Button variant="outline" onClick={handleCompareCloud} disabled={!canCompareCloud || isComparingSync || isSyncing || isRefreshingSyncStatus}>{isComparingSync ? "Comparando..." : "Comparar local x nuvem"}</Button>
-                <Button onClick={handleUploadClick} disabled={isSyncing || isComparingSync || isRefreshingSyncStatus || isRestoringCloud}>{isSyncing ? "Enviando..." : "Enviar pendências para nuvem"}</Button>
-                <Button variant="default" onClick={() => { setRestoreConfirmText(""); setConfirmRestoreOpen(true); }} disabled={!cloudRestoreDecision.allowed || isRestoringCloud || isSyncing || isComparingSync || isRefreshingSyncStatus}>{isRestoringCloud ? "Carregando..." : "Carregar dados da conta neste dispositivo"}</Button>
+                <Button onClick={handleUploadClick} disabled={isSyncing || isComparingSync || isRefreshingSyncStatus || isRestoringCloud || isPublishingOfficial}>{isSyncing && !isPublishingOfficial ? "Enviando..." : "Enviar pendências para nuvem"}</Button>
+                <Button variant="destructive" onClick={() => { setPublishConfirmText(""); setConfirmPublishOpen(true); }} disabled={isPublishingOfficial || isSyncing || isComparingSync || isRefreshingSyncStatus || isRestoringCloud}>{isPublishingOfficial ? "Publicando..." : "Publicar este dispositivo como base oficial"}</Button>
+                <Button variant="default" onClick={() => { setRestoreConfirmText(""); setConfirmRestoreOpen(true); }} disabled={!cloudRestoreDecision.allowed || isRestoringCloud || isSyncing || isComparingSync || isRefreshingSyncStatus || isPublishingOfficial}>{isRestoringCloud ? "Carregando..." : "Carregar dados da conta neste dispositivo"}</Button>
                 <Button variant="outline" onClick={() => void refreshAuditAndComparison({ compareCloud: true })} disabled={isAuditingSync}>{isAuditingSync ? "Auditando..." : "Auditoria e limpeza"}</Button>
                 <Button variant="outline" onClick={() => void handleCopyHomologationChecklist()}>Copiar checklist de homologação da sincronização</Button>
               </div>
@@ -1174,9 +1221,9 @@ export default function Configuracoes() {
           <h3 className="font-semibold">Comparação local x nuvem</h3>
           <div className="text-xs text-muted-foreground">Gerado em {new Date(syncComparison.generatedAt).toLocaleString("pt-BR")}</div>
           <div className="grid gap-2 md:grid-cols-6 text-sm">
-            <div><b>Local:</b> {syncComparison.totals.localCount}</div><div><b>Nuvem:</b> {syncComparison.totals.remoteCount}</div><div><b>Só local:</b> {syncComparison.totals.onlyLocal}</div><div><b>Só nuvem:</b> {syncComparison.totals.onlyRemote}</div><div><b>Nos dois:</b> {syncComparison.totals.inBoth}</div><div><b>Remotos excluídos:</b> {syncComparison.totals.remoteDeleted}</div>
+            <div><b>Local:</b> {syncComparison.totals.localCount}</div><div><b>Nuvem:</b> {syncComparison.totals.remoteCount}</div><div><b>Só local:</b> {syncComparison.totals.onlyLocal}</div><div><b>Só nuvem:</b> {syncComparison.totals.onlyRemote}</div><div><b>Nos dois:</b> {syncComparison.totals.inBoth}</div><div><b>Alterados nos dois:</b> {syncComparison.totals.changedInBoth}</div><div><b>Remotos excluídos:</b> {syncComparison.totals.remoteDeleted}</div>
           </div>
-          <div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Store</TableHead><TableHead>Tabela</TableHead><TableHead>Local</TableHead><TableHead>Nuvem</TableHead><TableHead>Só local</TableHead><TableHead>Só nuvem</TableHead><TableHead>Nos dois</TableHead><TableHead>Excluídos</TableHead></TableRow></TableHeader><TableBody>{syncComparison.stores.map((row) => <TableRow key={row.store}><TableCell>{row.store}</TableCell><TableCell>{row.table}</TableCell><TableCell>{row.localCount}</TableCell><TableCell>{row.remoteCount}</TableCell><TableCell className={row.onlyLocal > 0 ? "font-semibold text-yellow-700" : undefined}>{row.onlyLocal}</TableCell><TableCell className={row.onlyRemote > 0 ? "font-semibold text-yellow-700" : undefined}>{row.onlyRemote}</TableCell><TableCell>{row.inBoth}</TableCell><TableCell>{row.remoteDeleted}</TableCell></TableRow>)}</TableBody></Table></div>
+          <div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Store</TableHead><TableHead>Tabela</TableHead><TableHead>Local</TableHead><TableHead>Nuvem</TableHead><TableHead>Só local</TableHead><TableHead>Só nuvem</TableHead><TableHead>Nos dois</TableHead><TableHead>Alterados</TableHead><TableHead>Excluídos</TableHead></TableRow></TableHeader><TableBody>{syncComparison.stores.map((row) => <TableRow key={row.store}><TableCell>{row.store}</TableCell><TableCell>{row.table}</TableCell><TableCell>{row.localCount}</TableCell><TableCell>{row.remoteCount}</TableCell><TableCell className={row.onlyLocal > 0 ? "font-semibold text-yellow-700" : undefined}>{row.onlyLocal}</TableCell><TableCell className={row.onlyRemote > 0 ? "font-semibold text-yellow-700" : undefined}>{row.onlyRemote}</TableCell><TableCell>{row.inBoth}</TableCell><TableCell className={row.changedInBoth > 0 ? "font-semibold text-yellow-700" : undefined}>{row.changedInBoth}</TableCell><TableCell>{row.remoteDeleted}</TableCell></TableRow>)}</TableBody></Table></div>
         </Card>}
 
         <Card className="p-4 space-y-4">
@@ -1202,6 +1249,7 @@ export default function Configuracoes() {
             <div className={`rounded-md border p-3 text-sm ${syncComparison && syncComparison.totals.onlyRemote > 0 ? "border-yellow-500/50 bg-yellow-500/10" : ""}`}><div className="text-muted-foreground">Só nuvem</div><div className="font-medium">{syncComparison?.totals.onlyRemote ?? "—"}</div></div>
             <div className="rounded-md border p-3 text-sm"><div className="text-muted-foreground">Última comparação</div><div className="font-medium">{syncComparison?.generatedAt ? new Date(syncComparison.generatedAt).toLocaleString("pt-BR") : "—"}</div></div>
             <div className="rounded-md border p-3 text-sm"><div className="text-muted-foreground">Nos dois</div><div className="font-medium">{syncComparison?.totals.inBoth ?? "—"}</div></div>
+            <div className={`rounded-md border p-3 text-sm ${syncComparison && syncComparison.totals.changedInBoth > 0 ? "border-yellow-500/50 bg-yellow-500/10" : ""}`}><div className="text-muted-foreground">Alterados nos dois</div><div className="font-medium">{syncComparison?.totals.changedInBoth ?? "—"}</div></div>
             <div className="rounded-md border p-3 text-sm"><div className="text-muted-foreground">Remotos excluídos</div><div className="font-medium">{syncComparison?.totals.remoteDeleted ?? "—"}</div></div>
             <div className={`rounded-md border p-3 text-sm ${syncQueueAudit && syncQueueAudit.byStatus.error > 0 ? "border-destructive/50 bg-destructive/10" : ""}`}><div className="text-muted-foreground">Erros na fila</div><div className="font-medium">{syncQueueAudit?.byStatus.error ?? "—"}</div></div>
             <div className={`rounded-md border p-3 text-sm ${syncQueueAudit && syncQueueAudit.staleProcessing.length > 0 ? "border-yellow-500/50 bg-yellow-500/10" : ""}`}><div className="text-muted-foreground">Processing travado</div><div className="font-medium">{syncQueueAudit?.staleProcessing.length ?? "—"}</div></div>
@@ -1288,6 +1336,27 @@ export default function Configuracoes() {
         <DialogFooter>
           <Button variant="outline" onClick={() => setCleanConfirmOpen(false)}>Cancelar</Button>
           <Button variant="destructive" onClick={() => void handleConfirmCleanupTests()} disabled={cleanConfirmText !== "LIMPAR TESTES" || isCleaningTests}>{isCleaningTests ? "Limpando..." : "Confirmar limpeza"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <Dialog open={confirmPublishOpen} onOpenChange={setConfirmPublishOpen}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Publicar este dispositivo como base oficial</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3 text-sm">
+          <p>Esta ação enviará todos os dados locais deste dispositivo para a nuvem e poderá sobrescrever dados remotos com o mesmo ID.</p>
+          <p className="text-muted-foreground">Use este fluxo no celular que contém os dados reais de campo. Ele não é automático e força um snapshot completo mesmo quando o primeiro upload já foi confirmado.</p>
+          <div className="rounded-md border border-yellow-500/40 bg-yellow-500/10 p-3 text-yellow-800">Digite <b>PUBLICAR ESTE DISPOSITIVO</b> para confirmar.</div>
+          <div>
+            <Label>Confirmação</Label>
+            <Input value={publishConfirmText} onChange={(event) => setPublishConfirmText(event.target.value)} placeholder="PUBLICAR ESTE DISPOSITIVO" />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setConfirmPublishOpen(false)}>Cancelar</Button>
+          <Button variant="destructive" onClick={() => void executePublishOfficial()} disabled={publishConfirmText !== "PUBLICAR ESTE DISPOSITIVO" || isPublishingOfficial}>{isPublishingOfficial ? "Publicando..." : "Confirmar publicação"}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
