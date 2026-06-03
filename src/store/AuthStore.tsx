@@ -3,7 +3,7 @@ import type { Session, User } from "@supabase/supabase-js";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 
 type AccessStatus = "pending" | "active" | "blocked" | "inactive";
-type UserRole = "admin" | "user";
+type UserRole = "admin" | "gestor" | "vendedor" | "operacional" | "consulta" | "user";
 type AccessProfile = { accessStatus: AccessStatus; role: UserRole };
 
 type AuthContextValue = {

@@ -87,7 +87,6 @@ export type AccountSyncDecision = {
 };
 
 const ACCOUNT_SYNC_COOLDOWN_MS = 60_000;
-const NEAR_EMPTY_LOCAL_COUNT = 1;
 
 let lastAutoCheckAt = 0;
 let autoCheckInProgress = false;
@@ -129,13 +128,11 @@ export function shouldAutoRestoreAccount(params: AccountSyncDecisionParams): Acc
   if (params.accessStatus !== "active") return { allowed: false, reason: "inactive-profile", message: "Usuário ainda não aprovado para sincronização." };
   if (!params.isOnline) return { allowed: false, reason: "offline", message: "Sem conexão. Os dados locais continuam disponíveis." };
   if (params.pendingSyncCount > 0) return { allowed: false, reason: "pending-sync", message: "Há dados locais aguardando envio." };
-  if ((params.changedInBoth ?? 0) > 0) return { allowed: false, reason: "cloud-conflict", message: "Dados divergentes entre este dispositivo e a nuvem." };
-  if (params.onlyLocal > 0 && params.onlyRemote > 0) return { allowed: false, reason: "cloud-conflict", message: "Conflito detectado. Revisão manual necessária." };
-  if (params.onlyLocal > 0) return { allowed: false, reason: "local-conflict", message: "Conflito detectado. Revisão manual necessária." };
   if (params.remoteCount <= 0) return { allowed: false, reason: "no-cloud-data", message: "Este dispositivo está atualizado." };
-  if (params.onlyRemote <= 0) return { allowed: false, reason: "already-updated", message: "Este dispositivo está atualizado." };
-  if (params.localCount <= NEAR_EMPTY_LOCAL_COUNT) return { allowed: true, reason: "allowed", message: "Carregando dados da sua conta..." };
-  return { allowed: false, reason: "manual-cta", message: "Há dados da sua conta disponíveis. Sincronizar agora?" };
+  if (params.onlyLocal > 0 || params.onlyRemote > 0 || (params.changedInBoth ?? 0) > 0) {
+    return { allowed: true, reason: "allowed", message: "Carregando dados oficiais da sua conta..." };
+  }
+  return { allowed: false, reason: "already-updated", message: "Este dispositivo está atualizado." };
 }
 
 export function buildAccountSyncStatus(params: {
@@ -260,11 +257,16 @@ export async function runAccountSyncNow(dependencies: AccountSyncContext): Promi
 
     const comparison = await (dependencies.compareLocalAndRemote ?? compareLocalAndRemote)(syncContext);
 
-    if (pendingSyncCount > 0 || comparison.totals.onlyLocal > 0 || comparison.totals.changedInBoth > 0) {
+    if (pendingSyncCount > 0) {
       return buildAccountSyncStatus({ code: "blocked", comparison, pendingSyncCount, uploadSummary: upload.uploadSummary });
     }
 
-    if (comparison.totals.onlyRemote > 0) {
+    const hasOfficialCloudData = comparison.totals.remoteCount > 0;
+    const hasDivergence = comparison.totals.onlyLocal > 0
+      || comparison.totals.onlyRemote > 0
+      || comparison.totals.changedInBoth > 0;
+
+    if (hasOfficialCloudData && hasDivergence) {
       return restoreRemoteOnlyData(dependencies, syncContext, comparison, upload.uploadSummary);
     }
 
@@ -297,7 +299,11 @@ export async function runAccountSyncCheck(dependencies: AccountSyncContext): Pro
     const syncContext = activeContext(fresh);
     if ("code" in syncContext) return syncContext;
 
-    const pendingSyncCount = await dependencies.refreshPendingSyncCount();
+    let pendingSyncCount = await dependencies.refreshPendingSyncCount();
+    const upload = await uploadPendingFirstIfNeeded(dependencies, syncContext, pendingSyncCount);
+    if (upload.status) return upload.status;
+    pendingSyncCount = upload.pendingSyncCount;
+
     const comparison = await (dependencies.compareLocalAndRemote ?? compareLocalAndRemote)(syncContext);
     const decision = shouldAutoRestoreAccount({
       supabaseConfigured: true,
@@ -312,13 +318,13 @@ export async function runAccountSyncCheck(dependencies: AccountSyncContext): Pro
       remoteCount: comparison.totals.remoteCount,
     });
 
-    if (decision.allowed) return restoreRemoteOnlyData(dependencies, syncContext, comparison, undefined);
-    if (decision.reason === "manual-cta") return buildAccountSyncStatus({ code: "cta-available", message: decision.message, comparison, pendingSyncCount });
+    if (decision.allowed) return restoreRemoteOnlyData(dependencies, syncContext, comparison, upload.uploadSummary);
+    if (decision.reason === "manual-cta") return buildAccountSyncStatus({ code: "cta-available", message: decision.message, comparison, pendingSyncCount, uploadSummary: upload.uploadSummary });
     if (["pending-sync", "local-conflict", "cloud-conflict"].includes(decision.reason)) {
-      return buildAccountSyncStatus({ code: "blocked", message: decision.message, comparison, pendingSyncCount });
+      return buildAccountSyncStatus({ code: "blocked", message: decision.message, comparison, pendingSyncCount, uploadSummary: upload.uploadSummary });
     }
 
-    return buildAccountSyncStatus({ code: "synced", message: decision.message, comparison, pendingSyncCount, uploadSummary: undefined });
+    return buildAccountSyncStatus({ code: "synced", message: decision.message, comparison, pendingSyncCount, uploadSummary: upload.uploadSummary });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Erro desconhecido ao verificar sincronização da conta.";
     console.error(message);

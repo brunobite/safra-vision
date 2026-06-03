@@ -11,7 +11,6 @@ export type AutoSyncSkipReason =
   | "inactive-profile"
   | "offline"
   | "no-pending-items"
-  | "first-upload-required"
   | "already-running"
   | "cooldown";
 
@@ -56,9 +55,6 @@ export async function runControlledUploadSync(
   if (!context.session?.user) return skip("missing-session", "Usuário não autenticado.");
   if (context.accessStatus !== "active") return skip("inactive-profile", "Usuário ainda não aprovado para sincronização.");
   if (typeof navigator !== "undefined" && !navigator.onLine) return skip("offline", "Sem conexão com a internet.");
-  if (options.mode === "auto" && !context.firstUploadConfirmed) {
-    return skip("first-upload-required", "Primeiro envio deve ser confirmado manualmente.");
-  }
 
   let pendingItems;
   try {

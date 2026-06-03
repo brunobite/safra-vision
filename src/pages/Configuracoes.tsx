@@ -146,7 +146,8 @@ export default function Configuracoes() {
   const canCompareCloud = Boolean(
     cloudSessionExists
       && cloudAccessStatus === "active"
-      && (cloudRole === "admin" || cloudRole === "user"),
+      && Boolean(cloudRole)
+      && ["admin", "gestor", "vendedor", "operacional", "consulta", "user"].includes(cloudRole!),
   );
   const canViewAudit = Boolean(cloudSessionExists && cloudAccessStatus === "active");
   const canCleanTests = Boolean(canViewAudit && cloudRole === "admin");
@@ -1147,7 +1148,7 @@ export default function Configuracoes() {
               <Button variant="ghost" className="flex w-full justify-between p-0 text-left hover:bg-transparent">
                 <span>
                   <span className="block font-semibold">Ferramentas avançadas de sincronização</span>
-                  <span className="block text-xs font-normal text-muted-foreground">Use apenas para diagnóstico, suporte ou correção de dados.</span>
+                  <span className="block text-xs font-normal text-muted-foreground">Uso emergencial: diagnóstico, suporte ou correção de dados. A rotina normal sincroniza automaticamente com a nuvem.</span>
                 </span>
                 {advancedSyncOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
               </Button>
@@ -1173,12 +1174,11 @@ export default function Configuracoes() {
                 </div>
               </div>
               {shouldWarnAboutStaleAccess && <div className="rounded-md border border-yellow-500/40 bg-yellow-500/10 p-3 text-sm text-yellow-800">Usuário ainda não aprovado para sincronização.</div>}
-              {!lastSyncAt && <div className="rounded-md border border-yellow-500/40 bg-yellow-500/10 p-3 text-sm text-yellow-800">Primeiro envio deve ser confirmado manualmente.</div>}
               {showCloudRestoreCta && <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm text-emerald-800">Há dados da sua conta disponíveis para carregar.</div>}
               {!cloudRestoreDecision.allowed && syncComparison && cloudRestoreDecision.reason !== "no-remote-only" && <div className="rounded-md border border-yellow-500/40 bg-yellow-500/10 p-3 text-sm text-yellow-800">Restauração bloqueada: {cloudRestoreDecision.message}</div>}
               {hasDivergentCloudData && <div className="space-y-3 rounded-md border border-yellow-500/40 bg-yellow-500/10 p-3 text-sm text-yellow-900">
                 <div className="font-semibold">Dados divergentes entre este dispositivo e a nuvem.</div>
-                <div>Escolha uma ação manual: publicar este dispositivo como base oficial, carregar os dados da nuvem neste dispositivo ou não sincronizar agora.</div>
+                <div>A sincronização normal prioriza a nuvem como fonte oficial. Use estas ações somente em emergência ou suporte.</div>
                 <div className="flex flex-wrap gap-2">
                   <Button onClick={() => { setPublishConfirmText(""); setConfirmPublishOpen(true); }} disabled={isPublishingOfficial || isSyncing || isRestoringCloud}>Publicar este dispositivo como base oficial</Button>
                   <Button variant="outline" onClick={() => { setRestoreConfirmText(""); setConfirmRestoreOpen(true); }} disabled={isRestoringCloud || isSyncing || isPublishingOfficial}>Carregar dados da nuvem neste dispositivo</Button>

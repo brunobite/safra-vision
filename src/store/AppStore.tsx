@@ -53,7 +53,7 @@ interface AppStoreCtx {
   saveError: string | null;
   pendingSyncCount: number;
   refreshPendingSyncCount: () => Promise<number>;
-  syncStatus: "idle" | "pending" | "syncing" | "synced" | "error" | "first-upload-required";
+  syncStatus: "idle" | "pending" | "syncing" | "synced" | "error";
   syncError: string | null;
   lastAutoSyncAt: string | null;
   accountSyncStatus: AccountSyncStatus | null;
@@ -108,7 +108,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [pendingSyncCount, setPendingSyncCount] = useState(0);
-  const [syncStatus, setSyncStatus] = useState<"idle" | "pending" | "syncing" | "synced" | "error" | "first-upload-required">("idle");
+  const [syncStatus, setSyncStatus] = useState<"idle" | "pending" | "syncing" | "synced" | "error">("idle");
   const [syncError, setSyncError] = useState<string | null>(null);
   const [lastAutoSyncAt, setLastAutoSyncAt] = useState<string | null>(null);
   const [accountSyncStatus, setAccountSyncStatus] = useState<AccountSyncStatus | null>(null);
@@ -243,7 +243,10 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         }
       }
       setLastSavedAt(new Date().toISOString());
-      await refreshPendingSyncCount();
+      const nextPendingCount = await refreshPendingSyncCount();
+      if (nextPendingCount > 0 && (typeof navigator === "undefined" || navigator.onLine)) {
+        scheduleAutoSyncRef.current(500);
+      }
     } catch (error) {
       console.error(error);
       setSaveError("Erro ao salvar dados locais.");
@@ -330,10 +333,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
 
   const applySyncResult = useCallback(async (result: AutoSyncResult, source: "auto" | "manual") => {
     if (result.skipped) {
-      if (result.reason === "first-upload-required") {
-        setSyncStatus("first-upload-required");
-        setSyncError(result.message);
-      } else if (result.reason === "no-pending-items") {
+      if (result.reason === "no-pending-items") {
         setSyncStatus("synced");
         setSyncError(null);
       } else {

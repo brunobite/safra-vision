@@ -2,7 +2,7 @@ import type { Session, User } from "@supabase/supabase-js";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 
 export type SupabaseAccessStatus = "pending" | "active" | "blocked" | "inactive";
-export type SupabaseUserRole = "admin" | "user";
+export type SupabaseUserRole = "admin" | "gestor" | "vendedor" | "operacional" | "consulta" | "user";
 
 export type FreshSupabaseAccessContext = {
   session: Session | null;
