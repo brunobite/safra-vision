@@ -65,11 +65,19 @@ type RemoteTable =
   | "prazos_pagamento"
   | "app_config";
 
+export type SyncStoreSummary = {
+  total: number;
+  success: number;
+  error: number;
+  sent: number;
+  tombstoned: number;
+};
+
 export type SyncSummary = {
   total: number;
   success: number;
   error: number;
-  byStore: Partial<Record<SyncableStore, { total: number; success: number; error: number }>>;
+  byStore: Partial<Record<SyncableStore, SyncStoreSummary>>;
   errors: Array<{ id: string; store: string; message: string }>;
 };
 
@@ -182,9 +190,29 @@ function friendlySupabaseError(message: string) {
   return message;
 }
 
-function incrementStore(summary: SyncSummary, store: SyncableStore, field: "total" | "success" | "error") {
-  summary.byStore[store] ??= { total: 0, success: 0, error: 0 };
+function incrementStore(summary: SyncSummary, store: SyncableStore, field: keyof SyncStoreSummary) {
+  summary.byStore[store] ??= { total: 0, success: 0, error: 0, sent: 0, tombstoned: 0 };
   summary.byStore[store][field] += 1;
+}
+
+function mergeSyncSummaries(...summaries: SyncSummary[]): SyncSummary {
+  const merged = emptySummary();
+  summaries.forEach((summary) => {
+    merged.total += summary.total;
+    merged.success += summary.success;
+    merged.error += summary.error;
+    merged.errors.push(...summary.errors);
+    Object.entries(summary.byStore).forEach(([store, storeSummary]) => {
+      if (!storeSummary || !isSyncableStore(store)) return;
+      merged.byStore[store] ??= { total: 0, success: 0, error: 0, sent: 0, tombstoned: 0 };
+      merged.byStore[store].total += storeSummary.total;
+      merged.byStore[store].success += storeSummary.success;
+      merged.byStore[store].error += storeSummary.error;
+      merged.byStore[store].sent += storeSummary.sent;
+      merged.byStore[store].tombstoned += storeSummary.tombstoned;
+    });
+  });
+  return merged;
 }
 
 async function uploadQueueItem(item: SyncQueueItem, context: SyncContext) {
@@ -271,6 +299,7 @@ export async function syncPendingQueue(context: SyncContext): Promise<{ summary:
       await markSyncItemSynced(item.id);
       summary.success += 1;
       incrementStore(summary, item.store, "success");
+      incrementStore(summary, item.store, item.operation === "upsert" ? "sent" : "tombstoned");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Erro desconhecido ao sincronizar item.";
       await markSyncItemError(item.id, message);
@@ -306,9 +335,89 @@ export async function runFirstUploadSync(context: SyncContext) {
   return syncPendingQueue(context);
 }
 
-export async function publishLocalSnapshotAsOfficial(context: SyncContext) {
+export type PublishOfficialResult = {
+  summary: SyncSummary;
+  meta: SyncMetaPayload | null;
+  beforeComparison: LocalRemoteComparison;
+  afterComparison: LocalRemoteComparison;
+  completed: boolean;
+};
+
+function comparisonHasNoDivergence(comparison: LocalRemoteComparison) {
+  return comparison.totals.onlyLocal === 0
+    && comparison.totals.onlyRemote === 0
+    && comparison.totals.changedInBoth === 0;
+}
+
+async function tombstoneRemoteRowsMissingLocally(
+  context: SyncContext,
+  remoteOnlyRowsByStore: Array<{ store: SyncableStore; rows: RemoteRow[] }>,
+): Promise<SyncSummary> {
+  const { client, userId } = ensureCanSync(context);
+  const summary = emptySummary();
+
+  for (const { store, rows } of remoteOnlyRowsByStore) {
+    const table = LOCAL_TO_REMOTE_TABLE[store];
+    for (const row of rows) {
+      const timestamp = nowIso();
+      summary.total += 1;
+      incrementStore(summary, store, "total");
+
+      const { error } = await client.from(table).upsert({
+        id: row.id,
+        user_id: userId,
+        payload: row.payload ?? {},
+        updated_at: timestamp,
+        deleted_at: timestamp,
+      }, { onConflict: "user_id,id" });
+
+      if (error) {
+        const message = friendlySupabaseError(error.message);
+        summary.error += 1;
+        incrementStore(summary, store, "error");
+        summary.errors.push({ id: row.id, store, message });
+      } else {
+        summary.success += 1;
+        incrementStore(summary, store, "success");
+        incrementStore(summary, store, "tombstoned");
+      }
+    }
+  }
+
+  return summary;
+}
+
+export async function publishLocalSnapshotAsOfficial(context: SyncContext): Promise<PublishOfficialResult> {
+  ensureCanSync(context);
+  const publishPlan = await Promise.all(
+    SYNCABLE_STORES.map(async (store) => {
+      const [local, remote] = await Promise.all([
+        readLocalSyncableStore(store),
+        fetchRows(LOCAL_TO_REMOTE_TABLE[store], context, true),
+      ]);
+      const localIds = new Set(local.map((record) => record.id));
+      const remoteOnlyRows = remote.filter((row) => !row.deleted_at && !localIds.has(row.id));
+      return { store, remoteOnlyRows, comparison: calculateStoreComparison(store, local, remote) };
+    }),
+  );
+  const beforeComparison: LocalRemoteComparison = {
+    generatedAt: nowIso(),
+    stores: publishPlan.map((item) => item.comparison),
+    totals: summarizeComparison(publishPlan.map((item) => item.comparison)),
+  };
+
   await enqueueFullLocalSnapshotForSync();
-  return syncPendingQueue(context);
+  const uploadResult = await syncPendingQueue(context);
+  const tombstoneSummary = await tombstoneRemoteRowsMissingLocally(
+    context,
+    publishPlan.map((item) => ({ store: item.store, rows: item.remoteOnlyRows })),
+  );
+  const summary = mergeSyncSummaries(uploadResult.summary, tombstoneSummary);
+  const afterComparison = await compareLocalAndRemote(context);
+  const completed = summary.error === 0 && comparisonHasNoDivergence(afterComparison);
+  const meta = completed ? await persistRemoteSyncMeta(context, summary) : null;
+
+  return { summary, meta, beforeComparison, afterComparison, completed };
 }
 
 async function fetchRows(table: RemoteTable, context: SyncContext, includeDeleted: boolean) {
