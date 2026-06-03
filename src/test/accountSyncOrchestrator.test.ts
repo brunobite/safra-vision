@@ -23,6 +23,7 @@ const comparison = (totals: Partial<LocalRemoteComparison["totals"]>): LocalRemo
     onlyLocal: 0,
     onlyRemote: 0,
     inBoth: 0,
+    changedInBoth: 0,
     remoteDeleted: 0,
     ...totals,
   },
@@ -151,6 +152,7 @@ describe("accountSyncOrchestrator", () => {
     expect(shouldAutoRestoreAccount(base).allowed).toBe(true);
     expect(shouldAutoRestoreAccount({ ...base, localCount: 1 }).allowed).toBe(true);
     expect(shouldAutoRestoreAccount({ ...base, localCount: 2 }).reason).toBe("manual-cta");
+    expect(shouldAutoRestoreAccount({ ...base, changedInBoth: 1, onlyRemote: 0 }).reason).toBe("cloud-conflict");
     expect(shouldAutoRestoreAccount({ ...base, onlyLocal: 1, onlyRemote: 0 }).reason).toBe("local-conflict");
     expect(shouldAutoRestoreAccount({ ...base, onlyLocal: 1, onlyRemote: 1 }).reason).toBe("cloud-conflict");
     expect(shouldAutoRestoreAccount({ ...base, pendingSyncCount: 1 }).reason).toBe("pending-sync");

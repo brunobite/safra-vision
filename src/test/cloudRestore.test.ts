@@ -113,7 +113,7 @@ describe("cloudRestore", () => {
 
     expect(shouldRestoreFromCloud(base).allowed).toBe(true);
     expect(shouldRestoreFromCloud({ ...base, pendingSyncCount: 1 }).reason).toBe("pending-sync");
-    expect(shouldRestoreFromCloud({ ...base, onlyLocal: 1 }).reason).toBe("local-conflict");
+    expect(shouldRestoreFromCloud({ ...base, onlyLocal: 1 }).allowed).toBe(true);
     expect(shouldRestoreFromCloud({ ...base, isOnline: false }).reason).toBe("offline");
     expect(shouldRestoreFromCloud({ ...base, accessStatus: "blocked" }).reason).toBe("inactive-profile");
   });

@@ -43,7 +43,7 @@ export function getAutoSyncCooldownRemaining(now = Date.now()) {
 
 export async function runControlledUploadSync(
   context: AutoSyncContext,
-  options: { mode: AutoSyncMode; bypassCooldown?: boolean } = { mode: "auto" },
+  options: { mode: AutoSyncMode; bypassCooldown?: boolean; forceFullSnapshot?: boolean } = { mode: "auto" },
 ): Promise<AutoSyncResult> {
   if (autoSyncInProgress) return skip("already-running", "Sincronização já em andamento.");
 
@@ -62,7 +62,7 @@ export async function runControlledUploadSync(
 
   let pendingItems;
   try {
-    if (options.mode === "manual" && !context.firstUploadConfirmed) {
+    if (options.forceFullSnapshot || (options.mode === "manual" && !context.firstUploadConfirmed)) {
       await enqueueFullLocalSnapshotForSync();
     }
     pendingItems = await getPendingSyncItems();

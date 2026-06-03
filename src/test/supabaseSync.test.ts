@@ -31,8 +31,25 @@ describe("supabaseSync", () => {
       onlyLocal: 1,
       onlyRemote: 1,
       inBoth: 1,
+      changedInBoth: 0,
       remoteDeleted: 1,
     });
+  });
+
+  it("detects records with same ID and different content", () => {
+    const comparison = calculateStoreComparison("clientes", [{ id: "a", nome: "Local", syncMeta: { lastUploadAt: "local" } }], [
+      { id: "a", user_id: "u1", payload: { id: "a", nome: "Nuvem", syncMeta: { lastUploadAt: "remote" } }, created_at: null, updated_at: null, deleted_at: null },
+    ]);
+
+    expect(comparison.changedInBoth).toBe(1);
+  });
+
+  it("ignores technical sync metadata when comparing content", () => {
+    const comparison = calculateStoreComparison("appConfig", [{ id: "main", percentualAcertoEsperado: 12, syncMeta: { lastUploadAt: "local" } }], [
+      { id: "main", user_id: "u1", payload: { id: "main", percentualAcertoEsperado: 12, syncMeta: { lastUploadAt: "remote" } }, created_at: null, updated_at: null, deleted_at: null },
+    ]);
+
+    expect(comparison.changedInBoth).toBe(0);
   });
 
   it("summarizes comparison totals", () => {
@@ -49,6 +66,7 @@ describe("supabaseSync", () => {
       onlyLocal: 2,
       onlyRemote: 1,
       inBoth: 1,
+      changedInBoth: 0,
       remoteDeleted: 0,
     });
   });
