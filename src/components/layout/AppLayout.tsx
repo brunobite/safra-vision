@@ -138,7 +138,6 @@ export default function AppLayout() {
     if (!isOnline) return pendingText;
     if (syncStatus === "syncing") return "Sincronizando...";
     if (syncStatus === "error") return pendingText || "Erro de sincronização";
-    if (syncStatus === "first-upload-required") return pendingText || "Primeiro envio manual necessário";
     if (pendingSyncCount > 0) return pendingText;
     if (syncStatus === "synced") return "Sincronizado";
     return "";

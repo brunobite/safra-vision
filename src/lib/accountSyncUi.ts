@@ -118,10 +118,10 @@ C. Offline → online
 - sincronizar;
 - verificar pendências 0.
 
-D. Conflito
-- simular dados locais e remotos divergentes;
-- confirmar que sincronização automática bloqueia;
-- mensagem deve pedir revisão manual.
+D. Base oficial online
+- simular cache local antigo e dados remotos oficiais;
+- confirmar que a abertura online hidrata o cache local pela nuvem;
+- confirmar que pendências locais são enviadas antes da hidratação.
 
 E. Restauração
 - dispositivo novo/incompleto;

@@ -136,7 +136,7 @@ describe("accountSyncOrchestrator", () => {
     expect(uploadPending).not.toHaveBeenCalled();
   });
 
-  it("allows safe auto-restore only when local is empty or nearly empty, only cloud has data and there are no pending items", () => {
+  it("uses Supabase as the online source of truth when cloud data exists and there are no pending items", () => {
     const base = {
       supabaseConfigured: true,
       sessionExists: true,
@@ -151,10 +151,10 @@ describe("accountSyncOrchestrator", () => {
 
     expect(shouldAutoRestoreAccount(base).allowed).toBe(true);
     expect(shouldAutoRestoreAccount({ ...base, localCount: 1 }).allowed).toBe(true);
-    expect(shouldAutoRestoreAccount({ ...base, localCount: 2 }).reason).toBe("manual-cta");
-    expect(shouldAutoRestoreAccount({ ...base, changedInBoth: 1, onlyRemote: 0 }).reason).toBe("cloud-conflict");
-    expect(shouldAutoRestoreAccount({ ...base, onlyLocal: 1, onlyRemote: 0 }).reason).toBe("local-conflict");
-    expect(shouldAutoRestoreAccount({ ...base, onlyLocal: 1, onlyRemote: 1 }).reason).toBe("cloud-conflict");
+    expect(shouldAutoRestoreAccount({ ...base, localCount: 2 }).allowed).toBe(true);
+    expect(shouldAutoRestoreAccount({ ...base, changedInBoth: 1, onlyRemote: 0 }).allowed).toBe(true);
+    expect(shouldAutoRestoreAccount({ ...base, onlyLocal: 1, onlyRemote: 0 }).allowed).toBe(true);
+    expect(shouldAutoRestoreAccount({ ...base, onlyLocal: 1, onlyRemote: 1 }).allowed).toBe(true);
     expect(shouldAutoRestoreAccount({ ...base, pendingSyncCount: 1 }).reason).toBe("pending-sync");
     expect(shouldAutoRestoreAccount({ ...base, isOnline: false }).reason).toBe("offline");
   });
@@ -175,29 +175,41 @@ describe("accountSyncOrchestrator", () => {
     expect(compareLocalAndRemote).toHaveBeenCalledTimes(2);
   });
 
-  it("auto-check blocks conflict without restore", async () => {
-    const restoreAccountSnapshot = vi.fn();
+  it("auto-check uploads pending local data before hydrating the official cloud cache", async () => {
+    const uploadPending = vi.fn(async () => ({ ok: true as const, summary: { ...emptySummary(), total: 1, success: 1 }, meta: null }));
+    const refreshPendingSyncCount = vi.fn()
+      .mockResolvedValueOnce(1)
+      .mockResolvedValueOnce(0)
+      .mockResolvedValueOnce(0);
+    const restoreAccountSnapshot = vi.fn(async () => ({ restoredAt: "2026-05-30T00:00:00.000Z", summary: { total: 2 } }));
+
     const result = await runAccountSyncCheck(deps({
-      compareLocalAndRemote: vi.fn(async () => comparison({ localCount: 2, remoteCount: 2, onlyLocal: 1, onlyRemote: 1 })),
+      refreshPendingSyncCount,
+      uploadPending,
+      compareLocalAndRemote: vi.fn(async () => comparison({ localCount: 1, remoteCount: 2, onlyRemote: 1 })),
       restoreAccountSnapshot,
     }));
 
-    expect(result.code).toBe("blocked");
-    expect(result.message).toBe("Conflito detectado. Revisão manual necessária.");
-    expect(restoreAccountSnapshot).not.toHaveBeenCalled();
+    expect(uploadPending).toHaveBeenCalledTimes(1);
+    expect(restoreAccountSnapshot).toHaveBeenCalledTimes(1);
+    expect(result.code).toBe("restored");
+    expect(result.uploadSummary?.success).toBe(1);
   });
 
-  it("auto-check does not upload local pending data automatically", async () => {
-    const uploadPending = vi.fn();
+  it("auto-check blocks hydration when pending upload fails", async () => {
+    const uploadPending = vi.fn(async () => ({ ok: false as const, message: "Falha Supabase detalhada" }));
+    const restoreAccountSnapshot = vi.fn();
     const result = await runAccountSyncCheck(deps({
       refreshPendingSyncCount: vi.fn(async () => 1),
       uploadPending,
       compareLocalAndRemote: vi.fn(async () => comparison({ localCount: 1, remoteCount: 1 })),
+      restoreAccountSnapshot,
     }));
 
     expect(result.code).toBe("blocked");
-    expect(result.message).toBe("Há dados locais aguardando envio.");
-    expect(uploadPending).not.toHaveBeenCalled();
+    expect(result.message).toBe("Existem dados locais que precisam de revisão antes de sincronizar.");
+    expect(uploadPending).toHaveBeenCalledTimes(1);
+    expect(restoreAccountSnapshot).not.toHaveBeenCalled();
   });
 
   it("returns simple UI messages and keeps technical errors separate", () => {
