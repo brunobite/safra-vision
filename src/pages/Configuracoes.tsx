@@ -61,6 +61,14 @@ function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promi
   });
 }
 
+function registrosSeguros<T>(valor: T[] | null | undefined): T[] {
+  return Array.isArray(valor) ? valor.filter((item) => item && typeof item === "object") : [];
+}
+
+function arrayEstaMalformado(valor: unknown): boolean {
+  return !Array.isArray(valor);
+}
+
 export default function Configuracoes() {
   const { session, isLocalMode } = useAuth();
   const {
@@ -129,10 +137,39 @@ export default function Configuracoes() {
     return currentStatus;
   };
   const [dadosEmpresa, setDadosEmpresa] = useState<Empresa>(defaultEmpresa);
-  const categoriasTicket = useMemo(() => getCategoriasComerciais({ produtos, metasCategoria, ticketsMedios, orcamentos, oportunidades, negocios }), [metasCategoria, negocios, oportunidades, orcamentos, produtos, ticketsMedios]);
-  const vendedoresComerciais = useMemo(() => [...new Set([...vendedores.map((v) => resolverVendedorCanonico(v.nome, vendedores)), ...clientes.map((c) => resolverVendedorCanonico(c.vendedor, vendedores))])].filter(Boolean).sort(), [vendedores, clientes]);
-  const potencialCarteiraConfig = useMemo(() => calcularPotencialCarteira(clientes, ticketsMedios), [clientes, ticketsMedios]);
-  const metaCarteiraConfig = useMemo(() => calcularMetaCarteira(clientes, ticketsMedios, appConfig.percentualAcertoEsperado), [clientes, ticketsMedios, appConfig.percentualAcertoEsperado]);
+  const produtosSeguros = useMemo(() => registrosSeguros(produtos), [produtos]);
+  const metasCategoriaSeguras = useMemo(() => registrosSeguros(metasCategoria), [metasCategoria]);
+  const ticketsMediosSeguros = useMemo(() => registrosSeguros(ticketsMedios), [ticketsMedios]);
+  const orcamentosSeguros = useMemo(() => registrosSeguros(orcamentos), [orcamentos]);
+  const oportunidadesSeguras = useMemo(() => registrosSeguros(oportunidades), [oportunidades]);
+  const negociosSeguros = useMemo(() => registrosSeguros(negocios), [negocios]);
+  const clientesSeguros = useMemo(() => registrosSeguros(clientes), [clientes]);
+  const vendedoresSeguros = useMemo(() => registrosSeguros(vendedores), [vendedores]);
+  const metasVendedorSeguras = useMemo(() => registrosSeguros(metasVendedor), [metasVendedor]);
+  const categoriasTicketInfo = useMemo(() => {
+    const fontesMalformadas = [produtos, metasCategoria, ticketsMedios, orcamentos, oportunidades, negocios].some(arrayEstaMalformado);
+    try {
+      return {
+        categorias: getCategoriasComerciais({
+          produtos: produtosSeguros,
+          metasCategoria: metasCategoriaSeguras,
+          ticketsMedios: ticketsMediosSeguros,
+          orcamentos: orcamentosSeguros,
+          oportunidades: oportunidadesSeguras,
+          negocios: negociosSeguros,
+        }),
+        erro: fontesMalformadas,
+      };
+    } catch (error) {
+      console.error("Erro ao montar categorias comerciais em Configurações", error);
+      return { categorias: [...CATEGORIAS_PRODUTO_PADRAO], erro: true };
+    }
+  }, [metasCategoria, metasCategoriaSeguras, negocios, negociosSeguros, oportunidades, oportunidadesSeguras, orcamentos, orcamentosSeguros, produtos, produtosSeguros, ticketsMedios, ticketsMediosSeguros]);
+  const categoriasTicket = categoriasTicketInfo.categorias;
+  const deveAvisarCategoriasComerciais = categoriasTicketInfo.erro;
+  const vendedoresComerciais = useMemo(() => [...new Set([...vendedoresSeguros.map((v) => resolverVendedorCanonico(v.nome, vendedoresSeguros)), ...clientesSeguros.map((c) => resolverVendedorCanonico(c.vendedor, vendedoresSeguros))])].filter(Boolean).sort(), [vendedoresSeguros, clientesSeguros]);
+  const potencialCarteiraConfig = useMemo(() => calcularPotencialCarteira(clientesSeguros, ticketsMediosSeguros), [clientesSeguros, ticketsMediosSeguros]);
+  const metaCarteiraConfig = useMemo(() => calcularMetaCarteira(clientesSeguros, ticketsMediosSeguros, appConfig.percentualAcertoEsperado), [clientesSeguros, ticketsMediosSeguros, appConfig.percentualAcertoEsperado]);
   const isCategoriaPadrao = (categoria: string) => CATEGORIAS_PRODUTO_PADRAO.includes(categoria as (typeof CATEGORIAS_PRODUTO_PADRAO)[number]);
 
 
@@ -975,6 +1012,7 @@ export default function Configuracoes() {
       </div>
     </Card>
     {dbError && <Card className="border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{dbError}</Card>}
+    {deveAvisarCategoriasComerciais && <Card className="border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">Algumas categorias comerciais estavam incompletas ou em formato legado. A tela foi carregada com fallback seguro e seus dados locais foram preservados.</Card>}
     <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
       <div className="md:hidden">
         <Label htmlFor="config-section" className="text-xs font-medium text-muted-foreground">Seção de configurações</Label>
@@ -1015,9 +1053,97 @@ export default function Configuracoes() {
 
       <TabsContent value="vendedores" className="space-y-3"><Card className="p-4"><div className="grid gap-2 md:grid-cols-4"><Input placeholder="Nome" value={novoVend} onChange={e => setNovoVend(e.target.value)} /><Input placeholder="Telefone" value={novoTel} onChange={e => setNovoTel(e.target.value)} /><Input placeholder="E-mail" value={novoEmail} onChange={e => setNovoEmail(e.target.value)} /><Button onClick={() => { if (!novoVend) return; setVendedores(prev => [...prev, { id: `v${Date.now()}`, nome: novoVend, telefone: novoTel, email: novoEmail, ativo: true }]); setNovoVend("");setNovoTel("");setNovoEmail(""); toast.success("Vendedor adicionado."); void loadStats(); }}><Plus className="mr-1 h-4 w-4" />Adicionar</Button></div><div className="mt-4 space-y-2">{vendedores.map(v => <div key={v.id} className="flex items-center justify-between rounded border p-2 text-sm"><div>{v.nome} • {v.telefone||"-"} • {v.email||"-"} • {v.ativo?"Ativo":"Inativo"}</div><button className="ml-2 text-destructive" onClick={() => { if (!window.confirm("Esta ação não pode ser desfeita nesta versão. Deseja continuar?")) return; setVendedores(prev => prev.filter(x => x.id !== v.id)); void loadStats(); }}>Excluir</button></div>)}</div></Card></TabsContent>
 
-      <TabsContent value="tickets" className="space-y-3"><Card className="p-4 space-y-3"><div><div className="text-sm font-semibold">Configuração comercial — ticket médio por hectare</div><p className="text-xs text-muted-foreground">Somente regras ativas e com valor não negativo entram no potencial da carteira.</p></div><div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Linha/categoria</TableHead><TableHead>Valor médio por hectare</TableHead><TableHead>Ativo</TableHead><TableHead className="text-right">Ações</TableHead></TableRow></TableHeader><TableBody>{categoriasTicket.map((categoria) => { const regra = ticketsMedios.find((t) => chaveCategoriaComercial(t.categoria) === chaveCategoriaComercial(categoria)); return <TableRow key={categoria}><TableCell className="font-medium">{categoria}</TableCell><TableCell><Input type="number" min={0} step="0.01" value={regra?.valorMedioHa ?? 0} onChange={(e) => { const valor = normalizarValorNaoNegativo(Number(e.target.value || 0)); setTicketsMedios((prev) => regra ? prev.map((t) => t.id === regra.id ? { ...t, nome: t.nome || categoria, valorMedioHa: valor, updatedAt: new Date().toISOString() } : t) : [...prev, { id: `tm${Date.now()}`, categoria, nome: categoria, valorMedioHa: valor, ativo: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }]); }} /></TableCell><TableCell><Switch checked={regra?.ativo ?? true} onCheckedChange={(ativo) => setTicketsMedios((prev) => regra ? prev.map((t) => t.id === regra.id ? { ...t, ativo, updatedAt: new Date().toISOString() } : t) : [...prev, { id: `tm${Date.now()}`, categoria, nome: categoria, valorMedioHa: 0, ativo, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }])} /></TableCell><TableCell className="text-right">{!regra ? <span className="text-xs text-amber-600">Sem regra configurada</span> : !isCategoriaPadrao(categoria) ? <Button size="sm" variant="ghost" onClick={() => setTicketsMedios((prev) => prev.filter((x) => x.id !== regra.id))}>Remover</Button> : <span className="text-xs text-muted-foreground">Padrão</span>}</TableCell></TableRow>;})}</TableBody></Table></div><div className="rounded border p-3 space-y-2"><div className="text-sm font-medium">Criar nova linha de produto</div><div className="grid gap-2 md:grid-cols-3"><Input id="nova-cat" placeholder="Nome da linha/categoria" /><Input id="novo-ticket" type="number" min={0} step="0.01" placeholder="Valor médio por ha" /><Button onClick={() => { const nomeEl = document.getElementById('nova-cat') as HTMLInputElement | null; const valorEl = document.getElementById('novo-ticket') as HTMLInputElement | null; const categoria = normalizarCategoriaComercial(nomeEl?.value || '', categoriasTicket); const valor = normalizarValorNaoNegativo(Number(valorEl?.value || 0)); if (!categoria) return toast.error('Informe o nome da linha/categoria.'); if (categoriasTicket.some((c) => chaveCategoriaComercial(c) === chaveCategoriaComercial(categoria))) return toast.error('Esta categoria já existe.'); setTicketsMedios((prev) => [...prev, { id: `tm${Date.now()}`, categoria, nome: categoria, valorMedioHa: valor, ativo: true, ordem: prev.length + 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }]); if (nomeEl) nomeEl.value = ''; if (valorEl) valorEl.value = '0'; toast.success('Linha/categoria criada.'); }}>Adicionar linha</Button></div></div></Card></TabsContent>
+      <TabsContent value="tickets" className="space-y-3">
+        <Card className="p-4 space-y-3">
+          <div>
+            <div className="text-sm font-semibold">Configuração comercial — ticket médio por hectare</div>
+            <p className="text-xs text-muted-foreground">Somente regras ativas e com valor não negativo entram no potencial da carteira.</p>
+          </div>
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Linha/categoria</TableHead>
+                  <TableHead>Valor médio por hectare</TableHead>
+                  <TableHead>Ativo</TableHead>
+                  <TableHead className="text-right">Ações</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {categoriasTicket.map((categoria) => {
+                  const regra = ticketsMediosSeguros.find((t) => chaveCategoriaComercial(t.categoria) === chaveCategoriaComercial(categoria));
+                  return (
+                    <TableRow key={categoria}>
+                      <TableCell className="font-medium">{categoria}</TableCell>
+                      <TableCell>
+                        <Input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          value={regra?.valorMedioHa ?? 0}
+                          onChange={(e) => {
+                            const valor = normalizarValorNaoNegativo(Number(e.target.value || 0));
+                            setTicketsMedios((prev) => {
+                              const seguros = registrosSeguros(prev);
+                              return regra
+                                ? seguros.map((t) => t.id === regra.id ? { ...t, nome: t.nome || categoria, valorMedioHa: valor, updatedAt: new Date().toISOString() } : t)
+                                : [...seguros, { id: `tm${Date.now()}`, categoria, nome: categoria, valorMedioHa: valor, ativo: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }];
+                            });
+                          }}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Switch
+                          checked={regra?.ativo ?? true}
+                          onCheckedChange={(ativo) => setTicketsMedios((prev) => {
+                            const seguros = registrosSeguros(prev);
+                            return regra
+                              ? seguros.map((t) => t.id === regra.id ? { ...t, ativo, updatedAt: new Date().toISOString() } : t)
+                              : [...seguros, { id: `tm${Date.now()}`, categoria, nome: categoria, valorMedioHa: 0, ativo, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }];
+                          })}
+                        />
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {!regra ? (
+                          <span className="text-xs text-amber-600">Sem regra configurada</span>
+                        ) : !isCategoriaPadrao(categoria) ? (
+                          <Button size="sm" variant="ghost" onClick={() => setTicketsMedios((prev) => registrosSeguros(prev).filter((x) => x.id !== regra.id))}>Remover</Button>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">Padrão</span>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+          <div className="rounded border p-3 space-y-2">
+            <div className="text-sm font-medium">Criar nova linha de produto</div>
+            <div className="grid gap-2 md:grid-cols-3">
+              <Input id="nova-cat" placeholder="Nome da linha/categoria" />
+              <Input id="novo-ticket" type="number" min={0} step="0.01" placeholder="Valor médio por ha" />
+              <Button onClick={() => {
+                const nomeEl = document.getElementById('nova-cat') as HTMLInputElement | null;
+                const valorEl = document.getElementById('novo-ticket') as HTMLInputElement | null;
+                const categoria = normalizarCategoriaComercial(nomeEl?.value || '', categoriasTicket);
+                const valor = normalizarValorNaoNegativo(Number(valorEl?.value || 0));
+                if (!categoria) return toast.error('Informe o nome da linha/categoria.');
+                if (categoriasTicket.some((c) => chaveCategoriaComercial(c) === chaveCategoriaComercial(categoria))) return toast.error('Esta categoria já existe.');
+                setTicketsMedios((prev) => {
+                  const seguros = registrosSeguros(prev);
+                  return [...seguros, { id: `tm${Date.now()}`, categoria, nome: categoria, valorMedioHa: valor, ativo: true, ordem: seguros.length + 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }];
+                });
+                if (nomeEl) nomeEl.value = '';
+                if (valorEl) valorEl.value = '0';
+                toast.success('Linha/categoria criada.');
+              }}>Adicionar linha</Button>
+            </div>
+          </div>
+        </Card>
+      </TabsContent>
 
-      <TabsContent value="metas-comerciais" className="space-y-3"><Card className="p-4 space-y-3"><div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between"><div><div className="text-sm font-semibold">Metas por vendedor</div><p className="text-xs text-muted-foreground">Configure metas manuais em R$ ou distribua automaticamente pela participação no potencial da carteira.</p></div><Button onClick={() => { const possuiManual = metasVendedor.some((meta) => (meta.metaManual ?? (meta.origemMeta === 'proporcional' ? undefined : meta.meta)) !== undefined && (meta.ativo ?? true)); if (possuiManual && !window.confirm('Existem metas manuais cadastradas. Deseja manter metas manuais e preencher apenas vendedores sem meta?')) return; const distribuicao = distribuirMetaPorPotencial({ clientes, ticketsMedios, percentualAcertoEsperado: appConfig.percentualAcertoEsperado, vendedores }); setMetasVendedor((prev) => { const existentes = new Map(prev.map((meta) => [resolverVendedorCanonico(meta.vendedor, vendedores), meta])); return distribuicao.map((meta) => { const atual = existentes.get(meta.vendedor); if (atual && (atual.metaManual ?? (atual.origemMeta === 'proporcional' ? undefined : atual.meta)) !== undefined) return { ...atual, vendedor: meta.vendedor }; return { ...(atual || {}), ...meta, id: atual?.id || meta.id }; }); }); toast.success('Meta distribuída automaticamente por potencial.'); }}>Distribuir meta automaticamente por potencial da carteira</Button></div><div className="grid gap-2 md:grid-cols-3"><div className="rounded border p-3"><p className="text-xs text-muted-foreground">Potencial da carteira</p><b>{fmtBRL(potencialCarteiraConfig)}</b></div><div className="rounded border p-3"><p className="text-xs text-muted-foreground">Meta da carteira</p><b>{fmtBRL(metaCarteiraConfig)}</b></div><div className="rounded border p-3"><p className="text-xs text-muted-foreground">Percentual de acerto</p><b>{limitarPercentualAcerto(appConfig.percentualAcertoEsperado).toFixed(2)}%</b></div></div><div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Vendedor</TableHead><TableHead>Meta manual (R$)</TableHead><TableHead>% meta carteira</TableHead><TableHead>Meta calculada</TableHead><TableHead>Ativo</TableHead><TableHead>Observação</TableHead></TableRow></TableHeader><TableBody>{vendedoresComerciais.map((vendedor) => { const meta = metasVendedor.find((item) => resolverVendedorCanonico(item.vendedor, vendedores) === vendedor); const potencialVendedor = clientes.filter((cliente) => resolverVendedorCanonico(cliente.vendedor, vendedores) === vendedor).reduce((soma, cliente) => soma + calcularPotencialCliente(cliente, ticketsMedios), 0); const percentual = meta?.percentualMetaCarteira ?? (potencialCarteiraConfig > 0 ? (potencialVendedor * 100) / potencialCarteiraConfig : 0); const metaCalculada = meta?.metaCalculada ?? metaCarteiraConfig * (percentual / 100); return <TableRow key={vendedor}><TableCell className="font-medium">{vendedor || 'Não definido'}</TableCell><TableCell><Input type="number" min={0} step="0.01" value={meta?.metaManual ?? (meta?.origemMeta === 'proporcional' ? undefined : meta?.meta) ?? ''} placeholder={fmtBRL(metaCalculada)} onChange={(e) => { const valor = e.target.value === '' ? undefined : normalizarValorNaoNegativo(Number(e.target.value)); setMetasVendedor((prev) => { const atual = prev.find((item) => resolverVendedorCanonico(item.vendedor, vendedores) === vendedor); if (atual) return prev.map((item) => resolverVendedorCanonico(item.vendedor, vendedores) === vendedor ? { ...item, vendedor, metaManual: valor, meta: valor, ativo: item.ativo ?? true, origemMeta: valor === undefined ? 'proporcional' : 'manual' } : item); return [...prev, { id: `mv${Date.now()}`, vendedor, metaManual: valor, meta: valor, percentualMetaCarteira: percentual, metaCalculada, ativo: true, origemMeta: valor === undefined ? 'proporcional' : 'manual' }]; }); }} /></TableCell><TableCell>{percentual.toFixed(2)}%</TableCell><TableCell>{fmtBRL(metaCalculada)}</TableCell><TableCell><Switch checked={meta?.ativo ?? true} onCheckedChange={(ativo) => setMetasVendedor((prev) => meta ? prev.map((item) => item.id === meta.id ? { ...item, vendedor, ativo } : item) : [...prev, { id: `mv${Date.now()}`, vendedor, percentualMetaCarteira: percentual, metaCalculada, ativo, origemMeta: 'proporcional' }])} /></TableCell><TableCell><Input value={meta?.observacao || ''} placeholder="Observação" onChange={(e) => setMetasVendedor((prev) => meta ? prev.map((item) => item.id === meta.id ? { ...item, vendedor, observacao: e.target.value } : item) : [...prev, { id: `mv${Date.now()}`, vendedor, percentualMetaCarteira: percentual, metaCalculada, observacao: e.target.value, ativo: true, origemMeta: 'proporcional' }])} /></TableCell></TableRow>;})}</TableBody></Table></div></Card></TabsContent>
+      <TabsContent value="metas-comerciais" className="space-y-3"><Card className="p-4 space-y-3"><div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between"><div><div className="text-sm font-semibold">Metas por vendedor</div><p className="text-xs text-muted-foreground">Configure metas manuais em R$ ou distribua automaticamente pela participação no potencial da carteira.</p></div><Button onClick={() => { const possuiManual = metasVendedorSeguras.some((meta) => (meta.metaManual ?? (meta.origemMeta === 'proporcional' ? undefined : meta.meta)) !== undefined && (meta.ativo ?? true)); if (possuiManual && !window.confirm('Existem metas manuais cadastradas. Deseja manter metas manuais e preencher apenas vendedores sem meta?')) return; const distribuicao = distribuirMetaPorPotencial({ clientes: clientesSeguros, ticketsMedios: ticketsMediosSeguros, percentualAcertoEsperado: appConfig.percentualAcertoEsperado, vendedores: vendedoresSeguros }); setMetasVendedor((prev) => { const existentes = new Map(registrosSeguros(prev).map((meta) => [resolverVendedorCanonico(meta.vendedor, vendedoresSeguros), meta])); return distribuicao.map((meta) => { const atual = existentes.get(meta.vendedor); if (atual && (atual.metaManual ?? (atual.origemMeta === 'proporcional' ? undefined : atual.meta)) !== undefined) return { ...atual, vendedor: meta.vendedor }; return { ...(atual || {}), ...meta, id: atual?.id || meta.id }; }); }); toast.success('Meta distribuída automaticamente por potencial.'); }}>Distribuir meta automaticamente por potencial da carteira</Button></div><div className="grid gap-2 md:grid-cols-3"><div className="rounded border p-3"><p className="text-xs text-muted-foreground">Potencial da carteira</p><b>{fmtBRL(potencialCarteiraConfig)}</b></div><div className="rounded border p-3"><p className="text-xs text-muted-foreground">Meta da carteira</p><b>{fmtBRL(metaCarteiraConfig)}</b></div><div className="rounded border p-3"><p className="text-xs text-muted-foreground">Percentual de acerto</p><b>{limitarPercentualAcerto(appConfig.percentualAcertoEsperado).toFixed(2)}%</b></div></div><div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Vendedor</TableHead><TableHead>Meta manual (R$)</TableHead><TableHead>% meta carteira</TableHead><TableHead>Meta calculada</TableHead><TableHead>Ativo</TableHead><TableHead>Observação</TableHead></TableRow></TableHeader><TableBody>{vendedoresComerciais.map((vendedor) => { const meta = metasVendedorSeguras.find((item) => resolverVendedorCanonico(item.vendedor, vendedoresSeguros) === vendedor); const potencialVendedor = clientesSeguros.filter((cliente) => resolverVendedorCanonico(cliente.vendedor, vendedoresSeguros) === vendedor).reduce((soma, cliente) => soma + calcularPotencialCliente(cliente, ticketsMediosSeguros), 0); const percentual = meta?.percentualMetaCarteira ?? (potencialCarteiraConfig > 0 ? (potencialVendedor * 100) / potencialCarteiraConfig : 0); const metaCalculada = meta?.metaCalculada ?? metaCarteiraConfig * (percentual / 100); return <TableRow key={vendedor}><TableCell className="font-medium">{vendedor || 'Não definido'}</TableCell><TableCell><Input type="number" min={0} step="0.01" value={meta?.metaManual ?? (meta?.origemMeta === 'proporcional' ? undefined : meta?.meta) ?? ''} placeholder={fmtBRL(metaCalculada)} onChange={(e) => { const valor = e.target.value === '' ? undefined : normalizarValorNaoNegativo(Number(e.target.value)); setMetasVendedor((prev) => { const seguros = registrosSeguros(prev); const atual = seguros.find((item) => resolverVendedorCanonico(item.vendedor, vendedoresSeguros) === vendedor); if (atual) return seguros.map((item) => resolverVendedorCanonico(item.vendedor, vendedoresSeguros) === vendedor ? { ...item, vendedor, metaManual: valor, meta: valor, ativo: item.ativo ?? true, origemMeta: valor === undefined ? 'proporcional' : 'manual' } : item); return [...seguros, { id: `mv${Date.now()}`, vendedor, metaManual: valor, meta: valor, percentualMetaCarteira: percentual, metaCalculada, ativo: true, origemMeta: valor === undefined ? 'proporcional' : 'manual' }]; }); }} /></TableCell><TableCell>{percentual.toFixed(2)}%</TableCell><TableCell>{fmtBRL(metaCalculada)}</TableCell><TableCell><Switch checked={meta?.ativo ?? true} onCheckedChange={(ativo) => setMetasVendedor((prev) => { const seguros = registrosSeguros(prev); return meta ? seguros.map((item) => item.id === meta.id ? { ...item, vendedor, ativo } : item)  : [...seguros, { id: `mv${Date.now()}`, vendedor, percentualMetaCarteira: percentual, metaCalculada, ativo, origemMeta: 'proporcional' }]; })} /></TableCell><TableCell><Input value={meta?.observacao || ''} placeholder="Observação" onChange={(e) => setMetasVendedor((prev) => { const seguros = registrosSeguros(prev); return meta ? seguros.map((item) => item.id === meta.id ? { ...item, vendedor, observacao: e.target.value } : item)  : [...seguros, { id: `mv${Date.now()}`, vendedor, percentualMetaCarteira: percentual, metaCalculada, observacao: e.target.value, ativo: true, origemMeta: 'proporcional' }]; })} /></TableCell></TableRow>;})}</TableBody></Table></div></Card></TabsContent>
 
 
       <TabsContent value="integracoes" className="space-y-3">
