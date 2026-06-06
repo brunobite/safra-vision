@@ -27,6 +27,7 @@ import {
   type OpportunityFilter,
 } from "@/lib/visitReportExport";
 import { formatDateBR } from "@/utils/dateUtils";
+import { getCategoriasComerciais } from "@/utils/commercialCategories";
 
 const reportLabels: Record<ReportType, string> = {
   geral: "Relatório Geral",
@@ -78,6 +79,7 @@ export default function Relatorios() {
   const uniqueRoutes = Array.from(new Set(store.clientes.map((c) => c.rota).filter(Boolean))).sort();
   const uniqueResults = Array.from(new Set(store.relatoriosVisita.map((v) => v.resultadoVisita).filter(Boolean))).sort();
   const uniqueActionTypes = Array.from(new Set(store.relatoriosVisita.map((v) => v.tipoAcao).filter(Boolean))).sort();
+  const categorias = useMemo(() => getCategoriasComerciais({ produtos: store.produtos, metasCategoria: store.metasCategoria, ticketsMedios: store.ticketsMedios, orcamentos: store.orcamentos, oportunidades: store.oportunidades, negocios: store.negocios }), [store.produtos, store.metasCategoria, store.ticketsMedios, store.orcamentos, store.oportunidades, store.negocios]);
   const canExportVisits = filteredVisits.length > 0;
 
   return <div className="space-y-4">
@@ -90,6 +92,7 @@ export default function Relatorios() {
         {!isVisitReport && ["cliente", "geral", "semanal"].includes(filters.reportType) && <Select value={filters.clienteId || "all"} onValueChange={v => setFilters(f => ({ ...f, clienteId: v === "all" ? "" : v }))}><SelectTrigger><SelectValue placeholder="Cliente" /></SelectTrigger><SelectContent><SelectItem value="all">Todos os clientes</SelectItem>{store.clientes.map(c => <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>)}</SelectContent></Select>}
         {!isVisitReport && <Input placeholder="Vendedor" value={filters.vendedor} onChange={e => setFilters(f => ({ ...f, vendedor: e.target.value }))} />}
         {!isVisitReport && <Input placeholder="Rota" value={filters.rota} onChange={e => setFilters(f => ({ ...f, rota: e.target.value }))} />}
+        {!isVisitReport && <Select value={filters.categoria || "all"} onValueChange={v => setFilters(f => ({ ...f, categoria: v === "all" ? "" : v }))}><SelectTrigger><SelectValue placeholder="Categoria" /></SelectTrigger><SelectContent><SelectItem value="all">Todas as categorias</SelectItem>{categorias.map(categoria => <SelectItem key={categoria} value={categoria}>{categoria}</SelectItem>)}</SelectContent></Select>}
       </div>
 
       {isVisitReport && <Collapsible open={visitFiltersOpen} onOpenChange={setVisitFiltersOpen} className="rounded-md border bg-background/50 p-3">

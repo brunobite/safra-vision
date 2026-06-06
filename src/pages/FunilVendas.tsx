@@ -17,6 +17,7 @@ import { KpiCard } from "@/components/dashboard/KpiCard";
 import { Plus, Pencil, Trash2, AlertTriangle, ArrowLeft, ArrowRight, Eye } from "lucide-react";
 import { toast } from "sonner";
 import { getOrcamentoAtualDaOportunidade } from "@/lib/orcamentoUtils";
+import { getCategoriasComerciais, normalizarCategoriaComercial } from "@/utils/commercialCategories";
 
 const ORIGENS: OrigemOportunidade[] = ["Visita", "Relatório de visita", "Ligação", "WhatsApp", "Indicação", "Manual", "Orçamento", "Outro"];
 const ETAPAS_FUNIL: EtapaOportunidade[] = ["Oportunidade identificada", "Qualificação técnica/comercial", "Orçamento solicitado", "Orçamento enviado", "Negociação", "Fechamento encaminhado", "Ganha", "Perdida", "Suspensa/Sem timing"];
@@ -48,7 +49,7 @@ type MoveState = { oportunidade: OportunidadeComercial; etapaNova: EtapaOportuni
 export default function FunilVendas() {
   const {
     oportunidades, setOportunidades, historicoFunil, setHistoricoFunil, clientes, clienteById, vendedores, filtered,
-    orcamentos, proximasAcoes, setProximasAcoes, relatoriosVisita,
+    orcamentos, proximasAcoes, setProximasAcoes, relatoriosVisita, produtos, metasCategoria, ticketsMedios, negocios,
   } = useAppStore();
   const nav = useNavigate();
   const [params, setParams] = useSearchParams();
@@ -62,6 +63,7 @@ export default function FunilVendas() {
   const [closeType, setCloseType] = useState<CloseType>("Ganha");
   const [closeForm, setCloseForm] = useState<CloseForm>({ data: new Date().toISOString().slice(0, 10), orcamentoId: "", valorFinal: 0, observacoes: "", motivoPerda: "Preço", concorrente: "", createPos: false, tipoPos: "Entrega", dataPos: new Date().toISOString().slice(0, 10), objetivoPos: "" });
 
+  const categorias = useMemo(() => getCategoriasComerciais({ produtos, metasCategoria, ticketsMedios, orcamentos, oportunidades, negocios }), [metasCategoria, negocios, oportunidades, orcamentos, produtos, ticketsMedios]);
   const list = filtered.oportunidades ?? oportunidades;
   const normalizedList = useMemo(() => list.map((o) => ({ ...o, etapa: etapaCanonical(o.etapa) })), [list]);
   const metrics = useMemo(() => {
@@ -93,7 +95,7 @@ export default function FunilVendas() {
     if (!form.clienteId) return toast.error("Selecione cliente");
     const cliente = clienteById(form.clienteId);
     const now = new Date().toISOString();
-    const payload: OportunidadeForm = { ...form, clienteNome: cliente?.nome || form.clienteNome, vendedor: form.vendedor || form.responsavel, etapa: etapaCanonical(form.etapa), updatedAt: now };
+    const payload: OportunidadeForm = { ...form, segmento: normalizarCategoriaComercial(form.segmento || form.itensEstimados?.[0]?.categoria || "Outros", categorias), clienteNome: cliente?.nome || form.clienteNome, vendedor: form.vendedor || form.responsavel, etapa: etapaCanonical(form.etapa), updatedAt: now };
     if (edit) {
       setOportunidades((prev) => prev.map((o) => (o.id === edit.id ? { ...payload, id: edit.id, createdAt: edit.createdAt } : o)));
       if (edit.etapa !== payload.etapa) addHistorico({ ...payload, id: edit.id }, payload.etapa, "Etapa ajustada na edição da oportunidade.", edit.etapa);
@@ -232,6 +234,7 @@ export default function FunilVendas() {
       <div><Label>Vendedor</Label><Select value={form.vendedor || form.responsavel || ""} onValueChange={(v) => setForm({ ...form, vendedor: v, responsavel: v })}><SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger><SelectContent>{vendedores.filter((v) => v.ativo).map((v) => <SelectItem key={v.id} value={v.nome}>{v.nome}</SelectItem>)}</SelectContent></Select></div>
       <div><Label>Etapa atual</Label><Select value={form.etapa} onValueChange={(v: EtapaOportunidade) => setForm({ ...form, etapa: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{ETAPAS_FUNIL.map((e) => <SelectItem key={e} value={e}>{e}</SelectItem>)}</SelectContent></Select></div>
       <div><Label>Origem</Label><Select value={form.origem || "Manual"} onValueChange={(v: OrigemOportunidade) => setForm({ ...form, origem: v, origemTipo: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{ORIGENS.map((o) => <SelectItem key={o} value={o}>{o}</SelectItem>)}</SelectContent></Select></div>
+      <div><Label>Categoria comercial</Label><Select value={form.segmento || "Outros"} onValueChange={(v) => setForm({ ...form, segmento: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{categorias.map((categoria) => <SelectItem key={categoria} value={categoria}>{categoria}</SelectItem>)}</SelectContent></Select></div>
       <div><Label>Valor estimado</Label><Input type="number" value={form.valorEstimado || 0} onChange={(e) => setForm({ ...form, valorEstimado: Number(e.target.value) })} /></div>
       <div><Label>Probabilidade (%)</Label><Input type="number" min={0} max={100} value={form.probabilidade || 0} onChange={(e) => setForm({ ...form, probabilidade: Number(e.target.value) })} /></div>
       <div><Label>Previsão de fechamento</Label><Input type="date" value={form.previsaoFechamento || ""} onChange={(e) => setForm({ ...form, previsaoFechamento: e.target.value })} /></div>

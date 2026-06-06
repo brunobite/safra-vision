@@ -24,7 +24,8 @@ import {
   probabilityRatio,
   type ActionPlanItem,
 } from "@/utils/commercialGoals";
-import { CATEGORIAS_PRODUTO, FRENTES_COMERCIAIS, type FrenteComercial, type MetaCategoria, type MetaEmpresa, type MetaPessoal, type MetaVendedor } from "@/types";
+import { FRENTES_COMERCIAIS, type FrenteComercial, type MetaCategoria, type MetaEmpresa, type MetaPessoal, type MetaVendedor } from "@/types";
+import { getCategoriasComerciais, normalizarCategoriaComercial } from "@/utils/commercialCategories";
 
 const ALL = "__all__";
 
@@ -65,6 +66,9 @@ export default function Metas() {
     oportunidades,
     orcamentos,
     proximasAcoes,
+    produtos,
+    ticketsMedios,
+    negocios,
   } = useAppStore();
   const nav = useNavigate();
   const hoje = isoToday();
@@ -73,7 +77,7 @@ export default function Metas() {
 
   const clienteMap = useMemo(() => new Map(clientes.map((cliente) => [cliente.id, cliente])), [clientes]);
   const rotas = useMemo(() => Array.from(new Set(clientes.map((cliente) => cliente.rota).filter(Boolean))).sort(), [clientes]);
-  const categorias = useMemo(() => Array.from(new Set([...CATEGORIAS_PRODUTO, ...metasCategoria.map((meta) => meta.categoria), ...orcamentos.flatMap((orcamento) => orcamento.itens.map((item) => item.categoria)), ...oportunidades.flatMap((oportunidade) => oportunidade.itensEstimados?.map((item) => item.categoria || "") || [])].filter(Boolean))).sort(), [metasCategoria, oportunidades, orcamentos]);
+  const categorias = useMemo(() => getCategoriasComerciais({ produtos, metasCategoria, ticketsMedios, orcamentos, oportunidades, negocios }), [metasCategoria, negocios, oportunidades, orcamentos, produtos, ticketsMedios]);
   const activeFiltersCount = useMemo(() => Object.entries(filters).filter(([key, value]) => value && !(key === "dataInicial" && value === monthStart(hoje)) && !(key === "dataFinal" && value === hoje)).length, [filters, hoje]);
   const updateFilter = (key: keyof GoalFilters, value: string) => setFilters((prev) => ({ ...prev, [key]: value === ALL ? "" : value }));
   const resetFilters = () => setFilters({ dataInicial: monthStart(hoje), dataFinal: hoje, vendedor: "", clienteId: "", rota: "", categoria: "" });
@@ -157,9 +161,10 @@ export default function Metas() {
   const [catForm, setCatForm] = useState<Omit<MetaCategoria, "id">>({ categoria: categorias[0] || "Outros", mes: hoje.slice(0, 7), meta: 0 });
   const openCat = (m?: MetaCategoria) => { setCatEdit(m || null); setCatForm(m ? { ...m } : { categoria: categorias[0] || "Outros", mes: hoje.slice(0, 7), meta: 0 }); setCatOpen(true); };
   const saveCat = () => {
+    const categoria = normalizarCategoriaComercial(catForm.categoria, categorias);
     if (!catForm.categoria || !catForm.mes) return toast.error("Informe categoria e mês.");
-    if (catEdit) setMetasCategoria((prev) => prev.map((x) => x.id === catEdit.id ? { ...catForm, id: catEdit.id } : x));
-    else setMetasCategoria((prev) => [...prev, { ...catForm, id: `mc-${Date.now()}` }]);
+    if (catEdit) setMetasCategoria((prev) => prev.map((x) => x.id === catEdit.id ? { ...catForm, categoria, id: catEdit.id } : x));
+    else setMetasCategoria((prev) => [...prev, { ...catForm, categoria, id: `mc-${Date.now()}` }]);
     setCatOpen(false); toast.success("Meta por categoria salva.");
   };
 
