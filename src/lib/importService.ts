@@ -1,4 +1,5 @@
 import { Cliente, ClienteCulturaArea, Empresa, Evento, FormaPagamento, Lancamento, MetaEmpresa, MetaPessoal, Negocio, PrioridadeP1Item, Produto, RegraComissao, TicketMedioRegra, Vendedor } from "@/types";
+import { categoriaComercialExiste, getCategoriasComerciais, normalizarCategoriaComercial } from "@/utils/commercialCategories";
 
 export type ImportEntity = "clientes" | "vendedores" | "lancamentos" | "negocios" | "produtos" | "metasEmpresa" | "metasPessoais" | "regrasComissao" | "eventos" | "rotas" | "prioridadesP1" | "empresas" | "formasPagamento" | "ticketsMedios";
 export type ImportMode = "add" | "update" | "add_update" | "replace";
@@ -189,21 +190,31 @@ export function parseCsv(content: string): string[][] {
   return rows;
 }
 
-export function buildImportPreview(fileName: string, entity: ImportEntity, rows: string[][]): ImportPreview {
+export function buildImportPreview(fileName: string, entity: ImportEntity, rows: string[][], options: { categoriasComerciais?: readonly string[] } = {}): ImportPreview {
   const header = (rows[0] ?? []).map((h) => h.trim().replace(/^\uFEFF/, ""));
   const map: Record<string, string> = {};
   header.forEach((h) => {
     const direct = aliases[entity][h] ?? aliases[entity][normalizeText(h)] ?? aliases[entity][compactKey(h)];
     if (direct) map[h] = direct;
   });
+  const categoriasComerciais = getCategoriasComerciais({ extras: options.categoriasComerciais ? [...options.categoriasComerciais] : [] });
   const parsed = rows.slice(1).map((r, idx) => {
     const normalized: Record<string, unknown> = {};
     for (let c = 0; c < header.length; c += 1) {
       const target = map[header[c]];
       if (target) normalized[target] = r[c]?.trim();
     }
+    const categoriaOriginal = normalized.categoria;
+    if ((entity === "produtos" || entity === "ticketsMedios" || entity === "negocios") && hasValue(categoriaOriginal)) {
+      const categoriaNormalizada = normalizarCategoriaComercial(categoriaOriginal, categoriasComerciais);
+      normalized.categoria = categoriaNormalizada;
+    }
     const errors = validateRow(entity, normalized);
-    const warnings = warnRow(entity, normalized);
+    const warnings = warnRow(entity, normalized, categoriasComerciais);
+    if ((entity === "produtos" || entity === "ticketsMedios" || entity === "negocios") && hasValue(normalized.categoria) && !categoriaComercialExiste(normalized.categoria, categoriasComerciais)) {
+      warnings.push(`Nova categoria detectada: ${normalized.categoria}. Será adicionada às categorias comerciais.`);
+      categoriasComerciais.push(String(normalized.categoria));
+    }
     return { row: idx + 2, normalized, errors, warnings, duplicateKey: getDuplicateKey(entity, normalized) };
   });
   const duplicateRows = parsed.filter((r, i) => r.duplicateKey && parsed.findIndex((x) => x.duplicateKey === r.duplicateKey) !== i).length;
@@ -247,9 +258,11 @@ function validateRow(entity: ImportEntity, row: Record<string, unknown>): string
   return errs;
 }
 
-function warnRow(entity: ImportEntity, row: Record<string, unknown>): string[] {
+function warnRow(entity: ImportEntity, row: Record<string, unknown>, categoriasComerciais: readonly string[] = []): string[] {
   const warnings: string[] = [];
   if (entity === "produtos") {
+    const categoria = normalizarCategoriaComercial(row.categoria || "Outros", categoriasComerciais);
+    if (hasValue(row.categoria)) row.categoria = categoria;
     const precoVenda = parseNumber(row.precoVenda ?? row.precoLista);
     const precoMinimo = parseNumber(row.precoMinimo);
     const custo = parseNumber(row.custo) ?? 0;
@@ -297,17 +310,17 @@ function normalizeEntityRow(entity: ImportEntity, n: Record<string, unknown>): u
     const custo = parseNumber(n.custo) ?? 0;
     const margem = parseNumber(n.margem) ?? (precoLista > 0 ? ((precoLista - custo) / precoLista) * 100 : undefined);
     const now = new Date().toISOString();
-    return { id, codigo: String(n.codigo || ""), sku: String(n.sku || ""), nome: String(n.nome || ""), categoria: String(n.categoria || "Outros"), unidade: String(n.unidade || "KG").toUpperCase(), fornecedor: String(n.fornecedor || ""), marca: String(n.marca || ""), precoLista, precoMinimo: parseNumber(n.precoMinimo) ?? 0, custo, margem, controlaEstoque, estoqueAtual, estoqueReservado, localEstoque: controlaEstoque ? String(n.localEstoque || "") : "", ativo: statusToActive(n.status, n.ativo), observacoes: String(n.observacoes || ""), ultimaAtualizacao: now, createdAt: now, updatedAt: now } as Produto;
+    return { id, codigo: String(n.codigo || ""), sku: String(n.sku || ""), nome: String(n.nome || ""), categoria: normalizarCategoriaComercial(n.categoria || "Outros"), unidade: String(n.unidade || "KG").toUpperCase(), fornecedor: String(n.fornecedor || ""), marca: String(n.marca || ""), precoLista, precoMinimo: parseNumber(n.precoMinimo) ?? 0, custo, margem, controlaEstoque, estoqueAtual, estoqueReservado, localEstoque: controlaEstoque ? String(n.localEstoque || "") : "", ativo: statusToActive(n.status, n.ativo), observacoes: String(n.observacoes || ""), ultimaAtualizacao: now, createdAt: now, updatedAt: now } as Produto;
   }
   if (entity === "empresas") return { id, nomeFantasia: String(n.nomeFantasia || ""), razaoSocial: String(n.razaoSocial || ""), cnpj: String(n.cnpj || ""), inscricaoEstadual: String(n.inscricaoEstadual || ""), endereco: String(n.endereco || ""), cidadeUf: String(n.cidadeUf || ""), telefone: String(n.telefone || ""), email: String(n.email || ""), consultorPadrao: String(n.consultorPadrao || ""), observacoesComerciaisPadrao: String(n.observacoesComerciaisPadrao || ""), ativa: parseBoolean(n.ativa) ?? true, padrao: parseBoolean(n.padrao) ?? false, logoDataUrl: "" } as Empresa;
   if (entity === "formasPagamento") return { id, nome: String(n.nome || ""), ativo: parseBoolean(n.ativo) ?? true, padrao: parseBoolean(n.padrao) ?? false } as FormaPagamento;
-  if (entity === "ticketsMedios") return { id, categoria: String(n.categoria || "Outros"), valorMedioHa: parseNumber(n.valorMedioHa) || 0, ativo: parseBoolean(n.ativo) ?? true } as TicketMedioRegra;
+  if (entity === "ticketsMedios") return { id, categoria: normalizarCategoriaComercial(n.categoria || "Outros"), valorMedioHa: parseNumber(n.valorMedioHa) || 0, ativo: parseBoolean(n.ativo) ?? true } as TicketMedioRegra;
   if (entity === "eventos") return { id, tipo: String(n.tipo || ""), regiaoParceiro: String(n.regiaoParceiro || ""), publico: String(n.publico || ""), participantesMin: 0, participantesMax: 0, custoUnitario: 0, objetivo: "", evidencia: "", status: "Planejar" } as Evento;
   if (entity === "metasEmpresa") return { id, mes: String(n.mes || ""), metaTotal: parseNumber(n.metaTotal) || 0, vendaDireta: 0, cooperagro: 0, tritec: 0, observacao: String(n.observacao || "") } as MetaEmpresa;
   if (entity === "metasPessoais") return { id, frente: String(n.frente || "Venda Direta"), comissaoAlvo: parseNumber(n.comissaoAlvo) || 0, participacao: 0, percComissao: 0, metaFaturamento: parseNumber(n.metaFaturamento) || 0, observacao: String(n.observacao || "") } as MetaPessoal;
   if (entity === "regrasComissao") return { id, nome: String(n.nome || ""), tipo: "fixa", percentual: parseNumber(n.percentual) || 0, aplicarSobre: "negocio_fechado", ativo: parseBoolean(n.ativo) ?? true } as RegraComissao;
   if (entity === "lancamentos") return { id, data: toIsoDate(n.data) || new Date().toISOString().slice(0, 10), clienteId: String(n.cliente || ""), tipo: String(n.tipo || "Visita"), frente: "Venda Direta", status: String(n.status || "Aberto"), oQueFoiRealizado: String(n.oQueFoiRealizado || "") } as Lancamento;
-  if (entity === "negocios") return { id, nome: String(n.nome || ""), clienteId: String(n.cliente || ""), vendedor: String(n.vendedor || ""), origem: "Outro", produtos: String(n.produtos || "").split(",").map((s) => s.trim()).filter(Boolean), categoria: String(n.categoria || "Outros"), valorPotencial: parseNumber(n.valorPotencial) || 0, status: "Novo", probabilidade: 0, dataCriacao: new Date().toISOString().slice(0, 10), ultimaAtualizacao: new Date().toISOString().slice(0, 10) } as unknown as Negocio;
+  if (entity === "negocios") return { id, nome: String(n.nome || ""), clienteId: String(n.cliente || ""), vendedor: String(n.vendedor || ""), origem: "Outro", produtos: String(n.produtos || "").split(",").map((s) => s.trim()).filter(Boolean), categoria: normalizarCategoriaComercial(n.categoria || "Outros"), valorPotencial: parseNumber(n.valorPotencial) || 0, status: "Novo", probabilidade: 0, dataCriacao: new Date().toISOString().slice(0, 10), ultimaAtualizacao: new Date().toISOString().slice(0, 10) } as unknown as Negocio;
   if (entity === "prioridadesP1") return { id, ordem: parseNumber(n.ordem) || 1, clienteId: String(n.cliente || ""), acaoRecomendada: String(n.acaoRecomendada || ""), status: String(n.status || "Aberto") } as PrioridadeP1Item;
   return { id };
 }

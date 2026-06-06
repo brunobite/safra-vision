@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { ResponsiveContainer, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid } from "recharts";
 import type { Cliente, OportunidadeComercial, OrcamentoStatus, StatusProximaAcao } from "@/types";
+import { getCategoriasComerciais } from "@/utils/commercialCategories";
 
 const ALL = "__all__";
 const OPEN_OPPORTUNITY_STAGES = [
@@ -41,6 +42,7 @@ const buildDefaultFilters = (hoje: string) => ({
   etapa: "",
   statusOportunidade: "",
   statusAcao: "",
+  categoria: "",
 });
 
 function todayIso() {
@@ -94,6 +96,9 @@ export default function Dashboard() {
     relatoriosVisita,
     vendedores,
     clienteById,
+    produtos,
+    metasCategoria,
+    ticketsMedios,
   } = useAppStore();
   const nav = useNavigate();
   const hoje = todayIso();
@@ -104,6 +109,7 @@ export default function Dashboard() {
   const rotas = useMemo(() => Array.from(new Set(clientes.map((c) => c.rota).filter(Boolean))).sort(), [clientes]);
   const etapas = useMemo(() => Array.from(new Set([...OPEN_OPPORTUNITY_STAGES, ...oportunidades.map((o) => o.etapa)])).sort(), [oportunidades]);
   const statusAcoes = useMemo(() => Array.from(new Set(proximasAcoes.map((a) => a.status))).sort(), [proximasAcoes]);
+  const categorias = useMemo(() => getCategoriasComerciais({ produtos, metasCategoria, ticketsMedios, orcamentos, oportunidades, negocios }), [metasCategoria, negocios, oportunidades, orcamentos, produtos, ticketsMedios]);
 
   const clienteMap = useMemo(() => new Map(clientes.map((cliente) => [cliente.id, cliente])), [clientes]);
 
@@ -129,9 +135,10 @@ export default function Dashboard() {
       if (filters.statusOportunidade === "ganha" && oportunidade.etapa !== "Ganha") return false;
       if (filters.statusOportunidade === "perdida" && oportunidade.etapa !== "Perdida") return false;
       if (filters.statusOportunidade === "cancelada" && oportunidade.etapa !== "Cancelada") return false;
+      if (filters.categoria && oportunidade.segmento !== filters.categoria && !(oportunidade.itensEstimados || []).some((item) => item.categoria === filters.categoria)) return false;
       return true;
     });
-    const orcamentosFiltrados = orcamentos.filter((orcamento) => dateInPeriod(orcamento.updatedAt || orcamento.data, filters.dataInicial, filters.dataFinal) && matchesCarteira(orcamento.clienteId, orcamento.vendedor));
+    const orcamentosFiltrados = orcamentos.filter((orcamento) => dateInPeriod(orcamento.updatedAt || orcamento.data, filters.dataInicial, filters.dataFinal) && matchesCarteira(orcamento.clienteId, orcamento.vendedor) && (!filters.categoria || orcamento.itens?.some((item) => item.categoria === filters.categoria)));
     const negociosFiltrados = negocios.filter((negocio) => dateInPeriod(negocio.ultimaAtualizacao || negocio.dataCriacao || negocio.previsaoFechamento, filters.dataInicial, filters.dataFinal) && matchesCarteira(negocio.clienteId, negocio.vendedor));
     const acoesFiltradas = proximasAcoes.filter((acao) => {
       if (!matchesCarteira(acao.clienteId, acao.responsavel)) return false;
@@ -314,6 +321,7 @@ export default function Dashboard() {
             <div><Label className="text-xs">Etapa do funil</Label><Select value={filters.etapa || ALL} onValueChange={(value) => updateFilter("etapa", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todas</SelectItem>{etapas.map((etapa) => <SelectItem key={etapa} value={etapa}>{etapa}</SelectItem>)}</SelectContent></Select></div>
             <div><Label className="text-xs">Status oportunidade</Label><Select value={filters.statusOportunidade || ALL} onValueChange={(value) => updateFilter("statusOportunidade", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todos</SelectItem><SelectItem value="aberta">Aberta</SelectItem><SelectItem value="ganha">Ganha</SelectItem><SelectItem value="perdida">Perdida</SelectItem><SelectItem value="cancelada">Cancelada</SelectItem></SelectContent></Select></div>
             <div><Label className="text-xs">Status da ação</Label><Select value={filters.statusAcao || ALL} onValueChange={(value) => updateFilter("statusAcao", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todos</SelectItem>{statusAcoes.map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}</SelectContent></Select></div>
+            <div><Label className="text-xs">Categoria</Label><Select value={filters.categoria || ALL} onValueChange={(value) => updateFilter("categoria", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todas</SelectItem>{categorias.map((categoria) => <SelectItem key={categoria} value={categoria}>{categoria}</SelectItem>)}</SelectContent></Select></div>
           </div>
         )}
       </Card>

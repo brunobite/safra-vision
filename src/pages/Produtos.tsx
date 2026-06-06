@@ -12,9 +12,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Switch } from "@/components/ui/switch";
 import { useAppStore } from "@/store/AppStore";
-import { Produto, CATEGORIAS_PRODUTO } from "@/types";
+import { Produto } from "@/types";
 import { fmtBRL, fmtNum } from "@/utils/calculations";
 import { controlaEstoqueProduto, estoqueDisponivelProduto } from "@/utils/productStock";
+import { getCategoriasComerciais, normalizarCategoriaComercial } from "@/utils/commercialCategories";
 import { ArrowLeft, Boxes, Eye, Pencil, Plus, Search, Trash2, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 
@@ -59,7 +60,7 @@ export default function Produtos() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const fornecedores = useMemo(() => Array.from(new Set(produtos.map((p) => p.fornecedor).filter(Boolean) as string[])), [produtos]);
-  const categorias = useMemo(() => [...new Set([...CATEGORIAS_PRODUTO, ...ticketsMedios.map((t) => t.categoria)])], [ticketsMedios]);
+  const categorias = useMemo(() => getCategoriasComerciais({ produtos, ticketsMedios, negocios, oportunidades, orcamentos }), [negocios, oportunidades, orcamentos, produtos, ticketsMedios]);
 
   const list = useMemo(() => produtos.filter((p) =>
     (!busca || p.nome.toLowerCase().includes(busca.toLowerCase()) || p.codigo.toLowerCase().includes(busca.toLowerCase())) &&
@@ -95,6 +96,7 @@ export default function Produtos() {
 
   const save = () => {
     if (!form.nome || !form.codigo) return toast.error("Código e nome obrigatórios.");
+    const categoria = normalizarCategoriaComercial(form.categoria, categorias);
     const controlaEstoque = controlaEstoqueProduto(form);
     const disponivel = estoqueDisponivelProduto(form);
     const margem = form.precoLista > 0 ? (((form.precoLista - form.custo) / form.precoLista) * 100) : 0;
@@ -102,9 +104,9 @@ export default function Produtos() {
     if (controlaEstoque && disponivel < 0) toast.warning("Estoque disponível negativo: revise estoque atual e reservado.");
 
     if (edit) {
-      setProdutos((prev) => prev.map((p) => p.id === edit.id ? { ...p, ...form, controlaEstoque, margem, id: edit.id, createdAt: p.createdAt, updatedAt: now, ultimaAtualizacao: now.slice(0, 10) } : p));
+      setProdutos((prev) => prev.map((p) => p.id === edit.id ? { ...p, ...form, categoria, controlaEstoque, margem, id: edit.id, createdAt: p.createdAt, updatedAt: now, ultimaAtualizacao: now.slice(0, 10) } : p));
     } else {
-      const novo: Produto = { ...form, controlaEstoque, margem, id: `p${Date.now()}`, createdAt: now, updatedAt: now, ultimaAtualizacao: now.slice(0, 10) };
+      const novo: Produto = { ...form, categoria, controlaEstoque, margem, id: `p${Date.now()}`, createdAt: now, updatedAt: now, ultimaAtualizacao: now.slice(0, 10) };
       setProdutos((prev) => [...prev, novo]);
       setSelectedId(novo.id);
     }
