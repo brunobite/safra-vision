@@ -22,7 +22,7 @@ import { clearLocalAppDeviceData } from "@/lib/clientCleanup";
 import { exportAllEntitiesToCsv } from "@/lib/csvService";
 import { exportWorkbook } from "@/lib/excelService";
 import { downloadBackupJson, parseBackupPayload } from "@/lib/backupService";
-import { applyImport, buildImportPreview, IMPORT_TEMPLATES, ImportEntity, ImportMode, ImportPreview, PRODUCT_IMPORT_EXAMPLES, PRODUCT_IMPORT_HEADERS, isDuplicate, parseCsv } from "@/lib/importService";
+import { applyImport, buildImportPreview, IMPORT_TEMPLATES, ImportEntity, ImportMode, ImportPreview, ImportPreviewRow, PRODUCT_IMPORT_EXAMPLES, PRODUCT_IMPORT_HEADERS, PRODUCT_STANDARD_UNITS, isDuplicate, isStandardProductUnit, normalizeProductUnit, parseBoolean, parseCsv, parseNumber } from "@/lib/importService";
 import { saveAsTextFile } from "@/lib/fileDownload";
 import { openAppDb, promisifyRequest } from "@/lib/db";
 import { isSupabaseConfigured } from "@/lib/supabase";
@@ -50,6 +50,50 @@ const emptyRegra: Omit<RegraComissao, "id"> = { nome: "", tipo: "fixa", percentu
 const defaultEmpresa: Empresa = { id: "", nomeFantasia: "", razaoSocial: "", cnpj: "", inscricaoEstadual: "", endereco: "", cidadeUf: "", telefone: "", email: "", consultorPadrao: "", observacoesComerciaisPadrao: "", ativa: true, padrao: false, logoDataUrl: "" };
 const SYNC_PANEL_TIMEOUT_MS = 8000;
 type SyncQueryStatus = "parado" | "atualizando" | "erro" | "sucesso";
+type ProductImportLineStatus = "válida" | "com aviso" | "precisa revisão" | "erro bloqueante" | "ignorada pelo usuário";
+type ProductImportAction = "approved" | "ignored" | "review";
+type ProductImportReviewRow = ImportPreviewRow & { action: ProductImportAction; acceptedNewUnit?: boolean };
+
+const PRODUCT_PREVIEW_FIELDS = [
+  "codigo", "sku", "nome", "categoria", "unidade", "fornecedor", "marca", "precoVenda", "precoMinimo", "custo",
+  "controlaEstoque", "estoqueAtual", "estoqueReservado", "localEstoque", "status", "observacoes",
+] as const;
+
+const PRODUCT_BLOCKING_ERROR_PREFIXES = ["Campo obrigatório", "Número inválido", "Controle de estoque inválido", "Estoque atual obrigatório", "Estoque reservado inválido", "Status inválido"];
+
+function validateEditableProductRow(normalized: Record<string, unknown>, acceptedNewUnit = false) {
+  const next = { ...normalized, unidade: normalizeProductUnit(normalized.unidade) };
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const hasValue = (value: unknown) => String(value ?? "").trim() !== "";
+  if (!hasValue(next.nome)) errors.push("Campo obrigatório: nome");
+  if (!hasValue(next.unidade)) errors.push("Campo obrigatório: unidade");
+  ["precoVenda", "precoLista", "precoMinimo", "custo", "margem", "estoqueAtual", "estoqueReservado"].forEach((key) => {
+    if (hasValue(next[key]) && parseNumber(next[key]) === undefined) errors.push(`Número inválido: ${key}`);
+  });
+  if (hasValue(next.controlaEstoque) && parseBoolean(next.controlaEstoque) === undefined) errors.push("Controle de estoque inválido");
+  const controlaEstoque = parseBoolean(next.controlaEstoque) ?? Boolean(hasValue(next.estoqueAtual) || hasValue(next.estoqueReservado) || hasValue(next.localEstoque));
+  if (controlaEstoque) {
+    if (!hasValue(next.estoqueAtual) || parseNumber(next.estoqueAtual) === undefined) errors.push("Estoque atual obrigatório para produto com controle de estoque");
+    if (hasValue(next.estoqueReservado) && parseNumber(next.estoqueReservado) === undefined) errors.push("Estoque reservado inválido");
+  }
+  const status = String(next.status ?? next.ativo ?? "ativo").normalize("NFD").replace(/\p{Diacritic}/gu, "").trim().toLowerCase();
+  if (status && !["ativo", "inativo", "sim", "true", "1", "nao", "não", "false", "0"].includes(status)) errors.push("Status inválido");
+  if (hasValue(next.unidade) && !isStandardProductUnit(next.unidade) && !acceptedNewUnit) warnings.push(`Nova unidade detectada: ${next.unidade}. Revise antes de importar.`);
+  if (parseNumber(next.precoVenda ?? next.precoLista) === undefined) warnings.push("Produto sem preço; será importado com preço 0.");
+  if (!hasValue(next.precoMinimo)) warnings.push("Preço mínimo vazio; será importado com preço mínimo 0.");
+  return { normalized: next, errors, warnings };
+}
+
+function classifyProductImportRow(row: ProductImportReviewRow): ProductImportLineStatus {
+  if (row.action === "ignored") return "ignorada pelo usuário";
+  if (row.errors.some((error) => PRODUCT_BLOCKING_ERROR_PREFIXES.some((prefix) => error.startsWith(prefix)))) return "erro bloqueante";
+  if (row.errors.length) return "precisa revisão";
+  if (row.warnings.length && row.action !== "approved") return "precisa revisão";
+  if (row.warnings.length) return "com aviso";
+  return "válida";
+}
+
 
 function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -89,6 +133,7 @@ export default function Configuracoes() {
   const [importMode, setImportMode] = useState<ImportMode>("add");
   const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [productReviewRows, setProductReviewRows] = useState<ProductImportReviewRow[]>([]);
   const [baseMode, setBaseMode] = useState<BaseMode>((localStorage.getItem("baseMode") as BaseMode) || "teste");
   const [importLogs, setImportLogs] = useState<ImportLog[]>([]);
   const [lastBackupAt, setLastBackupAt] = useState<string>("");
@@ -762,6 +807,7 @@ export default function Configuracoes() {
       if (rows.length < 2) throw new Error();
       const preview = buildImportPreview(file.name, entity, rows, { categoriasComerciais: categoriasTicket });
       setImportPreview(preview);
+      setProductReviewRows(entity === "produtos" ? preview.rows.map((row) => ({ ...row, action: row.errors.length ? "review" : "approved" })) : []);
       setPreviewOpen(true);
     } catch {
       toast.error("Arquivo inválido ou sem dados para importação.");
@@ -770,27 +816,34 @@ export default function Configuracoes() {
     }
   };
 
-  const confirmImport = () => {
+  const confirmImport = async () => {
     if (!importPreview) return;
     const modeToApply: ImportMode = importPreview.entity === "produtos" && importMode === "replace" ? "add_update" : importMode;
     if (modeToApply === "replace" && !window.confirm("Esta ação substituirá todos os dados atuais desta entidade pelos dados importados. Essa ação não pode ser desfeita nesta versão. Deseja continuar?")) return;
 
+    const previewToApply: ImportPreview = importPreview.entity === "produtos" ? { ...importPreview, rows: productReviewRows.filter((row) => row.action === "approved" && row.errors.length === 0), validRows: productReviewRows.filter((row) => row.action === "approved" && row.errors.length === 0).length, errorRows: productReviewRows.filter((row) => row.action !== "ignored" && row.errors.length > 0).length, warningRows: productReviewRows.filter((row) => row.action !== "ignored" && row.warnings.length > 0).length } : importPreview;
     let summary = { imported: 0, updated: 0, ignored: 0, duplicates: 0 };
-    if (importPreview.entity === "produtos") {
-      const result = applyImport("produtos", modeToApply, produtos as ({ id: string } & Record<string, unknown>)[], importPreview);
+    if (previewToApply.entity === "produtos") {
+      const result = applyImport("produtos", modeToApply, produtos as ({ id: string } & Record<string, unknown>)[], previewToApply);
       setProdutos(result.data as Produto[]);
-      summary = result;
+      summary = { ...result, ignored: importPreview.totalRows - previewToApply.rows.length + result.ignored };
     } else {
-      const result = applyImport("clientes", modeToApply, clientes as ({ id: string } & Record<string, unknown>)[], importPreview);
+      const result = applyImport("clientes", modeToApply, clientes as ({ id: string } & Record<string, unknown>)[], previewToApply);
       setClientes(result.data as Cliente[]);
       summary = result;
     }
     toast.success(`Importação concluída: ${summary.imported} criados, ${summary.updated} atualizados, ${summary.ignored} ignorados, ${summary.duplicates} duplicidades.`);
-    const log: ImportLog = { id: `ilog-${Date.now()}`, arquivo: importPreview.fileName, dataHora: new Date().toISOString(), entidade: importPreview.entity, registrosLidos: importPreview.totalRows, registrosCriados: summary.imported, registrosAtualizados: summary.updated, registrosIgnorados: summary.ignored, erros: importPreview.errorRows, avisos: importPreview.rows.reduce((a,r)=>a+r.warnings.length,0) };
+    if (previewToApply.entity === "produtos" && typeof navigator !== "undefined" && navigator.onLine) {
+      window.setTimeout(() => { void runManualUploadSync().then((result) => {
+        if (!result.ok || (!result.skipped && result.summary.error > 0)) toast.error("Produtos salvos localmente, mas houve erro ao persistir no Supabase oficial. Verifique a sincronização.");
+      }); }, 800);
+    }
+    const log: ImportLog = { id: `ilog-${Date.now()}`, arquivo: importPreview.fileName, dataHora: new Date().toISOString(), entidade: importPreview.entity, registrosLidos: importPreview.totalRows, registrosCriados: summary.imported, registrosAtualizados: summary.updated, registrosIgnorados: summary.ignored, erros: previewToApply.errorRows, avisos: previewToApply.rows.reduce((a,r)=>a+r.warnings.length,0) };
     setImportLogs((prev)=>[log, ...prev]);
     void saveStore("importLogs", [log, ...importLogs]);
     setPreviewOpen(false);
     setImportPreview(null);
+    setProductReviewRows([]);
     void loadStats();
   };
 
@@ -828,6 +881,7 @@ export default function Configuracoes() {
       { name: "Instruções", rows: [
         ["Campo", "Regra"],
         ["codigo/sku", "Chave principal para evitar duplicidade. Se ambos estiverem vazios, o app usa nome + fornecedor."],
+        ["unidade", `Obrigatória. Sugestões: ${PRODUCT_STANDARD_UNITS.join(", ")}. Unidades novas viram aviso/revisão, não bloqueio automático.`],
         ["precoVenda", "Alimenta o preço de lista interno do produto."],
         ["precoMinimo", "Aceita número com vírgula ou ponto decimal. Se ficar vazio, será importado como 0 e a prévia exibirá aviso."],
         ["custo", "Alimenta o custo interno do produto."],
@@ -840,17 +894,39 @@ export default function Configuracoes() {
     ]);
   };
 
+  const updateProductReviewRow = (rowNumber: number, field: string, value: string) => {
+    setProductReviewRows((current) => current.map((row) => {
+      if (row.row !== rowNumber) return row;
+      const validation = validateEditableProductRow({ ...row.normalized, [field]: value }, row.acceptedNewUnit);
+      return { ...row, ...validation, action: validation.errors.length || validation.warnings.length ? "review" : "approved" };
+    }));
+  };
+
+  const setProductReviewAction = (rowNumber: number, action: ProductImportAction) => {
+    setProductReviewRows((current) => current.map((row) => row.row === rowNumber ? { ...row, action } : row));
+  };
+
+  const acceptNewUnit = (rowNumber: number) => {
+    setProductReviewRows((current) => current.map((row) => {
+      if (row.row !== rowNumber) return row;
+      const validation = validateEditableProductRow(row.normalized, true);
+      return { ...row, ...validation, acceptedNewUnit: true, action: validation.errors.length ? "review" : "approved" };
+    }));
+  };
+
   const previewClassification = useMemo(() => {
     if (!importPreview) return { novos: 0, atualizados: 0, ignorados: 0, erros: 0, duplicidades: 0 };
     const current = (importPreview.entity === "produtos" ? produtos : clientes) as ({ id: string } & Record<string, unknown>)[];
-    return importPreview.rows.reduce((acc, row) => {
+    const rows = importPreview.entity === "produtos" ? productReviewRows : importPreview.rows;
+    return rows.reduce((acc, row) => {
+      if ("action" in row && row.action === "ignored") { acc.ignorados += 1; return acc; }
       if (row.errors.length) { acc.erros += 1; acc.ignorados += 1; return acc; }
       const exists = current.some((item) => isDuplicate(importPreview.entity, item, row.normalized as { id: string } & Record<string, unknown>));
       if (exists) { acc.atualizados += 1; acc.duplicidades += 1; }
       else acc.novos += 1;
       return acc;
     }, { novos: 0, atualizados: 0, ignorados: 0, erros: 0, duplicidades: importPreview.duplicateRows });
-  }, [clientes, importPreview, produtos]);
+  }, [clientes, importPreview, productReviewRows, produtos]);
 
   const openNew = () => { setEdit(null); setForm(emptyRegra); setOpen(true); };
   const openEdit = (r: RegraComissao) => { setEdit(r); const { id, ...rest } = r; void id; setForm(rest); setOpen(true); };
@@ -1588,12 +1664,16 @@ export default function Configuracoes() {
 
     <Dialog open={open} onOpenChange={setOpen}><DialogContent className="max-w-2xl"><DialogHeader><DialogTitle>{edit ? "Editar regra" : "Nova regra de comissão"}</DialogTitle></DialogHeader><div className="grid gap-3 md:grid-cols-2"><div className="md:col-span-2"><Label>Nome da regra</Label><Input value={form.nome} onChange={e => setForm({ ...form, nome: e.target.value })} /></div><div><Label>Tipo</Label><Select value={form.tipo} onValueChange={(v: "fixa" | "escalonada") => setForm({ ...form, tipo: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="fixa">Fixa</SelectItem><SelectItem value="escalonada">Escalonada</SelectItem></SelectContent></Select></div><div><Label>Aplicar sobre</Label><Select value={form.aplicarSobre} onValueChange={(v: AplicarSobre) => setForm({ ...form, aplicarSobre: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{APLICAR.map(a => <SelectItem key={a.v} value={a.v}>{a.label}</SelectItem>)}</SelectContent></Select></div>{form.tipo === "fixa" && (<div><Label>Percentual (%)</Label><Input type="number" step="0.1" value={form.percentual || 0} onChange={e => setForm({ ...form, percentual: +e.target.value })} /></div>)}<div className="flex items-end gap-2"><Switch checked={form.ativo} onCheckedChange={v => setForm({ ...form, ativo: v })} /><Label>Ativo</Label></div></div>{form.tipo === "escalonada" && <div className="mt-3 rounded-md border border-border p-3"><div className="mb-2 flex items-center justify-between"><Label className="text-sm font-semibold">Faixas escalonadas</Label><Button size="sm" variant="outline" onClick={addFaixa}><Plus className="mr-1 h-3 w-3" /> Faixa</Button></div><div className="space-y-2">{(form.faixas || []).map((f, i) => <div key={i} className="grid grid-cols-4 gap-2"><Input type="number" placeholder="Mín %" value={f.min} onChange={e => updFaixa(i, "min", +e.target.value)} /><Input type="number" placeholder="Máx %" value={f.max} onChange={e => updFaixa(i, "max", +e.target.value)} /><Input type="number" step="0.1" placeholder="% comissão" value={f.percentual} onChange={e => updFaixa(i, "percentual", +e.target.value)} /><Button size="icon" variant="ghost" onClick={() => rmFaixa(i)}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button></div>)}</div></div>}<DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button><Button onClick={save}>Salvar</Button></DialogFooter></DialogContent></Dialog>
   
-    <Dialog open={previewOpen} onOpenChange={setPreviewOpen}><DialogContent className="max-w-4xl"><DialogHeader><DialogTitle>Prévia da importação</DialogTitle></DialogHeader>{importPreview && <div className="space-y-2 text-sm">
+    <Dialog open={previewOpen} onOpenChange={setPreviewOpen}><DialogContent className="max-w-[96vw]"><DialogHeader><DialogTitle>Prévia da importação</DialogTitle></DialogHeader>{importPreview && <div className="space-y-2 text-sm">
       <div><b>Arquivo:</b> {importPreview.fileName}</div><div><b>Entidade:</b> {importPreview.entity}</div><div><b>Modo:</b> {importPreview.entity === "produtos" && importMode === "replace" ? "add_update" : importMode}</div>
       <div><b>Linhas lidas:</b> {importPreview.totalRows} | <b>Válidas:</b> {importPreview.validRows} | <b>Com erro:</b> {importPreview.errorRows} | <b>Com aviso:</b> {importPreview.warningRows}</div>
       <div><b>Novos:</b> {previewClassification.novos} | <b>Serão atualizados:</b> {previewClassification.atualizados} | <b>Linhas ignoradas/erro:</b> {previewClassification.ignorados} | <b>Possíveis duplicidades:</b> {previewClassification.duplicidades} | <b>Obrigatórios ausentes:</b> {importPreview.missingRequiredRows}</div>
-      <div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Linha</TableHead><TableHead>Dados normalizados</TableHead><TableHead>Erros</TableHead><TableHead>Avisos</TableHead></TableRow></TableHeader><TableBody>{importPreview.sample.map(r => <TableRow key={r.row}><TableCell>{r.row}</TableCell><TableCell className="max-w-md whitespace-pre-wrap text-xs">{JSON.stringify(r.normalized)}</TableCell><TableCell className="text-xs text-destructive">{r.errors.join("; ") || "—"}</TableCell><TableCell className="text-xs text-amber-600">{r.warnings.join("; ") || "—"}</TableCell></TableRow>)}</TableBody></Table></div>
+      {importPreview.entity === "produtos" ? (
+        <div className="max-h-[62vh] overflow-auto rounded-md border"><Table><TableHeader><TableRow><TableHead>Linha</TableHead><TableHead>Status</TableHead>{PRODUCT_PREVIEW_FIELDS.map((field) => <TableHead key={field}>{field}</TableHead>)}<TableHead>Erros</TableHead><TableHead>Avisos</TableHead><TableHead>Ação</TableHead></TableRow></TableHeader><TableBody>{productReviewRows.map((r) => { const lineStatus = classifyProductImportRow(r); return <TableRow key={r.row} className={lineStatus === "erro bloqueante" ? "bg-destructive/5" : lineStatus === "precisa revisão" ? "bg-amber-500/5" : ""}><TableCell>{r.row}</TableCell><TableCell><Badge variant={lineStatus === "válida" || lineStatus === "com aviso" ? "outline" : "secondary"}>{lineStatus}</Badge></TableCell>{PRODUCT_PREVIEW_FIELDS.map((field) => <TableCell key={field} className="min-w-32"><Input className="h-8 text-xs" list={field === "unidade" ? "unidades-import-produtos" : undefined} value={String(r.normalized[field] ?? "")} onChange={(e) => updateProductReviewRow(r.row, field, e.target.value)} /></TableCell>)}<TableCell className="min-w-52 text-xs text-destructive">{r.errors.join("; ") || "—"}</TableCell><TableCell className="min-w-52 text-xs text-amber-600">{r.warnings.join("; ") || "—"}</TableCell><TableCell className="min-w-44"><div className="flex flex-col gap-1"><Button size="sm" variant="outline" onClick={() => setProductReviewAction(r.row, "approved")} disabled={r.errors.length > 0}>Aprovar</Button><Button size="sm" variant="outline" onClick={() => acceptNewUnit(r.row)} disabled={!normalizeProductUnit(r.normalized.unidade) || isStandardProductUnit(r.normalized.unidade)}>Aceitar unidade nova</Button><Button size="sm" variant="ghost" onClick={() => setProductReviewAction(r.row, "ignored")}>Ignorar</Button></div></TableCell></TableRow>; })}</TableBody></Table><datalist id="unidades-import-produtos">{PRODUCT_STANDARD_UNITS.map((unit) => <option key={unit} value={unit} />)}</datalist></div>
+      ) : (
+        <div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Linha</TableHead><TableHead>Dados normalizados</TableHead><TableHead>Erros</TableHead><TableHead>Avisos</TableHead></TableRow></TableHeader><TableBody>{importPreview.sample.map(r => <TableRow key={r.row}><TableCell>{r.row}</TableCell><TableCell className="max-w-md whitespace-pre-wrap text-xs">{JSON.stringify(r.normalized)}</TableCell><TableCell className="text-xs text-destructive">{r.errors.join("; ") || "—"}</TableCell><TableCell className="text-xs text-amber-600">{r.warnings.join("; ") || "—"}</TableCell></TableRow>)}</TableBody></Table></div>
+      )}
       <div className="text-xs text-muted-foreground">Colunas não reconhecidas: {importPreview.unmappedColumns.join(", ") || "nenhuma"}</div>
-    </div>}<DialogFooter><Button variant="outline" onClick={() => setPreviewOpen(false)}>Cancelar</Button><Button onClick={confirmImport} disabled={importPreview?.validRows === 0}>Confirmar importação</Button></DialogFooter></DialogContent></Dialog>
+    </div>}<DialogFooter><Button variant="outline" onClick={() => setPreviewOpen(false)}>Cancelar</Button><Button onClick={confirmImport} disabled={importPreview?.entity === "produtos" ? productReviewRows.filter((row) => row.action === "approved" && row.errors.length === 0).length === 0 : importPreview?.validRows === 0}>Confirmar importação</Button></DialogFooter></DialogContent></Dialog>
 </div>;
 }

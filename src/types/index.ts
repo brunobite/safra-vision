@@ -377,7 +377,7 @@ export interface Produto {
   sku?: string;
   nome: string;
   categoria: CategoriaProduto;
-  unidade: "LT" | "GAL" | "BD" | "TON" | "KG";
+  unidade: string;
   fornecedor?: string;
   marca?: string;
   precoLista: number;
@@ -468,7 +468,7 @@ export interface OrcamentoItem {
   produtoId: string;
   produtoNome: string;
   categoria: string;
-  unidadeProduto: "LT" | "KG" | "TON" | "GAL" | "BD";
+  unidadeProduto: string;
   dosePorHa: number;
   unidadeDose: UnidadeDose;
   areaHa: number;
