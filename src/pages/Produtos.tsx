@@ -13,6 +13,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Switch } from "@/components/ui/switch";
 import { useAppStore } from "@/store/AppStore";
 import { Produto } from "@/types";
+import { PRODUCT_STANDARD_UNITS, normalizeProductUnit } from "@/lib/importService";
 import { fmtBRL, fmtNum } from "@/utils/calculations";
 import { controlaEstoqueProduto, estoqueDisponivelProduto } from "@/utils/productStock";
 import { getCategoriasComerciais, normalizarCategoriaComercial } from "@/utils/commercialCategories";
@@ -20,7 +21,7 @@ import { ArrowLeft, Boxes, Eye, Pencil, Plus, Search, Trash2, TriangleAlert } fr
 import { toast } from "sonner";
 
 const ALL = "__all__";
-const UNIDADES: Produto["unidade"][] = ["LT", "GAL", "BD", "TON", "KG"];
+const UNIDADES = PRODUCT_STANDARD_UNITS;
 
 const empty: Omit<Produto, "id"> = {
   codigo: "",
@@ -96,6 +97,8 @@ export default function Produtos() {
 
   const save = () => {
     if (!form.nome || !form.codigo) return toast.error("Código e nome obrigatórios.");
+    const unidade = normalizeProductUnit(form.unidade);
+    if (!unidade) return toast.error("Unidade obrigatória.");
     const categoria = normalizarCategoriaComercial(form.categoria, categorias);
     const controlaEstoque = controlaEstoqueProduto(form);
     const disponivel = estoqueDisponivelProduto(form);
@@ -104,9 +107,9 @@ export default function Produtos() {
     if (controlaEstoque && disponivel < 0) toast.warning("Estoque disponível negativo: revise estoque atual e reservado.");
 
     if (edit) {
-      setProdutos((prev) => prev.map((p) => p.id === edit.id ? { ...p, ...form, categoria, controlaEstoque, margem, id: edit.id, createdAt: p.createdAt, updatedAt: now, ultimaAtualizacao: now.slice(0, 10) } : p));
+      setProdutos((prev) => prev.map((p) => p.id === edit.id ? { ...p, ...form, categoria, unidade, controlaEstoque, margem, id: edit.id, createdAt: p.createdAt, updatedAt: now, ultimaAtualizacao: now.slice(0, 10) } : p));
     } else {
-      const novo: Produto = { ...form, categoria, controlaEstoque, margem, id: `p${Date.now()}`, createdAt: now, updatedAt: now, ultimaAtualizacao: now.slice(0, 10) };
+      const novo: Produto = { ...form, categoria, unidade, controlaEstoque, margem, id: `p${Date.now()}`, createdAt: now, updatedAt: now, ultimaAtualizacao: now.slice(0, 10) };
       setProdutos((prev) => [...prev, novo]);
       setSelectedId(novo.id);
     }
@@ -362,7 +365,7 @@ export default function Produtos() {
             <div><Label>Código/SKU</Label><Input value={form.codigo} onChange={(e) => setForm({ ...form, codigo: e.target.value })} /></div>
             <div className="md:col-span-2"><Label>Nome</Label><Input value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} /></div>
             <div><Label>Categoria</Label><Select value={form.categoria} onValueChange={(v) => setForm({ ...form, categoria: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{categorias.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent></Select></div>
-            <div><Label>Unidade</Label><Select value={form.unidade} onValueChange={(v: Produto["unidade"]) => setForm({ ...form, unidade: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{UNIDADES.map((u) => <SelectItem key={u} value={u}>{u}</SelectItem>)}</SelectContent></Select></div>
+            <div><Label>Unidade</Label><Input list="unidades-produto" value={form.unidade} onChange={(e) => setForm({ ...form, unidade: normalizeProductUnit(e.target.value) })} /><datalist id="unidades-produto">{UNIDADES.map((u) => <option key={u} value={u} />)}</datalist><p className="mt-1 text-xs text-muted-foreground">Sugestões padrão disponíveis; novas unidades comerciais também são permitidas.</p></div>
             <div><Label>Fornecedor/empresa</Label><Input value={form.fornecedor} onChange={(e) => setForm({ ...form, fornecedor: e.target.value })} /></div>
             <div><Label>Preço de venda</Label><Input type="number" step="0.01" value={form.precoLista} onChange={(e) => setForm({ ...form, precoLista: +e.target.value })} /></div>
             <div><Label>Preço mínimo</Label><Input type="number" step="0.01" value={form.precoMinimo} onChange={(e) => setForm({ ...form, precoMinimo: +e.target.value })} /></div>

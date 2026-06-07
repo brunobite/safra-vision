@@ -49,6 +49,31 @@ export const PRODUCT_IMPORT_HEADERS = [
   "observacoes",
 ];
 
+
+export const PRODUCT_STANDARD_UNITS = [
+  "LT",
+  "L",
+  "ML",
+  "GL",
+  "GAL",
+  "KG",
+  "G",
+  "TON",
+  "SC",
+  "UN",
+  "CX",
+  "BD",
+  "DOSE",
+  "PACOTE",
+  "KG/HA",
+  "L/HA",
+  "ML/HA",
+  "G/HA",
+] as const;
+
+export const normalizeProductUnit = (value: unknown) => String(value ?? "").trim().toUpperCase();
+export const isStandardProductUnit = (value: unknown) => PRODUCT_STANDARD_UNITS.includes(normalizeProductUnit(value) as (typeof PRODUCT_STANDARD_UNITS)[number]);
+
 export const PRODUCT_IMPORT_EXAMPLES: Record<string, string>[] = [
   {
     codigo: "ADJ-001",
@@ -244,8 +269,8 @@ function validateRow(entity: ImportEntity, row: Record<string, unknown>): string
     if (hasValue(row[k]) && parseNumber(row[k]) === undefined) errs.push(`Número inválido: ${k}`);
   });
   if (entity === "produtos") {
-    const unidade = String(row.unidade ?? "").trim().toUpperCase();
-    if (unidade && !["LT", "KG", "TON", "GAL", "BD"].includes(unidade)) errs.push("Unidade inválida");
+    const unidade = normalizeProductUnit(row.unidade);
+    if (unidade) row.unidade = unidade;
     if (hasValue(row.controlaEstoque) && parseBoolean(row.controlaEstoque) === undefined) errs.push("Controle de estoque inválido");
     const controlaEstoque = parseBoolean(row.controlaEstoque) ?? Boolean(hasValue(row.estoqueAtual) || hasValue(row.estoqueReservado) || hasValue(row.localEstoque));
     if (controlaEstoque) {
@@ -266,6 +291,8 @@ function warnRow(entity: ImportEntity, row: Record<string, unknown>, categoriasC
     const precoVenda = parseNumber(row.precoVenda ?? row.precoLista);
     const precoMinimo = parseNumber(row.precoMinimo);
     const custo = parseNumber(row.custo) ?? 0;
+    const unidade = normalizeProductUnit(row.unidade);
+    if (unidade && !isStandardProductUnit(unidade)) warnings.push(`Nova unidade detectada: ${unidade}. Revise antes de importar.`);
     if (precoVenda === undefined) warnings.push("Produto sem preço; será importado com preço 0.");
     if (!hasValue(row.precoMinimo)) warnings.push("Preço mínimo vazio; será importado com preço mínimo 0.");
     const precoMinimoEfetivo = hasValue(row.precoMinimo) ? precoMinimo : 0;
@@ -310,7 +337,7 @@ function normalizeEntityRow(entity: ImportEntity, n: Record<string, unknown>): u
     const custo = parseNumber(n.custo) ?? 0;
     const margem = parseNumber(n.margem) ?? (precoLista > 0 ? ((precoLista - custo) / precoLista) * 100 : undefined);
     const now = new Date().toISOString();
-    return { id, codigo: String(n.codigo || ""), sku: String(n.sku || ""), nome: String(n.nome || ""), categoria: normalizarCategoriaComercial(n.categoria || "Outros"), unidade: String(n.unidade || "KG").toUpperCase(), fornecedor: String(n.fornecedor || ""), marca: String(n.marca || ""), precoLista, precoMinimo: parseNumber(n.precoMinimo) ?? 0, custo, margem, controlaEstoque, estoqueAtual, estoqueReservado, localEstoque: controlaEstoque ? String(n.localEstoque || "") : "", ativo: statusToActive(n.status, n.ativo), observacoes: String(n.observacoes || ""), ultimaAtualizacao: now, createdAt: now, updatedAt: now } as Produto;
+    return { id, codigo: String(n.codigo || ""), sku: String(n.sku || ""), nome: String(n.nome || ""), categoria: normalizarCategoriaComercial(n.categoria || "Outros"), unidade: normalizeProductUnit(n.unidade || "KG"), fornecedor: String(n.fornecedor || ""), marca: String(n.marca || ""), precoLista, precoMinimo: parseNumber(n.precoMinimo) ?? 0, custo, margem, controlaEstoque, estoqueAtual, estoqueReservado, localEstoque: controlaEstoque ? String(n.localEstoque || "") : "", ativo: statusToActive(n.status, n.ativo), observacoes: String(n.observacoes || ""), ultimaAtualizacao: now, createdAt: now, updatedAt: now } as Produto;
   }
   if (entity === "empresas") return { id, nomeFantasia: String(n.nomeFantasia || ""), razaoSocial: String(n.razaoSocial || ""), cnpj: String(n.cnpj || ""), inscricaoEstadual: String(n.inscricaoEstadual || ""), endereco: String(n.endereco || ""), cidadeUf: String(n.cidadeUf || ""), telefone: String(n.telefone || ""), email: String(n.email || ""), consultorPadrao: String(n.consultorPadrao || ""), observacoesComerciaisPadrao: String(n.observacoesComerciaisPadrao || ""), ativa: parseBoolean(n.ativa) ?? true, padrao: parseBoolean(n.padrao) ?? false, logoDataUrl: "" } as Empresa;
   if (entity === "formasPagamento") return { id, nome: String(n.nome || ""), ativo: parseBoolean(n.ativo) ?? true, padrao: parseBoolean(n.padrao) ?? false } as FormaPagamento;

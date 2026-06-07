@@ -2,7 +2,7 @@ import { OrcamentoItem, Produto, UnidadeDose } from "@/types";
 
 export const DOSE_UNIDADES: UnidadeDose[] = ["L/ha", "mL/ha", "kg/ha", "g/ha", "ton/ha", "un/ha"];
 
-const BASE_VOLUME_LT: Record<Produto["unidade"], number> = { LT: 1, GAL: 5, BD: 20, KG: 0, TON: 0 };
+const BASE_VOLUME_LT: Record<string, number> = { LT: 1, L: 1, ML: 0.001, GAL: 5, GL: 5, BD: 20, KG: 0, G: 0, TON: 0 };
 
 const round = (value: number, digits = 6) => Number(value.toFixed(digits));
 
@@ -18,7 +18,7 @@ export function calcularQuantidadeComercial(unidadeProduto: Produto["unidade"], 
       const quantidadeComercial = round(litrosNecessarios);
       return { quantidadeComercial, necessidadeTecnica: round(litrosNecessarios), volumeComercial: quantidadeComercial, unidadeBase: "L", precoBaseDivisor: 1, resumo: `${quantidadeComercial.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} L necessários` };
     }
-    const porVasilhame = BASE_VOLUME_LT[unidadeProduto];
+    const porVasilhame = BASE_VOLUME_LT[unidadeProduto] ?? 1;
     const quantidadeComercial = Math.ceil(Math.max(0, litrosNecessarios) / porVasilhame);
     const volumeComercial = quantidadeComercial * porVasilhame;
     return { quantidadeComercial, necessidadeTecnica: round(litrosNecessarios), volumeComercial, unidadeBase: "L", precoBaseDivisor: porVasilhame, resumo: `${round(litrosNecessarios).toLocaleString("pt-BR", { maximumFractionDigits: 2 })} L necessários → ${quantidadeComercial} ${unidadeProduto} (${volumeComercial.toLocaleString("pt-BR")} L comerciais)` };
