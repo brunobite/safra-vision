@@ -28,7 +28,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { GOOGLE_CALENDAR_OFFLINE_MANUAL_SYNC_MESSAGE, GOOGLE_CALENDAR_OFFLINE_SYNC_TOAST, buildAgendaItemIcs, buildCalendarEventFromAgendaItem, ensureGoogleCalendarAccess, getGoogleCalendarBackendStatus, getGoogleCalendarClientId, isGoogleCalendarOffline, isGoogleCalendarPreferenceEnabled, metadataAfterGoogleCalendarDelete, metadataAfterGoogleCalendarError, metadataAfterGoogleCalendarOfflinePending, metadataAfterGoogleCalendarReschedule, metadataAfterGoogleCalendarSuccess, setGoogleCalendarPreferenceEnabled, upsertGoogleCalendarEventForAgendaItem, upsertGoogleCalendarEventViaBackend, isGoogleCalendarPendingActionEligible } from "@/lib/googleCalendar";
+import { GOOGLE_CALENDAR_OFFLINE_MANUAL_SYNC_MESSAGE, GOOGLE_CALENDAR_OFFLINE_SYNC_TOAST, buildAgendaItemIcs, buildCalendarEventFromAgendaItem, ensureGoogleCalendarAccess, getGoogleCalendarBackendStatus, getGoogleCalendarClientId, isGoogleCalendarOffline, isGoogleCalendarPreferenceEnabled, metadataAfterGoogleCalendarDelete, metadataAfterGoogleCalendarError, metadataAfterGoogleCalendarOfflinePending, metadataAfterGoogleCalendarReschedule, metadataAfterGoogleCalendarSuccess, setGoogleCalendarPreferenceEnabled, upsertGoogleCalendarEventForAgendaItem, upsertGoogleCalendarEventViaBackend, isGoogleCalendarPendingActionEligible, isGoogleCalendarEventNotFoundError } from "@/lib/googleCalendar";
 
 const TIPOS: TipoProximaAcao[] = ["Visita", "Ligação", "WhatsApp", "Reunião", "Follow-up", "Enviar orçamento", "Cobrar retorno", "Pós-venda", "Renovação", "Outro"];
 const STATUS: StatusProximaAcao[] = ["Pendente", "Em andamento", "Realizada", "Reagendada", "Cancelada", "Concluída"];
@@ -588,7 +588,7 @@ export default function Agenda() {
     } catch (error) {
       const metadata = metadataAfterGoogleCalendarError(error);
       setProximasAcoes((atuais) => atuais.map((item) => item.id === acao.id ? { ...item, ...metadata, googleCalendarSyncStatus: "error" } : item));
-      toast.error(mensagemErro);
+      toast.error(metadata.googleCalendarLastError || mensagemErro);
     }
   };
 
@@ -618,6 +618,27 @@ export default function Agenda() {
     const metadata = metadataAfterGoogleCalendarDelete();
     setProximasAcoes((atuais) => atuais.map((acao) => acao.id === acaoId ? { ...acao, ...metadata, googleCalendarSyncStatus: "not_required" } : acao));
     toast.success("Vínculo com Google Calendar removido do Safra Vision.");
+  };
+
+  const removerVinculoECriarNovoEventoGoogleCalendar = async (acaoId?: string) => {
+    if (!acaoId) return;
+    if (isGoogleCalendarOffline()) {
+      setProximasAcoes((atuais) => atuais.map((acao) => acao.id === acaoId ? { ...acao, googleCalendarEventId: undefined, googleCalendarHtmlLink: undefined, ...metadataAfterGoogleCalendarOfflinePending({}), googleCalendarSyncStatus: "pending" } : acao));
+      toast.error(GOOGLE_CALENDAR_OFFLINE_MANUAL_SYNC_MESSAGE);
+      return;
+    }
+    try {
+      const payload = { ...agendaItemGooglePayload(acaoId), googleCalendarEventId: undefined, googleCalendarHtmlLink: undefined };
+      buildCalendarEventFromAgendaItem(payload);
+      const event = await executarUpsertGoogleCalendar(payload);
+      const metadata = metadataAfterGoogleCalendarSuccess(event, event.calendarId || payload.googleCalendarCalendarId);
+      setProximasAcoes((atuais) => atuais.map((acao) => acao.id === acaoId ? { ...acao, ...metadata, googleCalendarSyncStatus: "synced" } : acao));
+      toast.success("Vínculo antigo removido e novo evento criado no Google Calendar.");
+    } catch (error) {
+      const metadata = metadataAfterGoogleCalendarError(error);
+      setProximasAcoes((atuais) => atuais.map((acao) => acao.id === acaoId ? { ...acao, ...metadata, googleCalendarSyncStatus: "error" } : acao));
+      toast.error(metadata.googleCalendarLastError || "Erro ao recriar evento no Google Calendar.");
+    }
   };
 
   const exportarIcsGoogleCalendar = (acaoId?: string) => {
@@ -755,6 +776,7 @@ export default function Agenda() {
                 const semData = !item.data;
                 const googleCalendarDisponivel = googleCalendarBackendConnected || Boolean(getGoogleCalendarClientId());
                 const labelAcao = statusGoogle === "error" ? "Tentar novamente" : acao?.googleCalendarEventId ? "Atualizar no Google Calendar" : "Enviar para Google Calendar";
+                const eventoGoogleNaoEncontrado = Boolean(acao?.googleCalendarEventId && isGoogleCalendarEventNotFoundError(acao.googleCalendarLastError));
                 return <div className="mt-3 rounded-lg border border-dashed p-3">
                   <div className="mb-2 flex flex-wrap items-center gap-2">
                     <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Google Calendar</span>
@@ -764,6 +786,7 @@ export default function Agenda() {
                   <div className="flex flex-wrap items-center gap-2">
                     <Button size="sm" variant={statusGoogle === "error" ? "default" : "outline"} disabled={semData} title={semData ? "Defina um agendamento antes de enviar ao Google Calendar." : undefined} onClick={() => sincronizarGoogleCalendar(item.sourceId)}>{labelAcao}</Button>
                     {acao?.googleCalendarHtmlLink && <Button size="sm" variant="outline" onClick={() => window.open(acao.googleCalendarHtmlLink, "_blank", "noopener,noreferrer")}><ExternalLink className="mr-1 h-3 w-3" />Abrir no Google Calendar</Button>}
+                    {eventoGoogleNaoEncontrado && <Button size="sm" variant="secondary" disabled={semData} onClick={() => removerVinculoECriarNovoEventoGoogleCalendar(item.sourceId)}>Remover vínculo e criar novo evento</Button>}
                     {acao?.googleCalendarEventId && <Button size="sm" variant="ghost" onClick={() => removerVinculoGoogleCalendar(item.sourceId)}>Remover vínculo</Button>}
                     {!googleCalendarDisponivel && <Button size="sm" variant="secondary" disabled={semData} onClick={() => exportarIcsGoogleCalendar(item.sourceId)}>Exportar .ics</Button>}
                     {semData && <span className="text-xs text-muted-foreground">Defina um agendamento antes de enviar ao Google Calendar.</span>}

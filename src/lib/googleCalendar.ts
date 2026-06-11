@@ -147,6 +147,75 @@ function friendlyGoogleError(error: unknown): string {
   return "Erro ao comunicar com o Google Calendar.";
 }
 
+type SupabaseFunctionErrorWithContext = Error & {
+  context?: {
+    json?: () => Promise<unknown>;
+    text?: () => Promise<string>;
+    clone?: () => SupabaseFunctionErrorWithContext["context"];
+  };
+};
+
+function extractErrorFromPayload(payload: unknown): string | null {
+  if (!payload) return null;
+  if (typeof payload === "string") return payload.trim() || null;
+  if (typeof payload !== "object") return null;
+  const data = payload as { error?: unknown; message?: unknown };
+  if (typeof data.error === "string" && data.error.trim()) return data.error;
+  if (data.error && typeof data.error === "object") {
+    const nested = data.error as { message?: unknown; error_description?: unknown; status?: unknown };
+    if (typeof nested.message === "string" && nested.message.trim()) return nested.message;
+    if (typeof nested.error_description === "string" && nested.error_description.trim()) return nested.error_description;
+    if (typeof nested.status === "string" && nested.status.trim()) return nested.status;
+  }
+  if (typeof data.message === "string" && data.message.trim()) return data.message;
+  return null;
+}
+
+async function readSupabaseFunctionErrorMessage(error: unknown): Promise<string> {
+  const fallback = friendlyGoogleError(error);
+  const context = error && typeof error === "object" && "context" in error
+    ? (error as SupabaseFunctionErrorWithContext).context
+    : undefined;
+  if (!context) return fallback;
+
+  const jsonContext = typeof context.clone === "function" ? context.clone() : context;
+  if (typeof jsonContext?.json === "function") {
+    try {
+      const message = extractErrorFromPayload(await jsonContext.json());
+      if (message) return message;
+    } catch {
+      // Continua tentando texto bruto abaixo.
+    }
+  }
+
+  const textContext = typeof context.clone === "function" ? context.clone() : context;
+  if (typeof textContext?.text === "function") {
+    try {
+      const text = (await textContext.text()).trim();
+      if (!text) return fallback;
+      try {
+        const message = extractErrorFromPayload(JSON.parse(text));
+        if (message) return message;
+      } catch {
+        // O corpo não é JSON; use o texto bruto.
+      }
+      return text;
+    } catch {
+      return fallback;
+    }
+  }
+
+  return fallback;
+}
+
+export function isGoogleCalendarEventNotFoundError(error: unknown): boolean {
+  const normalized = friendlyGoogleError(error).toLowerCase();
+  return normalized.includes("evento não encontrado no google calendar")
+    || normalized.includes("evento do google calendar não encontrado")
+    || normalized.includes("not found")
+    || normalized.includes("404");
+}
+
 function markGoogleCalendarAuthError(message: string): void {
   accessToken = null;
   accessTokenExpiresAt = 0;
@@ -406,7 +475,7 @@ async function invokeGoogleCalendarBackend<T>(functionName: string, body?: unkno
     body,
     headers: { Authorization: `Bearer ${accessTokenSupabase}` },
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(await readSupabaseFunctionErrorMessage(error));
   const payload = data as (T & { error?: string }) | null;
   if (payload?.error) throw new Error(payload.error);
   if (!payload) throw new Error("Resposta vazia do backend Google Calendar.");
