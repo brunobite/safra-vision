@@ -44,6 +44,7 @@ export interface ProximaAcao {
   itensEstimados?: OportunidadeItemEstimado[];
   segmento?: string;
   responsavel?: string;
+  responsavelId?: string;
   lancamentoId?: string;
   proximaAcaoId?: string;
   dataConclusao?: string;
@@ -105,6 +106,7 @@ export interface Cliente {
   potencialCalculado?: number;
   inativoManual?: boolean;
   vendedor?: string;
+  vendedorId?: string;
   produtosInteresse?: string[];
   documento?: string;
   inscricaoEstadual?: string;
@@ -138,6 +140,7 @@ export interface RelatorioVisita {
   fazenda?: string;
   cidade?: string;
   vendedor?: string;
+  vendedorId?: string;
   dataVisita: string;
   horario?: string;
   tipoAcao: TipoProximaAcao | TipoLancamento | string;
@@ -196,6 +199,7 @@ export interface Lancamento {
   observacao?: string;
   oQueFoiRealizado?: string;
   vendedor?: string;
+  vendedorId?: string;
   geraOportunidade?: boolean;
   negocioId?: string;
   oportunidadeId?: string;
@@ -225,6 +229,7 @@ export interface Negocio {
   nome?: string;
   clienteId: string;
   vendedor: string;
+  vendedorId?: string;
   origem: OrigemNegocio;
   produtos: string[]; // ids
   categoria: CategoriaProduto;
@@ -243,6 +248,7 @@ export interface Negocio {
   itensEstimados?: OportunidadeItemEstimado[];
   segmento?: string;
   responsavel?: string;
+  responsavelId?: string;
   proximaAcaoId?: string;
   dataPrevistaFechamento?: string;
   dataDecisao?: string;
@@ -271,6 +277,7 @@ export interface OportunidadeComercial {
   clienteId: string;
   clienteNome?: string;
   vendedor?: string;
+  vendedorId?: string;
   origem: OrigemOportunidade;
   origemTipo?: string;
   segmento?: string;
@@ -305,6 +312,7 @@ export interface HistoricoFunil {
   etapaNova: EtapaOportunidade | string;
   dataMovimento: string;
   vendedor?: string;
+  vendedorId?: string;
   observacao?: string;
   createdAt: string;
 }
@@ -331,6 +339,7 @@ export interface MetaPessoal {
 export interface MetaVendedor {
   id: string;
   vendedor: string;
+  vendedorId?: string;
   mes?: string;
   meta?: number;
   metaManual?: number;
@@ -398,6 +407,7 @@ export interface Produto {
   itensEstimados?: OportunidadeItemEstimado[];
   segmento?: string;
   responsavel?: string;
+  responsavelId?: string;
   proximaAcaoId?: string;
   dataPrevistaFechamento?: string;
   dataDecisao?: string;
@@ -480,6 +490,7 @@ export interface OrcamentoItem {
   itensEstimados?: OportunidadeItemEstimado[];
   segmento?: string;
   responsavel?: string;
+  responsavelId?: string;
   proximaAcaoId?: string;
   dataPrevistaFechamento?: string;
   dataDecisao?: string;
@@ -500,6 +511,7 @@ export interface Orcamento {
   negocioId?: string;
   oportunidadeId?: string;
   vendedor: string;
+  vendedorId?: string;
   data: string;
   validade?: string;
   status: OrcamentoStatus;
@@ -515,6 +527,7 @@ export interface Orcamento {
   itensEstimados?: OportunidadeItemEstimado[];
   segmento?: string;
   responsavel?: string;
+  responsavelId?: string;
   proximaAcaoId?: string;
   dataPrevistaFechamento?: string;
   dataDecisao?: string;

@@ -101,7 +101,7 @@ export function GlobalFilters() {
               <div><Label className="text-xs">Vendedor</Label>
                 <Select value={draft.vendedor || ALL} onValueChange={v => upd("vendedor", v)}>
                   <SelectTrigger><SelectValue placeholder="Todos" /></SelectTrigger>
-                  <SelectContent><SelectItem value={ALL}>Todos</SelectItem>{vendedores.map(v => <SelectItem key={v.id} value={v.nome}>{v.nome}</SelectItem>)}</SelectContent>
+                  <SelectContent><SelectItem value={ALL}>Todos</SelectItem>{vendedores.map(v => <SelectItem key={v.id} value={v.id}>{v.nome}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
             </div>
