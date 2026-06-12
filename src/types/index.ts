@@ -102,7 +102,7 @@ export interface Cliente {
   motivoAbc?: string;
   frequenciaRetorno: string;
   retorno: string;
-  potencialCalculado?: boolean;
+  potencialCalculado?: number;
   inativoManual?: boolean;
   vendedor?: string;
   produtosInteresse?: string[];

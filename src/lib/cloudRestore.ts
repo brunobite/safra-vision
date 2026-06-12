@@ -2,6 +2,7 @@ import type { Session } from "@supabase/supabase-js";
 import { openAppDb, promisifyRequest, type StoreName } from "@/lib/db";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 import { getPendingSyncItems } from "@/lib/syncQueue";
+import { normalizeClientesForPersistence } from "@/lib/clientNormalization";
 import {
   calculateStoreComparison,
   LOCAL_TO_REMOTE_TABLE,
@@ -119,6 +120,7 @@ export function buildAccountSnapshotFromRemoteRows(rowsByStore: Partial<Record<S
       .map(normalizePayload)
       .filter((payload): payload is Record<string, unknown> => Boolean(payload));
   });
+  snapshot.clientes = normalizeClientesForPersistence(snapshot.clientes as Record<string, unknown>[]);
   return snapshot;
 }
 
@@ -220,6 +222,7 @@ export async function restoreAccountSnapshotToLocal(snapshot: AccountSnapshot): 
   };
   const sanitizedSnapshot: AccountSnapshot = {
     ...snapshot,
+    clientes: normalizeClientesForPersistence((snapshot.clientes ?? []) as Record<string, unknown>[]),
     appConfig: [buildRestoredAppConfig(snapshot, syncMeta)],
   };
 

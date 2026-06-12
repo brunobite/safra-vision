@@ -9,6 +9,7 @@ import {
   markSyncItemSynced,
   type SyncQueueItem,
 } from "@/lib/syncQueue";
+import { normalizeClienteForPersistence, normalizeClientesForPersistence } from "@/lib/clientNormalization";
 
 type AccessStatus = "pending" | "active" | "blocked" | "inactive";
 
@@ -227,7 +228,7 @@ async function uploadQueueItem(item: SyncQueueItem, context: SyncContext) {
     const { error } = await client.from(table).upsert({
       id: item.entityId,
       user_id: userId,
-      payload: item.payload,
+      payload: item.store === "clientes" ? normalizeClienteForPersistence(item.payload as Record<string, unknown>) : item.payload,
       updated_at: timestamp,
       deleted_at: null,
     }, { onConflict: "user_id,id" });
@@ -323,7 +324,7 @@ export async function enqueueFullLocalSnapshotForSync() {
     }));
 
     await Promise.all(snapshot.flatMap(([store, records]) => (
-      records.map((record) => enqueueSyncItem({ store, entityId: record.id, operation: "upsert", payload: record }))
+      records.map((record) => enqueueSyncItem({ store, entityId: record.id, operation: "upsert", payload: store === "clientes" ? normalizeClienteForPersistence(record as Record<string, unknown>) : record }))
     )));
   } finally {
     db.close();
@@ -434,7 +435,7 @@ export async function fetchRemoteSnapshot(context: SyncContext): Promise<RemoteS
   const entries = await Promise.all(
     SYNCABLE_STORES.map(async (store) => {
       const rows = await fetchRows(LOCAL_TO_REMOTE_TABLE[store], context, false);
-      return [store, rows.map((row) => row.payload)] as const;
+      return [store, store === "clientes" ? normalizeClientesForPersistence(rows.map((row) => ({ id: row.id, ...((row.payload && typeof row.payload === "object" && !Array.isArray(row.payload)) ? row.payload as Record<string, unknown> : {}) }))) : rows.map((row) => row.payload)] as const;
     }),
   );
   return Object.fromEntries(entries) as RemoteSnapshot;
@@ -444,7 +445,8 @@ async function readLocalSyncableStore(store: SyncableStore) {
   const db = await openAppDb();
   try {
     const tx = db.transaction(store as StoreName, "readonly");
-    return (await promisifyRequest(tx.objectStore(store).getAll())) as Array<{ id: string }>;
+    const records = (await promisifyRequest(tx.objectStore(store).getAll())) as Array<{ id: string }>;
+    return store === "clientes" ? normalizeClientesForPersistence(records as Record<string, unknown>[]) as Array<{ id: string }> : records;
   } finally {
     db.close();
   }
