@@ -32,6 +32,7 @@ const routePermissions: Record<string, UserRole[]> = {
   "/eventos": ["administrador", "admin", "gestor", "vendedor", "visualizador", "consulta"],
   "/relatorios": ["administrador", "admin", "gestor", "vendedor", "visualizador", "consulta"],
   "/configuracoes": ["administrador", "admin"],
+  "/meu-acesso": ["administrador", "admin", "gestor", "vendedor", "visualizador", "consulta", "operacional", "user"],
 };
 
 export const normalizeRole = (role: UserRole | string | null | undefined): UserRole => {
@@ -91,4 +92,17 @@ export function canManageUsers(role: UserRole | string | null | undefined): bool
 export function isOwnSellerData(vendedorVinculado: string | null | undefined, candidate: string | null | undefined): boolean {
   if (!vendedorVinculado) return true;
   return (candidate ?? "").trim().toLowerCase() === vendedorVinculado.trim().toLowerCase();
+}
+
+export function isOwnSellerDataById(
+  vendedorIdVinculado: string | null | undefined,
+  vendedorNomeVinculado: string | null | undefined,
+  candidateVendedorId: string | null | undefined,
+  candidateVendedorNome: string | null | undefined,
+): boolean {
+  if (vendedorIdVinculado) {
+    if (candidateVendedorId) return candidateVendedorId === vendedorIdVinculado;
+    return isOwnSellerData(vendedorNomeVinculado, candidateVendedorNome);
+  }
+  return isOwnSellerData(vendedorNomeVinculado, candidateVendedorNome);
 }

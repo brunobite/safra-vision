@@ -17,6 +17,7 @@ import {
   ClipboardList,
   Menu,
   Plus,
+  UserRound,
 } from "lucide-react";
 import {
   Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel,
@@ -52,6 +53,7 @@ const items = [
   { group: "Planejamento", title: "Prioridades P1", url: "/prioridades", icon: Star },
   { group: "Planejamento", title: "Eventos", url: "/eventos", icon: CalendarDays },
   { group: "Análises", title: "Relatórios", url: "/relatorios", icon: FileBarChart },
+  { group: "Sistema", title: "Meu acesso", url: "/meu-acesso", icon: UserRound },
   { group: "Sistema", title: "Configurações", url: "/configuracoes", icon: Settings },
 ];
 

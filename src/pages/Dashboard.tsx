@@ -14,6 +14,7 @@ import { Progress } from "@/components/ui/progress";
 import { ResponsiveContainer, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid } from "recharts";
 import type { Cliente, OportunidadeComercial, OrcamentoStatus, StatusProximaAcao } from "@/types";
 import { getCategoriasComerciais } from "@/utils/commercialCategories";
+import { isOwnSellerDataById } from "@/lib/permissions";
 
 const ALL = "__all__";
 const OPEN_OPPORTUNITY_STAGES = [
@@ -139,24 +140,26 @@ export default function Dashboard() {
   const categorias = useMemo(() => getCategoriasComerciais({ produtos, metasCategoria, ticketsMedios, orcamentos, oportunidades, negocios }), [metasCategoria, negocios, oportunidades, orcamentos, produtos, ticketsMedios]);
 
   const clienteMap = useMemo(() => new Map(clientes.map((cliente) => [cliente.id, cliente])), [clientes]);
+  const vendedorNomePorId = useMemo(() => new Map(vendedores.map((vendedor) => [vendedor.id, vendedor.nome])), [vendedores]);
+  const vendedorFiltroNome = filters.vendedor ? vendedorNomePorId.get(filters.vendedor) || filters.vendedor : filters.vendedor;
 
   const scoped = useMemo(() => {
     const matchesCliente = (clienteId?: string) => !filters.clienteId || clienteId === filters.clienteId;
-    const matchesCarteira = (clienteId?: string, vendedor?: string) => {
+    const matchesCarteira = (clienteId?: string, vendedor?: string, vendedorId?: string) => {
       const cliente = clienteId ? clienteMap.get(clienteId) : undefined;
       if (!matchesCliente(clienteId)) return false;
       if (filters.rota && cliente?.rota !== filters.rota) return false;
-      if (filters.vendedor && (vendedor || cliente?.vendedor) !== filters.vendedor) return false;
+      if (filters.vendedor && !isOwnSellerDataById(filters.vendedor, vendedorFiltroNome, vendedorId || cliente?.vendedorId, vendedor || cliente?.vendedor)) return false;
       return true;
     };
 
-    const clientesFiltrados = clientes.filter((cliente) => matchesCarteira(cliente.id, cliente.vendedor));
-    const lancamentosFiltrados = lancamentos.filter((lancamento) => dateInPeriod(lancamento.data, filters.dataInicial, filters.dataFinal) && matchesCarteira(lancamento.clienteId, lancamento.vendedor));
-    const relatoriosFiltrados = relatoriosVisita.filter((relatorio) => dateInPeriod(relatorio.dataVisita, filters.dataInicial, filters.dataFinal) && matchesCarteira(relatorio.clienteId, relatorio.vendedor));
+    const clientesFiltrados = clientes.filter((cliente) => matchesCarteira(cliente.id, cliente.vendedor, cliente.vendedorId));
+    const lancamentosFiltrados = lancamentos.filter((lancamento) => dateInPeriod(lancamento.data, filters.dataInicial, filters.dataFinal) && matchesCarteira(lancamento.clienteId, lancamento.vendedor, lancamento.vendedorId));
+    const relatoriosFiltrados = relatoriosVisita.filter((relatorio) => dateInPeriod(relatorio.dataVisita, filters.dataInicial, filters.dataFinal) && matchesCarteira(relatorio.clienteId, relatorio.vendedor, relatorio.vendedorId));
     const oportunidadesFiltradas = oportunidades.filter((oportunidade) => {
       const dataReferencia = oportunidade.updatedAt || oportunidade.createdAt || oportunidade.previsaoFechamento;
       if (!dateInPeriod(dataReferencia, filters.dataInicial, filters.dataFinal) && !dateInPeriod(oportunidade.previsaoFechamento, filters.dataInicial, filters.dataFinal)) return false;
-      if (!matchesCarteira(oportunidade.clienteId, oportunidade.vendedor || oportunidade.responsavel)) return false;
+      if (!matchesCarteira(oportunidade.clienteId, oportunidade.vendedor || oportunidade.responsavel, oportunidade.vendedorId || oportunidade.responsavelId)) return false;
       if (filters.etapa && oportunidade.etapa !== filters.etapa) return false;
       if (filters.statusOportunidade === "aberta" && !isOpenOpportunity(oportunidade)) return false;
       if (filters.statusOportunidade === "ganha" && oportunidade.etapa !== "Ganha") return false;
@@ -165,16 +168,16 @@ export default function Dashboard() {
       if (filters.categoria && oportunidade.segmento !== filters.categoria && !(oportunidade.itensEstimados || []).some((item) => item.categoria === filters.categoria)) return false;
       return true;
     });
-    const orcamentosFiltrados = orcamentos.filter((orcamento) => dateInPeriod(orcamento.updatedAt || orcamento.data, filters.dataInicial, filters.dataFinal) && matchesCarteira(orcamento.clienteId, orcamento.vendedor) && (!filters.categoria || orcamento.itens?.some((item) => item.categoria === filters.categoria)));
-    const negociosFiltrados = negocios.filter((negocio) => dateInPeriod(negocio.ultimaAtualizacao || negocio.dataCriacao || negocio.previsaoFechamento, filters.dataInicial, filters.dataFinal) && matchesCarteira(negocio.clienteId, negocio.vendedor));
+    const orcamentosFiltrados = orcamentos.filter((orcamento) => dateInPeriod(orcamento.updatedAt || orcamento.data, filters.dataInicial, filters.dataFinal) && matchesCarteira(orcamento.clienteId, orcamento.vendedor || orcamento.responsavel, orcamento.vendedorId || orcamento.responsavelId) && (!filters.categoria || orcamento.itens?.some((item) => item.categoria === filters.categoria)));
+    const negociosFiltrados = negocios.filter((negocio) => dateInPeriod(negocio.ultimaAtualizacao || negocio.dataCriacao || negocio.previsaoFechamento, filters.dataInicial, filters.dataFinal) && matchesCarteira(negocio.clienteId, negocio.vendedor, negocio.vendedorId));
     const acoesFiltradas = proximasAcoes.filter((acao) => {
-      if (!matchesCarteira(acao.clienteId, acao.responsavel)) return false;
+      if (!matchesCarteira(acao.clienteId, acao.responsavel, acao.responsavelId)) return false;
       if (filters.statusAcao && acao.status !== filters.statusAcao) return false;
       return true;
     });
 
     return { clientesFiltrados, lancamentosFiltrados, relatoriosFiltrados, oportunidadesFiltradas, orcamentosFiltrados, negociosFiltrados, acoesFiltradas };
-  }, [clienteMap, clientes, filters, lancamentos, negocios, oportunidades, orcamentos, proximasAcoes, relatoriosVisita]);
+  }, [clienteMap, clientes, filters, lancamentos, negocios, oportunidades, orcamentos, proximasAcoes, relatoriosVisita, vendedorFiltroNome]);
 
   const dashboard = useMemo(() => {
     const clientesAtivos = scoped.clientesFiltrados.filter((cliente) => cliente.statusAtual !== "Inativo");
@@ -346,7 +349,7 @@ export default function Dashboard() {
           <div id="dashboard-filters-panel" className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
             <div><Label className="text-xs">Período inicial</Label><Input type="date" value={filters.dataInicial} onChange={(e) => updateFilter("dataInicial", e.target.value)} /></div>
             <div><Label className="text-xs">Período final</Label><Input type="date" value={filters.dataFinal} onChange={(e) => updateFilter("dataFinal", e.target.value)} /></div>
-            <div><Label className="text-xs">Vendedor</Label><Select value={filters.vendedor || ALL} onValueChange={(value) => updateFilter("vendedor", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todos</SelectItem>{vendedores.map((vendedor) => <SelectItem key={vendedor.id} value={vendedor.nome}>{vendedor.nome}</SelectItem>)}</SelectContent></Select></div>
+            <div><Label className="text-xs">Vendedor</Label><Select value={filters.vendedor || ALL} onValueChange={(value) => updateFilter("vendedor", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todos</SelectItem>{vendedores.map((vendedor) => <SelectItem key={vendedor.id} value={vendedor.id}>{vendedor.nome}</SelectItem>)}</SelectContent></Select></div>
             <div><Label className="text-xs">Cliente</Label><Select value={filters.clienteId || ALL} onValueChange={(value) => updateFilter("clienteId", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todos</SelectItem>{clientes.map((cliente) => <SelectItem key={cliente.id} value={cliente.id}>{cliente.nome}</SelectItem>)}</SelectContent></Select></div>
             <div><Label className="text-xs">Rota</Label><Select value={filters.rota || ALL} onValueChange={(value) => updateFilter("rota", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todas</SelectItem>{rotas.map((rota) => <SelectItem key={rota} value={rota}>{rota}</SelectItem>)}</SelectContent></Select></div>
             <div><Label className="text-xs">Etapa do funil</Label><Select value={filters.etapa || ALL} onValueChange={(value) => updateFilter("etapa", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todas</SelectItem>{etapas.map((etapa) => <SelectItem key={etapa} value={etapa}>{etapa}</SelectItem>)}</SelectContent></Select></div>

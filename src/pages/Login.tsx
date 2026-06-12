@@ -32,12 +32,12 @@ export default function Login() {
 
   const statusMessage =
     (accessStatus === "pendente" || accessStatus === "pending")
-      ? "Usuário aguardando liberação pelo administrador."
+      ? "Seu acesso está aguardando liberação pelo administrador da conta."
       : (accessStatus === "bloqueado" || accessStatus === "blocked")
-        ? "Acesso bloqueado. Procure um administrador."
+        ? "Seu acesso está inativo ou bloqueado. Contate o administrador."
         : (accessStatus === "ativo" || accessStatus === "active")
           ? "Acesso liberado ao app."
-          : "Usuário inativo. Procure um administrador.";
+          : "Seu acesso está inativo ou bloqueado. Contate o administrador.";
 
   const handleClearLocalSession = async () => {
     setLocalClearError(null);

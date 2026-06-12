@@ -11,7 +11,7 @@ import { runAccountSyncCheck, runAccountSyncNow, type AccountSyncStatus } from "
 import { addAccountSyncHistoryEvent, getHistoryStatusFromAccountSyncStatus, type AccountSyncHistoryEvent } from "@/lib/accountSyncUi";
 import { getFreshSupabaseAccessContext } from "@/lib/supabaseAccess";
 import { useAuth } from "@/store/AuthStore";
-import { isOwnSellerData, normalizeRole } from "@/lib/permissions";
+import { isOwnSellerDataById, normalizeRole } from "@/lib/permissions";
 import { calcularPotencialCliente } from "@/utils/businessRules";
 import { normalizeClientesForPersistence } from "@/lib/clientNormalization";
 
@@ -79,7 +79,7 @@ const defaultFilters: Filters = {
 };
 
 export function AppStoreProvider({ children }: { children: ReactNode }) {
-  const { session, accessStatus, loading: authLoading, role, vendedorNome } = useAuth();
+  const { session, accessStatus, loading: authLoading, role, vendedorNome, vendedorId } = useAuth();
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [lancamentos, setLancamentos] = useState<Lancamento[]>([]);
   const [metasEmpresa, setMetasEmpresa] = useState<MetaEmpresa[]>([]);
@@ -612,14 +612,17 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
 
   const normalizedRole = normalizeRole(role);
   const isSellerScope = normalizedRole === "vendedor";
-  const scopedClientes = useMemo(() => isSellerScope ? clientes.filter((cliente) => isOwnSellerData(vendedorNome, cliente.vendedor)) : clientes, [clientes, isSellerScope, vendedorNome]);
+  const sellerNameById = useMemo(() => new Map(vendedores.map((vendedor) => [vendedor.id, vendedor.nome])), [vendedores]);
+  const linkedSellerName = vendedorId ? sellerNameById.get(vendedorId) || vendedorNome : vendedorNome;
+  const selectedFilterSellerName = filters.vendedor ? sellerNameById.get(filters.vendedor) || filters.vendedor : filters.vendedor;
+  const scopedClientes = useMemo(() => isSellerScope ? clientes.filter((cliente) => isOwnSellerDataById(vendedorId, linkedSellerName, cliente.vendedorId, cliente.vendedor)) : clientes, [clientes, isSellerScope, vendedorId, linkedSellerName]);
   const scopedClienteIds = useMemo(() => new Set(scopedClientes.map((cliente) => cliente.id)), [scopedClientes]);
-  const scopedLancamentos = useMemo(() => isSellerScope ? lancamentos.filter((lancamento) => scopedClienteIds.has(lancamento.clienteId) || isOwnSellerData(vendedorNome, lancamento.vendedor)) : lancamentos, [isSellerScope, lancamentos, scopedClienteIds, vendedorNome]);
-  const scopedNegocios = useMemo(() => isSellerScope ? negocios.filter((negocio) => scopedClienteIds.has(negocio.clienteId) || isOwnSellerData(vendedorNome, negocio.vendedor)) : negocios, [isSellerScope, negocios, scopedClienteIds, vendedorNome]);
-  const scopedOportunidades = useMemo(() => isSellerScope ? oportunidades.filter((oportunidade) => scopedClienteIds.has(oportunidade.clienteId) || isOwnSellerData(vendedorNome, oportunidade.responsavel || oportunidade.vendedor)) : oportunidades, [isSellerScope, oportunidades, scopedClienteIds, vendedorNome]);
-  const scopedOrcamentos = useMemo(() => isSellerScope ? orcamentos.filter((orcamento) => scopedClienteIds.has(orcamento.clienteId) || isOwnSellerData(vendedorNome, orcamento.responsavel || orcamento.vendedor)) : orcamentos, [isSellerScope, orcamentos, scopedClienteIds, vendedorNome]);
-  const scopedProximasAcoes = useMemo(() => isSellerScope ? proximasAcoes.filter((acao) => (acao.clienteId && scopedClienteIds.has(acao.clienteId)) || isOwnSellerData(vendedorNome, acao.responsavel)) : proximasAcoes, [isSellerScope, proximasAcoes, scopedClienteIds, vendedorNome]);
-  const scopedRelatoriosVisita = useMemo(() => isSellerScope ? relatoriosVisita.filter((relatorio) => scopedClienteIds.has(relatorio.clienteId) || isOwnSellerData(vendedorNome, relatorio.vendedor)) : relatoriosVisita, [isSellerScope, relatoriosVisita, scopedClienteIds, vendedorNome]);
+  const scopedLancamentos = useMemo(() => isSellerScope ? lancamentos.filter((lancamento) => scopedClienteIds.has(lancamento.clienteId) || isOwnSellerDataById(vendedorId, linkedSellerName, lancamento.vendedorId, lancamento.vendedor)) : lancamentos, [isSellerScope, lancamentos, scopedClienteIds, vendedorId, linkedSellerName]);
+  const scopedNegocios = useMemo(() => isSellerScope ? negocios.filter((negocio) => scopedClienteIds.has(negocio.clienteId) || isOwnSellerDataById(vendedorId, linkedSellerName, negocio.vendedorId, negocio.vendedor)) : negocios, [isSellerScope, negocios, scopedClienteIds, vendedorId, linkedSellerName]);
+  const scopedOportunidades = useMemo(() => isSellerScope ? oportunidades.filter((oportunidade) => scopedClienteIds.has(oportunidade.clienteId) || isOwnSellerDataById(vendedorId, linkedSellerName, oportunidade.responsavelId || oportunidade.vendedorId, oportunidade.responsavel || oportunidade.vendedor)) : oportunidades, [isSellerScope, oportunidades, scopedClienteIds, vendedorId, linkedSellerName]);
+  const scopedOrcamentos = useMemo(() => isSellerScope ? orcamentos.filter((orcamento) => scopedClienteIds.has(orcamento.clienteId) || isOwnSellerDataById(vendedorId, linkedSellerName, orcamento.responsavelId || orcamento.vendedorId, orcamento.responsavel || orcamento.vendedor)) : orcamentos, [isSellerScope, orcamentos, scopedClienteIds, vendedorId, linkedSellerName]);
+  const scopedProximasAcoes = useMemo(() => isSellerScope ? proximasAcoes.filter((acao) => (acao.clienteId && scopedClienteIds.has(acao.clienteId)) || isOwnSellerDataById(vendedorId, linkedSellerName, acao.responsavelId, acao.responsavel)) : proximasAcoes, [isSellerScope, proximasAcoes, scopedClienteIds, vendedorId, linkedSellerName]);
+  const scopedRelatoriosVisita = useMemo(() => isSellerScope ? relatoriosVisita.filter((relatorio) => scopedClienteIds.has(relatorio.clienteId) || isOwnSellerDataById(vendedorId, linkedSellerName, relatorio.vendedorId, relatorio.vendedor)) : relatoriosVisita, [isSellerScope, relatoriosVisita, scopedClienteIds, vendedorId, linkedSellerName]);
 
   const cMap = useMemo(() => new Map(scopedClientes.map(c => [c.id, c])), [scopedClientes]);
   const pMap = useMemo(() => new Map(produtos.map(p => [p.id, p])), [produtos]);
@@ -634,9 +637,9 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     if (filters.rota && c?.rota !== filters.rota) return false;
     if (filters.status && l.status !== filters.status) return false;
     if (filters.frente && l.frente !== filters.frente) return false;
-    if (filters.vendedor && l.vendedor !== filters.vendedor) return false;
+    if (filters.vendedor && !isOwnSellerDataById(filters.vendedor, selectedFilterSellerName, l.vendedorId, l.vendedor)) return false;
     return true;
-  }), [scopedLancamentos, filters, cMap]);
+  }), [scopedLancamentos, filters, cMap, selectedFilterSellerName]);
 
   const filteredNegs = useMemo(() => scopedNegocios.filter(n => {
     const c = cMap.get(n.clienteId);
@@ -647,9 +650,9 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     if (filters.abc && c?.abc !== filters.abc) return false;
     if (filters.prioridade && c?.prioridade !== filters.prioridade) return false;
     if (filters.rota && c?.rota !== filters.rota) return false;
-    if (filters.vendedor && n.vendedor !== filters.vendedor) return false;
+    if (filters.vendedor && !isOwnSellerDataById(filters.vendedor, selectedFilterSellerName, n.vendedorId, n.vendedor)) return false;
     return true;
-  }), [scopedNegocios, filters, cMap]);
+  }), [scopedNegocios, filters, cMap, selectedFilterSellerName]);
 
   const filteredOportunidades = useMemo(() => scopedOportunidades.filter(o => {
     const c = cMap.get(o.clienteId);
@@ -661,9 +664,9 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     if (filters.prioridade && c?.prioridade !== filters.prioridade) return false;
     if (filters.rota && c?.rota !== filters.rota) return false;
     if (filters.status && o.etapa !== filters.status) return false;
-    if (filters.vendedor && o.responsavel !== filters.vendedor) return false;
+    if (filters.vendedor && !isOwnSellerDataById(filters.vendedor, selectedFilterSellerName, o.responsavelId || o.vendedorId, o.responsavel || o.vendedor)) return false;
     return true;
-  }), [scopedOportunidades, filters, cMap]);
+  }), [scopedOportunidades, filters, cMap, selectedFilterSellerName]);
 
   const blockReadOnlySetter = useCallback(<T,>(setter: React.Dispatch<React.SetStateAction<T>>): React.Dispatch<React.SetStateAction<T>> => {
     if (normalizedRole !== "visualizador") return setter;

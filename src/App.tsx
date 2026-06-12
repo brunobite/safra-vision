@@ -27,6 +27,7 @@ const ProximasAcoes = lazy(() => import("./pages/ProximasAcoes"));
 const Agenda = lazy(() => import("./pages/Agenda"));
 const ClienteFicha360 = lazy(() => import("./pages/ClienteFicha360"));
 const Login = lazy(() => import("./pages/Login"));
+const MeuAcesso = lazy(() => import("./pages/MeuAcesso"));
 
 
 function ProtectedPage({ route, children }: { route: string; children: React.ReactNode }) {
@@ -83,6 +84,7 @@ const App = () => {
                 <Route path="/proximas-acoes" element={<ProtectedPage route="/proximas-acoes"><ProximasAcoes /></ProtectedPage>} />
                 <Route path="/agenda" element={<ProtectedPage route="/agenda"><Agenda /></ProtectedPage>} />
                 <Route path="/configuracoes" element={<ProtectedPage route="/configuracoes"><Configuracoes /></ProtectedPage>} />
+                <Route path="/meu-acesso" element={<ProtectedPage route="/meu-acesso"><MeuAcesso /></ProtectedPage>} />
               </Route>
               <Route path="/login" element={<Login />} />
               <Route path="*" element={<NotFound />} />
