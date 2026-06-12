@@ -11,7 +11,8 @@ import { runAccountSyncCheck, runAccountSyncNow, type AccountSyncStatus } from "
 import { addAccountSyncHistoryEvent, getHistoryStatusFromAccountSyncStatus, type AccountSyncHistoryEvent } from "@/lib/accountSyncUi";
 import { getFreshSupabaseAccessContext } from "@/lib/supabaseAccess";
 import { useAuth } from "@/store/AuthStore";
-import { calcularPotencialCliente, calcularValorMedioHaSegmentosAtivos } from "@/utils/businessRules";
+import { calcularPotencialCliente } from "@/utils/businessRules";
+import { normalizeClientesForPersistence } from "@/lib/clientNormalization";
 
 interface Filters {
   dataInicial: string; dataFinal: string; mes: string;
@@ -174,7 +175,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     const init = async () => {
       try {
         const localData = await bootstrapLocalDatabase();
-        setClientes(localData.clientes);
+        setClientes(normalizeClientesForPersistence(localData.clientes as never[]));
         setLancamentos(localData.lancamentos);
         setMetasEmpresa(localData.metasEmpresa);
         setMetasPessoais(localData.metasPessoais);
@@ -223,7 +224,8 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     setSaveError(null);
     try {
       const previousIds = shouldTrackSyncStore(store) ? await getStoreIds(store) : [];
-      await saveStore(store, data);
+      const dataToPersist = (store === "clientes" ? normalizeClientesForPersistence(data as never[]) : data) as T[];
+      await saveStore(store, dataToPersist);
       if (shouldTrackSyncStore(store)) {
         const isOnlySyncMetaChange = store === "appConfig" && (() => {
           const config = data[0] as AppConfig | undefined;
@@ -234,10 +236,10 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           return unchanged;
         })();
         if (!isOnlySyncMetaChange) {
-          const nextIds = new Set(data.map((item) => item.id));
+          const nextIds = new Set(dataToPersist.map((item) => item.id));
           const deletedIds = previousIds.filter((id) => !nextIds.has(id));
           await Promise.all([
-            ...data.map((item) => enqueueSyncItem({ store, entityId: item.id, operation: "upsert", payload: item })),
+            ...dataToPersist.map((item) => enqueueSyncItem({ store, entityId: item.id, operation: "upsert", payload: item })),
             ...deletedIds.map((entityId) => enqueueSyncItem({ store, entityId, operation: "delete" })),
           ]);
         }
@@ -290,7 +292,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         "metasEmpresa", "metasPessoais", "metasVendedor", "metasCategoria", "regrasComissao", "configuracoes", "empresas", "eventos", "prioridadesP1",
         "vendedores", "produtos", "formasPagamento", "prazosPagamento", "appConfig",
       ]);
-      setClientes(result.snapshot.clientes as Cliente[]);
+      setClientes(normalizeClientesForPersistence(result.snapshot.clientes as never[]) as Cliente[]);
       setLancamentos(result.snapshot.lancamentos as Lancamento[]);
       setOportunidades(result.snapshot.oportunidades as OportunidadeComercial[]);
       setHistoricoFunil((result.snapshot.historicoFunil || []) as HistoricoFunil[]);
@@ -594,15 +596,14 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    const valorMedio = calcularValorMedioHaSegmentosAtivos(ticketsMedios);
     setClientes((prev) => {
       let changed = false;
       const next = prev.map((c) => {
         const potencialTotal = calcularPotencialCliente(c, ticketsMedios);
-        const potencialCalculado = valorMedio > 0;
+        const potencialCalculado = potencialTotal;
         if (c.potencialTotal === potencialTotal && c.potencialCalculado === potencialCalculado) return c;
         changed = true;
-        return { ...c, potencialTotal, potencialCalculado };
+        return normalizeClientesForPersistence([{ ...c, potencialTotal, potencialCalculado }], ticketsMedios)[0] as Cliente;
       });
       return changed ? next : prev;
     });

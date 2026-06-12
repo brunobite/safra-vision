@@ -1,5 +1,6 @@
 import { Cliente, ClienteCulturaArea, Empresa, Evento, FormaPagamento, Lancamento, MetaEmpresa, MetaPessoal, Negocio, PrioridadeP1Item, Produto, RegraComissao, TicketMedioRegra, Vendedor } from "@/types";
 import { categoriaComercialExiste, getCategoriasComerciais, normalizarCategoriaComercial } from "@/utils/commercialCategories";
+import { normalizeClienteForPersistence } from "@/lib/clientNormalization";
 
 export type ImportEntity = "clientes" | "vendedores" | "lancamentos" | "negocios" | "produtos" | "metasEmpresa" | "metasPessoais" | "regrasComissao" | "eventos" | "rotas" | "prioridadesP1" | "empresas" | "formasPagamento" | "ticketsMedios";
 export type ImportMode = "add" | "update" | "add_update" | "replace";
@@ -171,7 +172,7 @@ const toIsoDate = (value: unknown) => {
 };
 
 const aliases: Record<ImportEntity, Record<string, string>> = {
-  clientes: { cliente: "nome", id_importacao: "idImportacao", fonte: "fonte", nome: "nome", "nome do cliente": "nome", "razao social": "nome", fazenda_propriedade: "localidade", abc: "abc", prioridade: "prioridade", rota: "rota", cidade: "cidade", localidade: "endereco", endereco: "endereco", vendedor: "vendedor", culturas: "culturas", cultura: "cultura", culturasdetalhes: "culturasDetalhes", area_total_ha: "areaHa", area_ha: "areaHa", status_atual: "statusAtual", inativo_manual: "inativoManual", "inativo manual": "inativoManual", frequencia_retorno: "frequenciaRetorno", "frequencia de retorno": "frequenciaRetorno", cpf_cnpj: "documento", documento: "documento", inscricao_estadual: "inscricaoEstadual", "inscrição estadual": "inscricaoEstadual", telefone: "telefone", "e-mail": "email", email: "email", nome_contato: "nomeContato", "nome do contato": "nomeContato", latitude: "latitude", longitude: "longitude", coordenadas: "coordenadas", link_mapa: "linkMapa", observacoes: "observacao", observação: "observacao", "area soja": "areaSoja", "area arroz": "areaArroz", "area milho": "areaMilho", "area trigo": "areaTrigo", "area pastagem": "areaPastagem", "area aveia": "areaAveia" },
+  clientes: { cliente: "nome", id_importacao: "idImportacao", fonte: "fonte", nome: "nome", "nome do cliente": "nome", "razao social": "nome", fazenda_propriedade: "localidade", abc: "abc", prioridade: "prioridade", rota: "rota", cidade: "cidade", localidade: "localidade", endereco: "endereco", vendedor: "vendedor", culturas: "culturas", cultura: "cultura", culturasdetalhes: "culturasDetalhes", area_total_ha: "areaHa", area_ha: "areaHa", potencial_total: "potencialTotal", potencialTotal: "potencialTotal", "potencial total": "potencialTotal", potencial_calculado: "potencialCalculado", potencialCalculado: "potencialCalculado", "potencial calculado": "potencialCalculado", status_atual: "statusAtual", inativo_manual: "inativoManual", "inativo manual": "inativoManual", frequencia_retorno: "frequenciaRetorno", "frequencia de retorno": "frequenciaRetorno", cpf_cnpj: "documento", documento: "documento", inscricao_estadual: "inscricaoEstadual", "inscrição estadual": "inscricaoEstadual", telefone: "telefone", "e-mail": "email", email: "email", nome_contato: "nomeContato", "nome do contato": "nomeContato", latitude: "latitude", longitude: "longitude", coordenadas: "coordenadas", link_mapa: "linkMapa", observacoes: "observacao", observação: "observacao", "area soja": "areaSoja", "area arroz": "areaArroz", "area milho": "areaMilho", "area trigo": "areaTrigo", "area pastagem": "areaPastagem", "area aveia": "areaAveia" },
   vendedores: { nome: "nome", vendedor: "nome", responsavel: "nome", email: "email", "e-mail": "email", ativo: "ativo" },
   lancamentos: { data: "data", cliente: "cliente", tipo: "tipo", status: "status", descricao: "oQueFoiRealizado" },
   negocios: { cliente: "cliente", oportunidade: "nome", negocio: "nome", produtos: "produtos", categoria: "categoria", "valor potencial": "valorPotencial", "valor fechado": "valorFechado", status: "status", probabilidade: "probabilidade", vendedor: "vendedor" },
@@ -265,7 +266,7 @@ function validateRow(entity: ImportEntity, row: Record<string, unknown>): string
   const errs: string[] = [];
   const required: Record<ImportEntity, string[]> = { clientes: ["nome"], vendedores: ["nome"], lancamentos: ["data", "cliente", "tipo"], negocios: ["cliente", "nome"], produtos: ["nome", "unidade"], metasEmpresa: ["mes", "metaTotal"], metasPessoais: ["frente"], regrasComissao: ["nome"], eventos: ["tipo"], rotas: [], prioridadesP1: ["cliente"], empresas: ["nomeFantasia"], formasPagamento: ["nome"], ticketsMedios: ["categoria"] };
   required[entity].forEach((f) => { if (!hasValue(row[f])) errs.push(`Campo obrigatório: ${f}`); });
-  ["areaHa", "areaSoja", "areaArroz", "areaMilho", "areaTrigo", "areaPastagem", "areaAveia", "precoVenda", "precoLista", "precoMinimo", "custo", "margem", "estoqueAtual", "estoqueReservado", "latitude", "longitude"].forEach((k) => {
+  ["areaHa", "potencialTotal", "areaSoja", "areaArroz", "areaMilho", "areaTrigo", "areaPastagem", "areaAveia", "precoVenda", "precoLista", "precoMinimo", "custo", "margem", "estoqueAtual", "estoqueReservado", "latitude", "longitude"].forEach((k) => {
     if (hasValue(row[k]) && parseNumber(row[k]) === undefined) errs.push(`Número inválido: ${k}`);
   });
   if (entity === "produtos") {
@@ -327,7 +328,7 @@ function statusToActive(status: unknown, ativo: unknown): boolean {
 
 function normalizeEntityRow(entity: ImportEntity, n: Record<string, unknown>): unknown {
   const id = String(n.id || `${entity}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
-  if (entity === "clientes") return { id, nome: String(n.nome || ""), abc: String(n.abc || "C"), prioridade: String(n.prioridade || "P3"), rota: String(n.rota || ""), cidade: String(n.cidade || ""), localidade: String(n.localidade || ""), culturas: String(n.culturas || ""), culturasDetalhes: mapCulturas(n), areaHa: parseNumber(n.areaHa) || 0, potencialTotal: 0, statusAtual: String(n.statusAtual || "Ativo"), frequenciaRetorno: String(n.frequenciaRetorno || ""), retorno: "", inativoManual: parseBoolean(n.inativoManual) ?? false, email: String(n.email || ""), nomeContato: String(n.nomeContato || ""), observacao: String(n.observacao || ""), documento: String(n.documento || ""), inscricaoEstadual: String(n.inscricaoEstadual || ""), telefone: String(n.telefone || ""), ...(String(n.vendedor ?? "").trim() ? { vendedor: String(n.vendedor).trim() } : {}), ...(String(n.endereco ?? n.localidade ?? "").trim() ? { endereco: String(n.endereco ?? n.localidade).trim() } : {}), ...(parseNumber(n.latitude) !== undefined ? { latitude: parseNumber(n.latitude) } : {}), ...(parseNumber(n.longitude) !== undefined ? { longitude: parseNumber(n.longitude) } : {}), ...(String(n.coordenadas ?? "").trim() ? { coordenadas: String(n.coordenadas).trim() } : {}), ...(String(n.linkMapa ?? "").trim() ? { linkMapa: String(n.linkMapa).trim() } : {}) } as Cliente;
+  if (entity === "clientes") return normalizeClienteForPersistence({ id, nome: String(n.nome || ""), abc: String(n.abc || "C"), prioridade: String(n.prioridade || "P3"), rota: String(n.rota || ""), cidade: String(n.cidade || ""), localidade: String(n.localidade || ""), culturas: String(n.culturas || ""), culturasDetalhes: mapCulturas(n), areaHa: parseNumber(n.areaHa) || 0, potencialTotal: parseNumber(n.potencialTotal) || 0, potencialCalculado: n.potencialCalculado, statusAtual: String(n.statusAtual || "Ativo"), frequenciaRetorno: String(n.frequenciaRetorno || ""), retorno: "", inativoManual: parseBoolean(n.inativoManual) ?? false, email: String(n.email || ""), nomeContato: String(n.nomeContato || ""), observacao: String(n.observacao || ""), documento: String(n.documento || ""), inscricaoEstadual: String(n.inscricaoEstadual || ""), telefone: String(n.telefone || ""), ...(String(n.vendedor ?? "").trim() ? { vendedor: String(n.vendedor).trim() } : {}), ...(String(n.endereco ?? "").trim() ? { endereco: String(n.endereco).trim() } : {}), ...(parseNumber(n.latitude) !== undefined ? { latitude: parseNumber(n.latitude) } : {}), ...(parseNumber(n.longitude) !== undefined ? { longitude: parseNumber(n.longitude) } : {}), ...(String(n.coordenadas ?? "").trim() ? { coordenadas: String(n.coordenadas).trim() } : {}), ...(String(n.linkMapa ?? "").trim() ? { linkMapa: String(n.linkMapa).trim() } : {}) } as Cliente);
   if (entity === "vendedores") return { id, nome: String(n.nome || ""), telefone: String(n.telefone || ""), email: String(n.email || ""), ativo: parseBoolean(n.ativo) ?? true } as Vendedor;
   if (entity === "produtos") {
     const controlaEstoque = parseBoolean(n.controlaEstoque) ?? Boolean(hasValue(n.estoqueAtual) || hasValue(n.estoqueReservado) || hasValue(n.localEstoque));
@@ -374,13 +375,17 @@ function mergeImportRecord(entity: ImportEntity, existing: ImportableRecord, imp
   return { ...existing, ...cleanImported, id: existing.id, createdAt: existing.createdAt ?? imported.createdAt, updatedAt: new Date().toISOString(), ultimaAtualizacao: new Date().toISOString() };
 }
 
+function normalizeClientesForImport(records: ImportableRecord[]) {
+  return records.map((record) => normalizeClienteForPersistence(record));
+}
+
 export function applyImport<T extends ImportableRecord>(entity: ImportEntity, mode: ImportMode, current: T[], preview: ImportPreview): { data: T[]; imported: number; updated: number; ignored: number; duplicates: number } {
   const valid = preview.rows
     .filter((r) => !r.errors.length)
     .filter((r) => entity !== "clientes" || parseBoolean(r.normalized.importarApp ?? "sim") !== false)
     .map((r) => normalizeEntityRow(entity, r.normalized) as ImportableRecord);
 
-  if (mode === "replace") return { data: valid as T[], imported: valid.length, updated: 0, ignored: 0, duplicates: 0 };
+  if (mode === "replace") return { data: (entity === "clientes" ? normalizeClientesForImport(valid) : valid) as T[], imported: valid.length, updated: 0, ignored: 0, duplicates: 0 };
 
   const out: ImportableRecord[] = [...current];
   let imported = 0;
@@ -402,5 +407,5 @@ export function applyImport<T extends ImportableRecord>(entity: ImportEntity, mo
     } else ignored += 1;
   });
 
-  return { data: out as T[], imported, updated, ignored, duplicates };
+  return { data: (entity === "clientes" ? normalizeClientesForImport(out) : out) as T[], imported, updated, ignored, duplicates };
 }

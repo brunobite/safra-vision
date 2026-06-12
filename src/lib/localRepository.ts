@@ -1,5 +1,6 @@
 import { DbMeta, DB_VERSION, openAppDb, promisifyRequest, StoreName } from "@/lib/db";
 import { SeedData, seedData } from "@/lib/seedData";
+import { normalizeClientesForPersistence } from "@/lib/clientNormalization";
 
 const nowIso = () => new Date().toISOString();
 
@@ -64,6 +65,7 @@ export async function bootstrapLocalDatabase(): Promise<AppPersistedData> {
 
     return {
       ...loaded,
+      clientes: normalizeClientesForPersistence((loaded.clientes ?? []) as never[]),
       dbMeta: (await readDbMeta(db))!,
     };
   });
@@ -107,12 +109,13 @@ export async function getStoreIds(store: StoreName): Promise<string[]> {
 }
 
 export async function saveStore<T extends { id: string }>(store: StoreName, list: T[]) {
+  const dataToSave = (store === "clientes" ? normalizeClientesForPersistence(list as never[]) : list) as T[];
   return withDb(async (db) => {
     try {
       const tx = db.transaction(store, "readwrite");
       const os = tx.objectStore(store);
       await promisifyRequest(os.clear());
-      list.forEach((item) => os.put(item));
+      dataToSave.forEach((item) => os.put(item));
       await waitForTransaction(tx);
       await writeDbMeta(db, {});
     } catch (error) {
@@ -177,7 +180,8 @@ export async function replaceLocalDatabase(payload: Partial<AppPersistedData>) {
       const os = tx.objectStore(store);
       await promisifyRequest(os.clear());
       const entries = (payload as Record<string, Array<Record<string, unknown>>>)[store] ?? [];
-      entries.forEach((entry) => os.put(entry));
+      const sanitizedEntries = store === "clientes" ? normalizeClientesForPersistence(entries) : entries;
+      sanitizedEntries.forEach((entry) => os.put(entry));
     }
 
     if (payload.dbMeta) {

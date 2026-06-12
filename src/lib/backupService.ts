@@ -1,5 +1,6 @@
 import { DbMeta } from "@/lib/db";
 import { ExportDataBundle, saveBackupFile } from "@/lib/exportService";
+import { normalizeClientesForPersistence } from "@/lib/clientNormalization";
 
 interface BackupFile {
   app?: string;
@@ -56,6 +57,7 @@ export function parseBackupPayload(content: string): ExportDataBundle {
   normalized.dbMeta = (parsed.data.dbMeta as DbMeta | undefined) ?? null;
   normalized.empresas = Array.isArray(parsed.data.empresas) ? parsed.data.empresas : [];
   normalized.formasPagamento = Array.isArray(parsed.data.formasPagamento) ? parsed.data.formasPagamento : [];
+  normalized.clientes = normalizeClientesForPersistence(normalized.clientes as never[]);
 
   return normalized;
 }

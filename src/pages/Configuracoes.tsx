@@ -38,6 +38,7 @@ import { calcularMetaCarteira, calcularPotencialCarteira, calcularPotencialClien
 import { fmtBRL } from "@/utils/calculations";
 import { chaveCategoriaComercial, getCategoriasComerciais, normalizarCategoriaComercial } from "@/utils/commercialCategories";
 import * as XLSX from "xlsx";
+import { auditClientesForPersistence, normalizeClientesForPersistence } from "@/lib/clientNormalization";
 import { disconnectGoogleCalendar, disconnectGoogleCalendarBackend, getGoogleCalendarAuthStatus, getGoogleCalendarBackendStatus, getGoogleCalendarClientId, getGoogleCalendarLastAuthError, hasGoogleCalendarAccess, initGoogleCalendarClient, isGoogleCalendarBackendAvailable, isGoogleCalendarPreferenceEnabled, isGoogleIdentityServicesLoaded, requestGoogleCalendarAccess, setGoogleCalendarPreferenceEnabled, startGoogleCalendarBackendOAuth, isGoogleCalendarRevokedOrExpiredError, type GoogleCalendarAuthStatus, type GoogleCalendarBackendStatus } from "@/lib/googleCalendar";
 
 const APLICAR: { v: AplicarSobre; label: string }[] = [
@@ -190,6 +191,7 @@ export default function Configuracoes() {
   const negociosSeguros = useMemo(() => registrosSeguros(negocios), [negocios]);
   const clientesSeguros = useMemo(() => registrosSeguros(clientes), [clientes]);
   const vendedoresSeguros = useMemo(() => registrosSeguros(vendedores), [vendedores]);
+  const clientesDataAudit = useMemo(() => auditClientesForPersistence(clientesSeguros as never[]), [clientesSeguros]);
   const metasVendedorSeguras = useMemo(() => registrosSeguros(metasVendedor), [metasVendedor]);
   const categoriasTicketInfo = useMemo(() => {
     const fontesMalformadas = [produtos, metasCategoria, ticketsMedios, orcamentos, oportunidades, negocios].some(arrayEstaMalformado);
@@ -662,6 +664,8 @@ export default function Configuracoes() {
     try {
       const freshAccessContext = await getFreshSyncContext();
       const freshSyncContext = assertFreshActiveSyncContext(freshAccessContext);
+      const prePublishAudit = auditClientesForPersistence(clientesSeguros as never[]);
+      if (!prePublishAudit.canPublishOfficial) throw new Error(`Publicação bloqueada pela auditoria de clientes: ${prePublishAudit.blockers.join("; ")}.`);
       const result = await publishLocalSnapshotAsOfficial(freshSyncContext);
       setSyncSummary(result.summary);
       setSyncComparison(result.afterComparison);
@@ -751,7 +755,7 @@ export default function Configuracoes() {
       if (!ok) return;
 
       await replaceLocalDatabase({ ...restored, regrasComissao: restored.regrasComissao });
-      setClientes(restored.clientes as never[]);
+      setClientes(normalizeClientesForPersistence(restored.clientes as never[]) as never[]);
       setVendedores(restored.vendedores as never[]);
       setLancamentos(restored.lancamentos as never[]);
       setNegocios(restored.negocios as never[]);
@@ -829,7 +833,7 @@ export default function Configuracoes() {
       summary = { ...result, ignored: importPreview.totalRows - previewToApply.rows.length + result.ignored };
     } else {
       const result = applyImport("clientes", modeToApply, clientes as ({ id: string } & Record<string, unknown>)[], previewToApply);
-      setClientes(result.data as Cliente[]);
+      setClientes(normalizeClientesForPersistence(result.data as never[]) as Cliente[]);
       summary = result;
     }
     toast.success(`Importação concluída: ${summary.imported} criados, ${summary.updated} atualizados, ${summary.ignored} ignorados, ${summary.duplicates} duplicidades.`);
@@ -1449,7 +1453,7 @@ export default function Configuracoes() {
                 <div className="font-semibold">Dados divergentes entre este dispositivo e a nuvem.</div>
                 <div>A sincronização normal prioriza a nuvem como fonte oficial. Use estas ações somente em emergência ou suporte.</div>
                 <div className="flex flex-wrap gap-2">
-                  <Button onClick={() => { setPublishConfirmText(""); setConfirmPublishOpen(true); }} disabled={isPublishingOfficial || isSyncing || isRestoringCloud}>Publicar este dispositivo como base oficial</Button>
+                  <Button onClick={() => { setPublishConfirmText(""); setConfirmPublishOpen(true); }} disabled={isPublishingOfficial || isSyncing || isRestoringCloud || !clientesDataAudit.canPublishOfficial}>Publicar este dispositivo como base oficial</Button>
                   <Button variant="outline" onClick={() => { setRestoreConfirmText(""); setConfirmRestoreOpen(true); }} disabled={isRestoringCloud || isSyncing || isPublishingOfficial}>Carregar dados da nuvem neste dispositivo</Button>
                   <Button variant="ghost" onClick={() => toast.message("Sincronização manual adiada.")}>Não sincronizar agora</Button>
                 </div>
@@ -1459,7 +1463,7 @@ export default function Configuracoes() {
                 <Button variant="secondary" onClick={() => void handleRefreshSyncPanel()} disabled={isRefreshingSyncStatus}>{isRefreshingSyncStatus ? "Atualizando..." : "Atualizar status e pendências"}</Button>
                 <Button variant="outline" onClick={handleCompareCloud} disabled={!canCompareCloud || isComparingSync || isSyncing || isRefreshingSyncStatus}>{isComparingSync ? "Comparando..." : "Comparar local x nuvem"}</Button>
                 <Button onClick={handleUploadClick} disabled={isSyncing || isComparingSync || isRefreshingSyncStatus || isRestoringCloud || isPublishingOfficial}>{isSyncing && !isPublishingOfficial ? "Enviando..." : "Enviar pendências para nuvem"}</Button>
-                <Button variant="destructive" onClick={() => { setPublishConfirmText(""); setConfirmPublishOpen(true); }} disabled={isPublishingOfficial || isSyncing || isComparingSync || isRefreshingSyncStatus || isRestoringCloud}>{isPublishingOfficial ? "Publicando..." : "Publicar este dispositivo como base oficial"}</Button>
+                <Button variant="destructive" onClick={() => { setPublishConfirmText(""); setConfirmPublishOpen(true); }} disabled={isPublishingOfficial || isSyncing || isComparingSync || isRefreshingSyncStatus || isRestoringCloud || !clientesDataAudit.canPublishOfficial}>{isPublishingOfficial ? "Publicando..." : "Publicar este dispositivo como base oficial"}</Button>
                 <Button variant="default" onClick={() => { setRestoreConfirmText(""); setConfirmRestoreOpen(true); }} disabled={!cloudRestoreDecision.allowed || isRestoringCloud || isSyncing || isComparingSync || isRefreshingSyncStatus || isPublishingOfficial}>{isRestoringCloud ? "Carregando..." : "Carregar dados da conta neste dispositivo"}</Button>
                 <Button variant="outline" onClick={() => void refreshAuditAndComparison({ compareCloud: true })} disabled={isAuditingSync}>{isAuditingSync ? "Auditando..." : "Auditoria e limpeza"}</Button>
                 <Button variant="outline" onClick={() => void handleCopyHomologationChecklist()}>Copiar checklist de homologação da sincronização</Button>
@@ -1512,6 +1516,29 @@ export default function Configuracoes() {
 
           {!canViewAudit && <div className="rounded-md border border-yellow-500/40 bg-yellow-500/10 p-3 text-sm text-yellow-800">A seção exige usuário autenticado e status active.</div>}
           {canViewAudit && !canCleanTests && <div className="rounded-md border border-yellow-500/40 bg-yellow-500/10 p-3 text-sm text-yellow-800">Somente administradores podem limpar registros de teste.</div>}
+
+          <div className="rounded-md border p-3 space-y-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h4 className="text-sm font-semibold">Auditoria visual de clientes</h4>
+                <p className="text-xs text-muted-foreground">Valida campos críticos antes de publicar a base oficial no Supabase.</p>
+              </div>
+              <Badge variant={clientesDataAudit.canPublishOfficial ? "secondary" : "destructive"}>{clientesDataAudit.canPublishOfficial ? "Apto para publicar" : "Publicação bloqueada"}</Badge>
+            </div>
+            <div className="grid gap-2 md:grid-cols-3 text-sm">
+              <div><b>potencialCalculado boolean:</b> {clientesDataAudit.potencialCalculadoBoolean}</div>
+              <div><b>Sem vendedor:</b> {clientesDataAudit.semVendedor}</div>
+              <div><b>Sem cidade:</b> {clientesDataAudit.semCidade}</div>
+              <div><b>Sem localidade:</b> {clientesDataAudit.semLocalidade}</div>
+              <div><b>Sem culturas:</b> {clientesDataAudit.semCulturas}</div>
+              <div><b>Espaços extras:</b> {clientesDataAudit.espacosExtras}</div>
+              <div><b>Sem nome:</b> {clientesDataAudit.semNome}</div>
+              <div><b>areaHa inválida:</b> {clientesDataAudit.areaHaInvalida}</div>
+              <div><b>potencialTotal inválido:</b> {clientesDataAudit.potencialTotalInvalido}</div>
+            </div>
+            {clientesDataAudit.blockers.length > 0 && <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">Bloqueios: {clientesDataAudit.blockers.join("; ")}</div>}
+            {clientesDataAudit.semVendedor > 0 && <div className="text-xs text-muted-foreground">Clientes sem vendedor geram aviso, mas não bloqueiam a publicação.</div>}
+          </div>
 
           <div className="grid gap-3 md:grid-cols-5">
             <div className="rounded-md border p-3 text-sm"><div className="text-muted-foreground">Total local</div><div className="font-medium">{syncComparison?.totals.localCount ?? "—"}</div></div>
@@ -1619,6 +1646,7 @@ export default function Configuracoes() {
         <div className="space-y-3 text-sm">
           <p>Esta ação enviará todos os dados locais deste dispositivo para a nuvem e poderá sobrescrever dados remotos com o mesmo ID.</p>
           <p className="text-muted-foreground">Use este fluxo no celular que contém os dados reais de campo. Ele não é automático e força um snapshot completo mesmo quando o primeiro upload já foi confirmado.</p>
+          {!clientesDataAudit.canPublishOfficial && <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-destructive">Publicação bloqueada pela auditoria: {clientesDataAudit.blockers.join("; ")}</div>}
           <div className="rounded-md border border-yellow-500/40 bg-yellow-500/10 p-3 text-yellow-800">Digite <b>PUBLICAR ESTE DISPOSITIVO</b> para confirmar.</div>
           <div>
             <Label>Confirmação</Label>
@@ -1627,7 +1655,7 @@ export default function Configuracoes() {
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => setConfirmPublishOpen(false)}>Cancelar</Button>
-          <Button variant="destructive" onClick={() => void executePublishOfficial()} disabled={publishConfirmText !== "PUBLICAR ESTE DISPOSITIVO" || isPublishingOfficial}>{isPublishingOfficial ? "Publicando..." : "Confirmar publicação"}</Button>
+          <Button variant="destructive" onClick={() => void executePublishOfficial()} disabled={publishConfirmText !== "PUBLICAR ESTE DISPOSITIVO" || isPublishingOfficial || !clientesDataAudit.canPublishOfficial}>{isPublishingOfficial ? "Publicando..." : "Confirmar publicação"}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

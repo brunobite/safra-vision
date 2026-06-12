@@ -14,6 +14,7 @@ import { ROTAS_NOMES } from "@/data/mockData";
 import { Cliente, ABC } from "@/types";
 import { fmtBRL, fmtNum } from "@/utils/calculations";
 import { computeClienteStatus, formatDateBR, isClienteAtrasado, sugestaoRetornoDias } from "@/lib/clientesUtils";
+import { normalizeClienteForPersistence } from "@/lib/clientNormalization";
 import { calcularPotencialCliente, calcularValorMedioHaSegmentosAtivos } from "@/utils/businessRules";
 import { Plus, Pencil, Trash2, Eye, Search, Filter, X, MapPin } from "lucide-react";
 import { toast } from "sonner";
@@ -21,7 +22,7 @@ import { toast } from "sonner";
 const ALL = "__all__";
 const empty: Omit<Cliente, "id"> = {
   nome: "", abc: "A", prioridade: "P2", rota: "Rota Norte", cidade: "", localidade: "", culturas: "",
-  areaHa: 0, potencialTotal: 0, statusAtual: "Prospectar", frequenciaRetorno: "30 dias", retorno: "30 dias", vendedor: "", potencialCalculado: false, inativoManual: false,
+  areaHa: 0, potencialTotal: 0, statusAtual: "Prospectar", frequenciaRetorno: "30 dias", retorno: "30 dias", vendedor: "", potencialCalculado: 0, inativoManual: false,
   documento: "", inscricaoEstadual: "", endereco: "", telefone: "", email: "", nomeContato: "", culturaPrincipal: "", areaAplicacaoPotencial: "",
   latitude: undefined, longitude: undefined, coordenadas: "", linkMapa: "", observacaoLocalizacao: "",
 };
@@ -99,7 +100,7 @@ export default function Clientes() {
   const save = () => {
     if (!form.nome) return toast.error("Nome obrigatório.");
     const potencialCalculado = calcularPotencialCliente(form as Cliente, ticketsMedios);
-    const base = { ...form, potencialTotal: potencialCalculado, potencialCalculado: valorMedioSegmentosAtivos>0, frequenciaRetorno: form.frequenciaRetorno || `${sugestaoRetornoDias(form as Cliente, computeClienteStatus(form as Cliente, lancamentos, negocios, orcamentos), negocios)} dias`, statusAtual: computeClienteStatus({ ...form, id: edit?.id || "novo" } as Cliente, lancamentos, negocios, orcamentos) };
+    const base = normalizeClienteForPersistence({ ...form, potencialTotal: potencialCalculado, potencialCalculado: valorMedioSegmentosAtivos > 0 ? potencialCalculado : form.potencialTotal, frequenciaRetorno: form.frequenciaRetorno || `${sugestaoRetornoDias(form as Cliente, computeClienteStatus(form as Cliente, lancamentos, negocios, orcamentos), negocios)} dias`, statusAtual: computeClienteStatus({ ...form, id: edit?.id || "novo" } as Cliente, lancamentos, negocios, orcamentos) }, ticketsMedios);
     if (edit) setClientes(prev => prev.map(c => c.id === edit.id ? { ...base, id: edit.id } : c));
     else setClientes(prev => [...prev, { ...base, id: `c${Date.now()}` }]);
     setOpen(false); toast.success("Cliente salvo.");
