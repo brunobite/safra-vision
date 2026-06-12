@@ -95,7 +95,8 @@ async function writeDbMeta(db: IDBDatabase, partial: Partial<DbMeta>) {
 
 async function seedInitialData(db: IDBDatabase) {
   storesToLoad.forEach((store) => {
-    putAll(db, store, (seedData as unknown as Record<string, Array<Record<string, unknown>>>)[store] ?? []);
+    const entries = (seedData as unknown as Record<string, Array<Record<string, unknown>>>)[store] ?? [];
+    putAll(db, store, store === "clientes" ? normalizeClientesForPersistence(entries) : entries);
   });
   await writeDbMeta(db, { seeded: true, versaoSchema: DB_VERSION });
 }

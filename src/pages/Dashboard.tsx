@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { KpiCard } from "@/components/dashboard/KpiCard";
 import { useAppStore } from "@/store/AppStore";
-import { fmtBRL, fmtNum, fmtPct } from "@/utils/calculations";
+import { fmtBRL, fmtBRLCompact, fmtNum, fmtPct } from "@/utils/calculations";
 import { AlertTriangle, Award, CalendarDays, ChevronDown, Clock, FileText, Filter, Layers, Percent, TrendingUp, Users } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -65,7 +65,34 @@ function dateInPeriod(dateIso: string | undefined, start: string, end: string) {
   return true;
 }
 
-function probabilityToRatio(value: number | undefined) {
+const OPPORTUNITY_STAGE_PROBABILITY: Record<string, number> = {
+  "Oportunidade identificada": 10,
+  Identificada: 10,
+  "Qualificação técnica/comercial": 25,
+  Qualificação: 25,
+  "Necessidade definida": 35,
+  "Orçamento solicitado": 45,
+  "Orçamento em elaboração": 50,
+  "Orçamento enviado": 60,
+  Negociação: 75,
+  "Fechamento encaminhado": 90,
+  "Suspensa/Sem timing": 5,
+  Ganha: 100,
+  Perdida: 0,
+  Cancelada: 0,
+};
+
+function defaultProbabilityByStage(etapa: string) {
+  return OPPORTUNITY_STAGE_PROBABILITY[etapa.trim()] ?? 0;
+}
+
+function effectiveOpportunityProbability(oportunidade: OportunidadeComercial) {
+  const manualProbability = oportunidade.probabilidade;
+  if (typeof manualProbability === "number" && Number.isFinite(manualProbability) && manualProbability > 0) return manualProbability;
+  return defaultProbabilityByStage(oportunidade.etapa);
+}
+
+function probabilityToRatio(value: number) {
   if (!value) return 0;
   return value > 1 ? value / 100 : value;
 }
@@ -160,14 +187,16 @@ export default function Dashboard() {
     const acoesAtrasadas = acoesAbertas.filter((acao) => acao.data < hoje);
     const acoesHoje = acoesAbertas.filter((acao) => acao.data === hoje);
     const visitasConcluidas = scoped.lancamentosFiltrados.filter((lancamento) => lancamento.tipo === "Visita" && lancamento.status === "Concluído");
+    const visitasSemRelatorio = Math.max(visitasConcluidas.length - scoped.relatoriosFiltrados.length, 0);
     const oportunidadesAbertas = scoped.oportunidadesFiltradas.filter(isOpenOpportunity);
+    const oportunidadesSemProbabilidade = oportunidadesAbertas.filter((oportunidade) => !oportunidade.probabilidade);
     const valorAberto = oportunidadesAbertas.reduce((sum, oportunidade) => sum + opportunityValue(oportunidade), 0);
-    const valorPonderado = oportunidadesAbertas.reduce((sum, oportunidade) => sum + opportunityValue(oportunidade) * probabilityToRatio(oportunidade.probabilidade), 0);
+    const valorPonderado = oportunidadesAbertas.reduce((sum, oportunidade) => sum + opportunityValue(oportunidade) * probabilityToRatio(effectiveOpportunityProbability(oportunidade)), 0);
     const oportunidadesPorEtapa = Object.values(oportunidadesAbertas.reduce((acc, oportunidade) => {
       acc[oportunidade.etapa] ??= { etapa: oportunidade.etapa, quantidade: 0, valor: 0, ponderado: 0 };
       acc[oportunidade.etapa].quantidade += 1;
       acc[oportunidade.etapa].valor += opportunityValue(oportunidade);
-      acc[oportunidade.etapa].ponderado += opportunityValue(oportunidade) * probabilityToRatio(oportunidade.probabilidade);
+      acc[oportunidade.etapa].ponderado += opportunityValue(oportunidade) * probabilityToRatio(effectiveOpportunityProbability(oportunidade));
       return acc;
     }, {} as Record<string, { etapa: string; quantidade: number; valor: number; ponderado: number }>)).sort((a, b) => b.valor - a.valor);
     const oportunidadeTemProximaAcao = (oportunidade: OportunidadeComercial) =>
@@ -200,14 +229,14 @@ export default function Dashboard() {
     const taxaConversao = oportunidadesGanhas.length + oportunidadesPerdidas.length
       ? oportunidadesGanhas.length / (oportunidadesGanhas.length + oportunidadesPerdidas.length)
       : oportunidadesAbertas.length
-        ? oportunidadesAbertas.reduce((sum, oportunidade) => sum + probabilityToRatio(oportunidade.probabilidade), 0) / oportunidadesAbertas.length
+        ? oportunidadesAbertas.reduce((sum, oportunidade) => sum + probabilityToRatio(effectiveOpportunityProbability(oportunidade)), 0) / oportunidadesAbertas.length
         : 0;
     const previsaoFechamento = Object.values(oportunidadesAbertas.reduce((acc, oportunidade) => {
       const periodo = oportunidade.previsaoFechamento?.slice(0, 7) || "Sem previsão";
       acc[periodo] ??= { periodo, quantidade: 0, valor: 0, ponderado: 0 };
       acc[periodo].quantidade += 1;
       acc[periodo].valor += opportunityValue(oportunidade);
-      acc[periodo].ponderado += opportunityValue(oportunidade) * probabilityToRatio(oportunidade.probabilidade);
+      acc[periodo].ponderado += opportunityValue(oportunidade) * probabilityToRatio(effectiveOpportunityProbability(oportunidade));
       return acc;
     }, {} as Record<string, { periodo: string; quantidade: number; valor: number; ponderado: number }>)).sort((a, b) => a.periodo.localeCompare(b.periodo));
     const rankingVendedor = Object.values(scoped.clientesFiltrados.reduce((acc, cliente) => {
@@ -229,7 +258,7 @@ export default function Dashboard() {
       const row = ensureSeller(oportunidade.vendedor || oportunidade.responsavel || clienteMap.get(oportunidade.clienteId)?.vendedor);
       row.oportunidades += 1;
       row.valorAberto += opportunityValue(oportunidade);
-      row.valorPonderado += opportunityValue(oportunidade) * probabilityToRatio(oportunidade.probabilidade);
+      row.valorPonderado += opportunityValue(oportunidade) * probabilityToRatio(effectiveOpportunityProbability(oportunidade));
     });
     acoesAtrasadas.forEach((acao) => ensureSeller(acao.responsavel || clienteMap.get(acao.clienteId || "")?.vendedor).acoesAtrasadas += 1);
     negociosGanhos.forEach((negocio) => ensureSeller(negocio.vendedor || clienteMap.get(negocio.clienteId)?.vendedor).negociosGanhos += 1);
@@ -237,6 +266,8 @@ export default function Dashboard() {
     const alertas = [
       { id: "acoes-atrasadas", titulo: "Ações atrasadas", valor: acoesAtrasadas.length, detalhe: `${acoesAtrasadas.length} ação(ões) pendente(s) antes de ${hoje}.`, severidade: acoesAtrasadas.length ? "alta" : "baixa" },
       { id: "clientes-sem-acao", titulo: "Clientes sem ação futura", valor: clientesSemAcaoFutura.length, detalhe: `${clientesSemAcaoFutura.length} cliente(s) ativo(s) sem próximo contato registrado.`, severidade: clientesAltoPotencialSemAcao.length ? "alta" : clientesSemAcaoFutura.length ? "media" : "baixa" },
+      { id: "visitas-sem-relatorio", titulo: "Visitas sem relatório", valor: visitasSemRelatorio, detalhe: `${visitasConcluidas.length} visita(s) concluída(s) no período menos ${scoped.relatoriosFiltrados.length} relatório(s) registrado(s): ${visitasSemRelatorio} sem relatório.`, severidade: visitasSemRelatorio ? "alta" : "baixa" },
+      { id: "opp-sem-probabilidade", titulo: "Oportunidades sem probabilidade", valor: oportunidadesSemProbabilidade.length, detalhe: `${oportunidadesSemProbabilidade.length} oportunidade(s) aberta(s) sem probabilidade manual; usando probabilidade automática por etapa no ponderado.`, severidade: oportunidadesSemProbabilidade.length ? "media" : "baixa" },
       { id: "opp-sem-acao", titulo: "Oportunidades sem próxima ação", valor: oportunidadesSemProximaAcao.length, detalhe: `${oportunidadesSemProximaAcao.length} oportunidade(s) aberta(s) precisam de follow-up.`, severidade: oportunidadesSemProximaAcao.length ? "media" : "baixa" },
       { id: "opp-paradas", titulo: "Oportunidades paradas", valor: oportunidadesParadas.length, detalhe: `${oportunidadesParadas.length} oportunidade(s) sem atualização há ${STUCK_DAYS_LIMIT}+ dias.`, severidade: oportunidadesParadas.length ? "alta" : "baixa" },
     ];
@@ -335,8 +366,8 @@ export default function Dashboard() {
         <KpiCard label="Visitas concluídas" value={fmtNum(dashboard.visitasConcluidas.length)} icon={CalendarDays} tone="success" />
         <KpiCard label="Relatórios registrados" value={fmtNum(dashboard.relatoriosPeriodo.length)} icon={FileText} />
         <KpiCard label="Oportunidades abertas" value={fmtNum(dashboard.oportunidadesAbertas.length)} icon={Layers} />
-        <KpiCard label="Valor aberto" value={fmtBRL(dashboard.valorAberto)} icon={TrendingUp} />
-        <KpiCard label="Valor ponderado" value={fmtBRL(dashboard.valorPonderado)} icon={Percent} />
+        <KpiCard label="Valor aberto" value={fmtBRLCompact(dashboard.valorAberto)} hint={fmtBRL(dashboard.valorAberto)} valueHint={`Valor completo: ${fmtBRL(dashboard.valorAberto)}`} icon={TrendingUp} />
+        <KpiCard label="Valor ponderado" value={fmtBRLCompact(dashboard.valorPonderado)} hint={fmtBRL(dashboard.valorPonderado)} valueHint={`Valor completo: ${fmtBRL(dashboard.valorPonderado)}`} icon={Percent} />
         <KpiCard label="Oportunidades sem ação" value={fmtNum(dashboard.oportunidadesSemProximaAcao.length)} icon={AlertTriangle} tone={dashboard.oportunidadesSemProximaAcao.length ? "warning" : "success"} />
         <KpiCard label="Paradas 30+ dias" value={fmtNum(dashboard.oportunidadesParadas.length)} icon={Clock} tone={dashboard.oportunidadesParadas.length ? "destructive" : "success"} />
         <KpiCard label="Orç. abertos/enviados" value={`${dashboard.orcamentoBuckets.abertos}/${dashboard.orcamentoBuckets.enviados}`} icon={FileText} />
