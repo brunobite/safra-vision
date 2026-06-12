@@ -27,27 +27,49 @@ const clearSupabaseStorageKeys = (storage: Storage) => {
 };
 
 export default function Login() {
-  const { user, loading, error, accessStatus, role, isLocalMode, signIn, signUp, signOut, refreshAccess, clearError } = useAuth();
+  const {
+    user,
+    loading,
+    error,
+    accessStatus,
+    role,
+    isLocalMode,
+    signIn,
+    signUp,
+    signOut,
+    refreshAccess,
+    clearError,
+  } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [localClearError, setLocalClearError] = useState<string | null>(null);
+  const [isRedirecting, setIsRedirecting] = useState(false);
 
   const hasActiveAccess = accessStatus === "ativo" || accessStatus === "active";
-  const canEnterApp = Boolean(user) && !loading && hasActiveAccess && canView("/", role);
+  const canEnterApp =
+    Boolean(user) && !loading && hasActiveAccess && canView("/", role);
 
   useEffect(() => {
-    if (canEnterApp) {
-      navigate("/", { replace: true });
+    if (!canEnterApp) {
+      setIsRedirecting(false);
+      return undefined;
     }
+
+    setIsRedirecting(true);
+    const redirectTimer = window.setTimeout(() => {
+      navigate("/", { replace: true });
+    }, 700);
+
+    return () => window.clearTimeout(redirectTimer);
   }, [canEnterApp, navigate]);
 
   const statusMessage =
-    (accessStatus === "pendente" || accessStatus === "pending")
+    accessStatus === "pendente" || accessStatus === "pending"
       ? "Seu acesso está aguardando liberação pelo administrador da conta."
-      : (accessStatus === "bloqueado" || accessStatus === "blocked")
+      : accessStatus === "bloqueado" || accessStatus === "blocked"
         ? "Seu acesso está inativo ou bloqueado. Contate o administrador."
-        : (accessStatus === "ativo" || accessStatus === "active")
+        : accessStatus === "ativo" || accessStatus === "active"
           ? "Acesso liberado ao app."
           : "Seu acesso está inativo ou bloqueado. Contate o administrador.";
 
@@ -56,19 +78,27 @@ export default function Login() {
     try {
       await supabase?.auth.signOut({ scope: "local" });
     } catch (error) {
-      console.warn("Falha ao encerrar sessão local Supabase antes da limpeza manual.", error);
+      console.warn(
+        "Falha ao encerrar sessão local Supabase antes da limpeza manual.",
+        error,
+      );
     }
 
     try {
       clearSupabaseStorageKeys(window.localStorage);
       clearSupabaseStorageKeys(window.sessionStorage);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Erro desconhecido ao limpar sessão local.";
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Erro desconhecido ao limpar sessão local.";
       setLocalClearError(message);
       return;
     }
 
-    window.location.assign(`${window.location.origin}${import.meta.env.BASE_URL}login`);
+    window.location.assign(
+      `${window.location.origin}${import.meta.env.BASE_URL}login`,
+    );
   };
 
   return (
@@ -80,19 +110,33 @@ export default function Login() {
         <CardContent className="space-y-4">
           {isLocalMode && (
             <Alert>
-              <AlertDescription>Modo Local: Supabase não configurado. O app continua funcionando offline.</AlertDescription>
+              <AlertDescription>
+                Modo Local: Supabase não configurado. O app continua funcionando
+                offline.
+              </AlertDescription>
             </Alert>
           )}
 
           {user && (
             <Alert>
               <AlertDescription>
-                Usuário autenticado: {user.email} | papel: {role} | status: {accessStatus}
+                Usuário autenticado: {user.email} | papel: {role} | status:{" "}
+                {accessStatus}
               </AlertDescription>
             </Alert>
           )}
 
-          {user && <p className="text-sm text-muted-foreground">{statusMessage}</p>}
+          {user && (
+            <p className="text-sm text-muted-foreground">{statusMessage}</p>
+          )}
+
+          {isRedirecting && (
+            <Alert>
+              <AlertDescription>
+                Acesso liberado. Entrando no Safra Vision...
+              </AlertDescription>
+            </Alert>
+          )}
 
           {error && (
             <Alert variant="destructive" onClick={clearError}>
@@ -106,26 +150,62 @@ export default function Login() {
             </Alert>
           )}
 
-          <Input type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
-          <Input type="password" placeholder="Senha" value={password} onChange={(e) => setPassword(e.target.value)} />
+          <Input
+            type="email"
+            placeholder="Email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
+          <Input
+            type="password"
+            placeholder="Senha"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
 
           <div className="flex flex-wrap gap-2">
-            <Button disabled={loading} onClick={() => signIn(email, password)}>Entrar</Button>
-            <Button variant="secondary" disabled={loading} onClick={() => signUp(email, password)}>Criar conta</Button>
+            <Button disabled={loading} onClick={() => signIn(email, password)}>
+              Entrar
+            </Button>
+            <Button
+              variant="secondary"
+              disabled={loading}
+              onClick={() => signUp(email, password)}
+            >
+              Criar conta
+            </Button>
             {user && (
               <>
                 {canEnterApp && (
-                  <Button disabled={loading} onClick={() => navigate("/")}>Entrar no app</Button>
+                  <Button
+                    disabled={loading}
+                    onClick={() => navigate("/", { replace: true })}
+                  >
+                    Entrar no app
+                  </Button>
                 )}
-                <Button variant="outline" disabled={loading} onClick={() => refreshAccess()}>Atualizar status</Button>
-                <Button variant="outline" onClick={() => signOut()}>Sair</Button>
+                <Button
+                  variant="outline"
+                  disabled={loading}
+                  onClick={() => refreshAccess()}
+                >
+                  Atualizar status
+                </Button>
+                <Button variant="outline" onClick={() => signOut()}>
+                  Sair
+                </Button>
               </>
             )}
           </div>
 
           <div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
             <p>Use apenas se o login estiver travado.</p>
-            <Button className="mt-2" variant="ghost" size="sm" onClick={() => void handleClearLocalSession()}>
+            <Button
+              className="mt-2"
+              variant="ghost"
+              size="sm"
+              onClick={() => void handleClearLocalSession()}
+            >
               Limpar sessão local
             </Button>
           </div>
