@@ -16,7 +16,7 @@ async function handleCallback(req: Request): Promise<Response> {
   if (oauthError) throw new Error("Autorização do Google Calendar cancelada ou negada.");
   if (!code || !state) throw new Error("Callback OAuth incompleto.");
 
-  const { user_id } = await verifySignedState(state);
+  const { user_id, forceConsent = false } = await verifySignedState(state);
   const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -40,8 +40,22 @@ async function handleCallback(req: Request): Promise<Response> {
     .maybeSingle();
   if (existingError) throw existingError;
 
+  if (forceConsent && !tokens.refresh_token) {
+    throw new Error("Google não retornou novo refresh_token. Remova o acesso antigo do Safra Vision na conta Google e conecte novamente.");
+  }
+
   const refreshToken = tokens.refresh_token || existing?.refresh_token;
   if (!refreshToken) throw new Error("Google não retornou refresh_token. Remova o consentimento antigo no Google e conecte novamente.");
+
+  if (forceConsent) {
+    const now = new Date().toISOString();
+    const { error: revokeError } = await supabase
+      .from("google_calendar_connections")
+      .update({ revoked_at: now, updated_at: now })
+      .eq("user_id", user_id)
+      .is("revoked_at", null);
+    if (revokeError) throw revokeError;
+  }
 
   const values = {
     user_id,
@@ -51,7 +65,7 @@ async function handleCallback(req: Request): Promise<Response> {
     revoked_at: null,
   };
 
-  const { error } = existing?.id
+  const { error } = existing?.id && !forceConsent
     ? await supabase.from("google_calendar_connections").update(values).eq("id", existing.id)
     : await supabase.from("google_calendar_connections").insert(values);
   if (error) throw error;
