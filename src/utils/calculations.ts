@@ -2,6 +2,17 @@ import { Lancamento, Cliente, MetaEmpresa, Negocio, RegraComissao } from "@/type
 
 export const fmtBRL = (n: number) =>
   (n || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL", minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+export const fmtBRLCompact = (n: number) => {
+  const value = Number.isFinite(n) ? n : 0;
+  const abs = Math.abs(value);
+  const formatOneDecimal = (amount: number) => amount.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+
+  if (abs >= 1_000_000) return `R$ ${formatOneDecimal(value / 1_000_000)} mi`;
+  if (abs >= 1_000) return `R$ ${formatOneDecimal(value / 1_000)} mil`;
+
+  return fmtBRL(value);
+};
 export const fmtNum = (n: number) => (n || 0).toLocaleString("pt-BR");
 export const fmtPct = (n: number) => `${((n || 0) * 100).toFixed(1)}%`;
 

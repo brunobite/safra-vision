@@ -21,11 +21,14 @@ const baseCliente = (overrides: Record<string, unknown> = {}) => ({
 }) as unknown as Cliente;
 
 describe("normalização e auditoria de clientes", () => {
-  it("substitui potencialCalculado boolean true por valor numérico e nunca mantém boolean", () => {
-    const cliente = normalizeClienteForPersistence(baseCliente({ potencialCalculado: true }));
+  it("substitui potencialCalculado boolean true/false por potencialTotal numérico e nunca mantém boolean", () => {
+    const clienteTrue = normalizeClienteForPersistence(baseCliente({ potencialCalculado: true, potencialTotal: 250000 }));
+    const clienteFalse = normalizeClienteForPersistence(baseCliente({ potencialCalculado: false, potencialTotal: 123456 }));
 
-    expect(cliente.potencialCalculado).toBe(250000);
-    expect(typeof cliente.potencialCalculado).toBe("number");
+    expect(clienteTrue.potencialCalculado).toBe(250000);
+    expect(clienteFalse.potencialCalculado).toBe(123456);
+    expect(typeof clienteTrue.potencialCalculado).toBe("number");
+    expect(typeof clienteFalse.potencialCalculado).toBe("number");
   });
 
   it("preenche localidade com cidade quando localidade está vazia", () => {
@@ -36,11 +39,16 @@ describe("normalização e auditoria de clientes", () => {
   });
 
   it("remove espaços extras dos campos textuais principais", () => {
-    const cliente = normalizeClienteForPersistence(baseCliente({ nome: "  Cliente   Safra  ", cidade: " Bagé ", vendedor: " Ana   Silva " }));
+    const cliente = normalizeClienteForPersistence(baseCliente({ nome: "  Cliente   Safra  ", cidade: " Bagé ", localidade: " Fazenda  Norte ", vendedor: " Ana   Silva ", statusAtual: " Ativo ", abc: " A ", prioridade: " P1 ", rota: " Rota   1 " }));
 
     expect(cliente.nome).toBe("Cliente Safra");
     expect(cliente.cidade).toBe("Bagé");
+    expect(cliente.localidade).toBe("Fazenda Norte");
     expect(cliente.vendedor).toBe("Ana Silva");
+    expect(cliente.statusAtual).toBe("Ativo");
+    expect(cliente.abc).toBe("A");
+    expect(cliente.prioridade).toBe("P1");
+    expect(cliente.rota).toBe("Rota 1");
   });
 
   it("mantém areaHa e potencialTotal válidos como números", () => {

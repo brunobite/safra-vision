@@ -1,5 +1,4 @@
 import type { Cliente, TicketMedioRegra } from "@/types";
-import { calcularPotencialCliente } from "@/utils/businessRules";
 
 export type ClienteLike = Omit<Partial<Cliente>, "areaHa" | "potencialTotal" | "potencialCalculado"> & { areaHa?: unknown; potencialTotal?: unknown; potencialCalculado?: unknown } & Record<string, unknown>;
 
@@ -77,8 +76,7 @@ export function normalizeClienteForPersistence<T extends ClienteLike>(cliente: T
 
   const potencialCalculadoAtual = normalized.potencialCalculado;
   if (typeof potencialCalculadoAtual === "boolean") {
-    const calculado = ticketsMedios.length > 0 ? calcularPotencialCliente(normalized as Cliente, ticketsMedios) : undefined;
-    normalized.potencialCalculado = calculado !== undefined && Number.isFinite(calculado) ? calculado : normalized.potencialTotal;
+    normalized.potencialCalculado = normalized.potencialTotal;
   } else if (potencialCalculadoAtual !== undefined) {
     const potencialCalculado = parseClienteNumber(potencialCalculadoAtual);
     normalized.potencialCalculado = potencialCalculado ?? normalized.potencialTotal;
