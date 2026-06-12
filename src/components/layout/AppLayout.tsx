@@ -35,6 +35,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useAppStore } from "@/store/AppStore";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import { useAuth } from "@/store/AuthStore";
+import { canCreate, canView } from "@/lib/permissions";
 
 const items = [
   { group: "Visão geral", title: "Dashboard", url: "/", icon: LayoutDashboard },
@@ -64,6 +66,7 @@ const quickActions = [
 
 function AppSidebar() {
   const { isMobile, setOpenMobile } = useSidebar();
+  const { role } = useAuth();
 
   const closeMobileMenu = () => {
     if (isMobile) {
@@ -85,32 +88,36 @@ function AppSidebar() {
         </div>
       </SidebarHeader>
       <SidebarContent>
-        {Array.from(new Set(items.map((item) => item.group))).map((group) => (
-        <SidebarGroup key={group}>
-          <SidebarGroupLabel>{group}</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {items.filter((item) => item.group === group).map(item => (
-                <SidebarMenuItem key={item.url}>
-                  <SidebarMenuButton asChild tooltip={item.title}>
-                    <NavLink
-                      to={item.url}
-                      end={item.url === "/"}
-                      onClick={closeMobileMenu}
-                      className={({ isActive }) =>
-                        isActive ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium" : ""
-                      }
-                    >
-                      <item.icon className="h-4 w-4" />
-                      <span>{item.title}</span>
-                    </NavLink>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-        ))}
+        {Array.from(new Set(items.map((item) => item.group))).map((group) => {
+          const visibleGroupItems = items.filter((item) => item.group === group && canView(item.url, role));
+          if (visibleGroupItems.length === 0) return null;
+          return (
+            <SidebarGroup key={group}>
+              <SidebarGroupLabel>{group}</SidebarGroupLabel>
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  {visibleGroupItems.map((item) => (
+                    <SidebarMenuItem key={item.url}>
+                      <SidebarMenuButton asChild tooltip={item.title}>
+                        <NavLink
+                          to={item.url}
+                          end={item.url === "/"}
+                          onClick={closeMobileMenu}
+                          className={({ isActive }) =>
+                            isActive ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium" : ""
+                          }
+                        >
+                          <item.icon className="h-4 w-4" />
+                          <span>{item.title}</span>
+                        </NavLink>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  ))}
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+          );
+        })}
       </SidebarContent>
     </Sidebar>
   );
@@ -118,6 +125,7 @@ function AppSidebar() {
 
 export default function AppLayout() {
   const [open, setOpen] = useState(false);
+  const { role, accessStatus, vendedorNome } = useAuth();
   const isOnline = useOnlineStatus();
   const { isSaving, lastSavedAt, pendingSyncCount, syncStatus, syncError } = useAppStore();
 
@@ -142,6 +150,7 @@ export default function AppLayout() {
     if (syncStatus === "synced") return "Sincronizado";
     return "";
   })();
+  const visibleQuickActions = quickActions.filter((action) => canView(action.url, role) && canCreate(action.url.includes("orcamentos") ? "orcamentos" : action.url.includes("clientes") ? "clientes" : action.url.includes("agenda") ? "agenda" : "lancamentos", role));
   return (
     <SidebarProvider>
       <div className="flex min-h-screen w-full bg-background">
@@ -158,6 +167,7 @@ export default function AppLayout() {
               {saveText && <div className="hidden text-muted-foreground sm:block">{saveText}</div>}
               {syncText && <div className={syncStatus === "error" ? "max-w-[9rem] truncate text-destructive md:max-w-xs" : pendingSyncCount > 0 ? "max-w-[9rem] truncate text-amber-700 md:max-w-xs" : "hidden text-muted-foreground sm:block"} title={syncText}>{syncText}</div>}
               {syncStatus === "error" && syncError && <div className="hidden max-w-xs truncate text-destructive/80 sm:block" title={syncError}>{syncError}</div>}
+              <div className="hidden text-muted-foreground sm:block">Perfil: {role}{vendedorNome ? ` • ${vendedorNome}` : ""} • {accessStatus}</div>
             </div>
           </header>
           <main className="flex-1 overflow-x-hidden p-4 pb-[calc(6rem+env(safe-area-inset-bottom))] md:p-6 md:pb-6">
@@ -166,7 +176,7 @@ export default function AppLayout() {
           <div className="fixed bottom-5 right-5 z-40 hidden md:block">
             <Button className="h-12 w-12 rounded-full text-xl" onClick={() => setOpen((v) => !v)} aria-label="Abrir ações rápidas">+</Button>
             {open && <div className="absolute bottom-14 right-0 w-56 rounded border bg-card p-2 text-sm shadow">
-              {quickActions.map((action) => (
+              {visibleQuickActions.map((action) => (
                 <NavLink key={action.url} onClick={() => setOpen(false)} className="block rounded px-2 py-2 hover:bg-accent" to={action.url}>{action.title}</NavLink>
               ))}
             </div>}
@@ -189,7 +199,7 @@ export default function AppLayout() {
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" side="top" sideOffset={12} className="z-40 mb-1 w-[min(22rem,calc(100vw-2rem))] p-2">
                   <DropdownMenuLabel>Ações rápidas</DropdownMenuLabel>
-                  {quickActions.map((action) => (
+                  {visibleQuickActions.map((action) => (
                     <DropdownMenuItem key={action.url} asChild className="min-h-11 cursor-pointer text-sm">
                       <NavLink to={action.url}>{action.title}</NavLink>
                     </DropdownMenuItem>

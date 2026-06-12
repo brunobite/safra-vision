@@ -5,9 +5,10 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppStoreProvider } from "@/store/AppStore";
-import { AuthStoreProvider } from "@/store/AuthStore";
+import { AuthStoreProvider, useAuth } from "@/store/AuthStore";
 import AppLayout from "@/components/layout/AppLayout";
 import { preloadOfflineRoutes } from "@/lib/preloadOfflineRoutes";
+import { canView } from "@/lib/permissions";
 
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const Lancamentos = lazy(() => import("./pages/Lancamentos"));
@@ -26,6 +27,19 @@ const ProximasAcoes = lazy(() => import("./pages/ProximasAcoes"));
 const Agenda = lazy(() => import("./pages/Agenda"));
 const ClienteFicha360 = lazy(() => import("./pages/ClienteFicha360"));
 const Login = lazy(() => import("./pages/Login"));
+
+
+function ProtectedPage({ route, children }: { route: string; children: React.ReactNode }) {
+  const { user, loading, accessStatus, role, isLocalMode } = useAuth();
+
+  if (loading) return <div className="p-6 text-sm text-muted-foreground">Validando acesso...</div>;
+  if (!isLocalMode && !user) return <Navigate to="/login" replace />;
+  if (accessStatus === "pendente" || accessStatus === "pending") return <Navigate to="/login" replace />;
+  if (["inativo", "inactive", "bloqueado", "blocked"].includes(accessStatus)) return <Navigate to="/login" replace />;
+  if (!canView(route, role)) return <Navigate to="/" replace />;
+
+  return <>{children}</>;
+}
 
 const queryClient = new QueryClient();
 
@@ -53,22 +67,22 @@ const App = () => {
           <Suspense fallback={<div className="sr-only">Carregando página</div>}>
             <Routes>
               <Route element={<AppLayout />}>
-                <Route path="/" element={<Dashboard />} />
-                <Route path="/lancamentos" element={<Lancamentos />} />
-                <Route path="/funil" element={<FunilVendas />} />
-                <Route path="/orcamentos" element={<Orcamentos />} />
-                <Route path="/produtos" element={<Produtos />} />
+                <Route path="/" element={<ProtectedPage route="/"><Dashboard /></ProtectedPage>} />
+                <Route path="/lancamentos" element={<ProtectedPage route="/lancamentos"><Lancamentos /></ProtectedPage>} />
+                <Route path="/funil" element={<ProtectedPage route="/funil"><FunilVendas /></ProtectedPage>} />
+                <Route path="/orcamentos" element={<ProtectedPage route="/orcamentos"><Orcamentos /></ProtectedPage>} />
+                <Route path="/produtos" element={<ProtectedPage route="/produtos"><Produtos /></ProtectedPage>} />
                 <Route path="/precos-estoque" element={<Navigate to="/produtos" replace />} />
-                <Route path="/metas" element={<Metas />} />
-                <Route path="/relatorios" element={<Relatorios />} />
-                <Route path="/clientes" element={<Clientes />} />
-                <Route path="/clientes/:id" element={<ClienteFicha360 />} />
-                <Route path="/rotas" element={<Rotas />} />
-                <Route path="/prioridades" element={<PrioridadesP1 />} />
-                <Route path="/eventos" element={<Eventos />} />
-                <Route path="/proximas-acoes" element={<ProximasAcoes />} />
-                <Route path="/agenda" element={<Agenda />} />
-                <Route path="/configuracoes" element={<Configuracoes />} />
+                <Route path="/metas" element={<ProtectedPage route="/metas"><Metas /></ProtectedPage>} />
+                <Route path="/relatorios" element={<ProtectedPage route="/relatorios"><Relatorios /></ProtectedPage>} />
+                <Route path="/clientes" element={<ProtectedPage route="/clientes"><Clientes /></ProtectedPage>} />
+                <Route path="/clientes/:id" element={<ProtectedPage route="/clientes"><ClienteFicha360 /></ProtectedPage>} />
+                <Route path="/rotas" element={<ProtectedPage route="/rotas"><Rotas /></ProtectedPage>} />
+                <Route path="/prioridades" element={<ProtectedPage route="/prioridades"><PrioridadesP1 /></ProtectedPage>} />
+                <Route path="/eventos" element={<ProtectedPage route="/eventos"><Eventos /></ProtectedPage>} />
+                <Route path="/proximas-acoes" element={<ProtectedPage route="/proximas-acoes"><ProximasAcoes /></ProtectedPage>} />
+                <Route path="/agenda" element={<ProtectedPage route="/agenda"><Agenda /></ProtectedPage>} />
+                <Route path="/configuracoes" element={<ProtectedPage route="/configuracoes"><Configuracoes /></ProtectedPage>} />
               </Route>
               <Route path="/login" element={<Login />} />
               <Route path="*" element={<NotFound />} />

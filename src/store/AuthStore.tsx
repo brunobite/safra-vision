@@ -1,10 +1,15 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase";
+import { normalizeAccessStatus, normalizeRole, type AccessStatus, type UserRole } from "@/lib/permissions";
 
-type AccessStatus = "pending" | "active" | "blocked" | "inactive";
-type UserRole = "admin" | "gestor" | "vendedor" | "operacional" | "consulta" | "user";
-type AccessProfile = { accessStatus: AccessStatus; role: UserRole };
+type AccessProfile = {
+  accessStatus: AccessStatus;
+  role: UserRole;
+  vendedorNome: string | null;
+  nome: string | null;
+  profileId: string | null;
+};
 
 type AuthContextValue = {
   user: User | null;
@@ -13,6 +18,9 @@ type AuthContextValue = {
   error: string | null;
   accessStatus: AccessStatus;
   role: UserRole;
+  vendedorNome: string | null;
+  nome: string | null;
+  profileId: string | null;
   isLocalMode: boolean;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string) => Promise<void>;
@@ -24,82 +32,122 @@ type AuthContextValue = {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 const AUTH_TIMEOUT_MS = 8000;
+const BRUNO_ADMIN_EMAIL = "bitencourttec@gmail.com";
 
 function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timeoutId = window.setTimeout(() => reject(new Error(message)), ms);
-    promise
-      .then(resolve)
-      .catch(reject)
-      .finally(() => window.clearTimeout(timeoutId));
+    promise.then(resolve).catch(reject).finally(() => window.clearTimeout(timeoutId));
   });
 }
+
 const adminEmails = new Set(
-  (import.meta.env.VITE_ADMIN_EMAILS ?? "")
-    .split(",")
+  [BRUNO_ADMIN_EMAIL, ...(import.meta.env.VITE_ADMIN_EMAILS ?? "").split(",")]
     .map((email: string) => email.trim().toLowerCase())
     .filter(Boolean),
 );
+
+const localAdminProfile: AccessProfile = {
+  accessStatus: "ativo",
+  role: "administrador",
+  vendedorNome: null,
+  nome: "Administrador local",
+  profileId: "local",
+};
 
 export function AuthStoreProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [accessStatus, setAccessStatus] = useState<AccessStatus>("pending");
-  const [role, setRole] = useState<UserRole>("user");
+  const [accessStatus, setAccessStatus] = useState<AccessStatus>(isSupabaseConfigured ? "pendente" : "ativo");
+  const [role, setRole] = useState<UserRole>(isSupabaseConfigured ? "visualizador" : "administrador");
+  const [vendedorNome, setVendedorNome] = useState<string | null>(null);
+  const [nome, setNome] = useState<string | null>(null);
+  const [profileId, setProfileId] = useState<string | null>(null);
 
   const isLocalMode = !isSupabaseConfigured;
 
-  const refreshProfile = useCallback(async (currentUser: User | null): Promise<AccessProfile> => {
-    const fallbackProfile: AccessProfile = { accessStatus: "pending", role: "user" };
+  const applyProfile = useCallback((profile: AccessProfile) => {
+    setAccessStatus(profile.accessStatus);
+    setRole(profile.role);
+    setVendedorNome(profile.vendedorNome);
+    setNome(profile.nome);
+    setProfileId(profile.profileId);
+  }, []);
 
+  const refreshProfile = useCallback(async (currentUser: User | null): Promise<AccessProfile> => {
     if (!supabase || !currentUser) {
-      setAccessStatus(fallbackProfile.accessStatus);
-      setRole(fallbackProfile.role);
+      const fallbackProfile = supabase ? { accessStatus: "pendente", role: "visualizador", vendedorNome: null, nome: null, profileId: null } satisfies AccessProfile : localAdminProfile;
+      applyProfile(fallbackProfile);
       return fallbackProfile;
     }
 
+    const email = currentUser.email?.trim().toLowerCase() ?? "";
+
     try {
+      const { error: ensureError } = await withTimeout(
+        Promise.resolve(supabase.rpc("ensure_current_user_profile")),
+        AUTH_TIMEOUT_MS,
+        "Tempo excedido ao preparar perfil de acesso.",
+      );
+      if (ensureError) console.warn("Não foi possível executar fallback de perfil:", ensureError.message);
+
       const { data, error: profileError } = await withTimeout(
         Promise.resolve(
           supabase
-            .from("profiles")
-            .select("status, role")
-            .eq("id", currentUser.id)
+            .from("user_profiles")
+            .select("id, status, papel, vendedor_nome, nome, email")
+            .eq("user_id", currentUser.id)
             .maybeSingle(),
         ),
         AUTH_TIMEOUT_MS,
-        "Tempo excedido ao buscar profile Supabase.",
+        "Tempo excedido ao buscar perfil Supabase.",
       );
 
       if (profileError) {
         setError(profileError.message);
-        setAccessStatus(fallbackProfile.accessStatus);
-        setRole(fallbackProfile.role);
+        const fallbackProfile: AccessProfile = adminEmails.has(email)
+          ? { accessStatus: "ativo", role: "administrador", vendedorNome: null, nome: currentUser.user_metadata?.nome ?? null, profileId: null }
+          : { accessStatus: "pendente", role: "visualizador", vendedorNome: null, nome: null, profileId: null };
+        applyProfile(fallbackProfile);
         return fallbackProfile;
       }
 
-      const nextProfile: AccessProfile = {
-        accessStatus: (data?.status as AccessStatus) ?? fallbackProfile.accessStatus,
-        role: (data?.role as UserRole) ?? fallbackProfile.role,
-      };
+      const brunoFallback = adminEmails.has(email);
+      const nextProfile: AccessProfile = data
+        ? {
+            accessStatus: normalizeAccessStatus(data.status),
+            role: normalizeRole(data.papel),
+            vendedorNome: data.vendedor_nome ?? null,
+            nome: data.nome ?? null,
+            profileId: data.id ?? null,
+          }
+        : {
+            accessStatus: brunoFallback ? "ativo" : "pendente",
+            role: brunoFallback ? "administrador" : "visualizador",
+            vendedorNome: null,
+            nome: currentUser.user_metadata?.nome ?? null,
+            profileId: null,
+          };
 
-      setAccessStatus(nextProfile.accessStatus);
-      setRole(nextProfile.role);
+      applyProfile(nextProfile);
       return nextProfile;
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Erro desconhecido ao buscar profile Supabase.";
+      const message = error instanceof Error ? error.message : "Erro desconhecido ao buscar perfil Supabase.";
       setError(message);
-      setAccessStatus(fallbackProfile.accessStatus);
-      setRole(fallbackProfile.role);
+      const fallbackProfile: AccessProfile = adminEmails.has(email)
+        ? { accessStatus: "ativo", role: "administrador", vendedorNome: null, nome: currentUser.user_metadata?.nome ?? null, profileId: null }
+        : { accessStatus: "pendente", role: "visualizador", vendedorNome: null, nome: null, profileId: null };
+      applyProfile(fallbackProfile);
       return fallbackProfile;
     }
-  }, []);
+  }, [applyProfile]);
 
   useEffect(() => {
     if (!supabase) {
       setLoading(false);
+      applyProfile(localAdminProfile);
       return;
     }
 
@@ -139,8 +187,7 @@ export function AuthStoreProvider({ children }: { children: React.ReactNode }) {
       } catch (error) {
         const message = error instanceof Error ? error.message : "Erro desconhecido ao atualizar sessão Supabase.";
         setError(message);
-        setAccessStatus("pending");
-        setRole("user");
+        applyProfile({ accessStatus: "pendente", role: "visualizador", vendedorNome: null, nome: null, profileId: null });
       } finally {
         if (isMounted) setLoading(false);
       }
@@ -150,7 +197,7 @@ export function AuthStoreProvider({ children }: { children: React.ReactNode }) {
       isMounted = false;
       subscription.subscription.unsubscribe();
     };
-  }, [refreshProfile]);
+  }, [applyProfile, refreshProfile]);
 
   const signIn = useCallback(async (email: string, password: string) => {
     if (!supabase) {
@@ -177,7 +224,7 @@ export function AuthStoreProvider({ children }: { children: React.ReactNode }) {
       email,
       password,
       options: {
-        data: shouldBootstrapAsAdmin ? { requested_role: "admin" } : {},
+        data: shouldBootstrapAsAdmin ? { requested_role: "administrador" } : {},
         emailRedirectTo: `${window.location.origin}${import.meta.env.BASE_URL}login`,
       },
     });
@@ -186,7 +233,8 @@ export function AuthStoreProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    setAccessStatus("pending");
+    setAccessStatus(shouldBootstrapAsAdmin ? "ativo" : "pendente");
+    setRole(shouldBootstrapAsAdmin ? "administrador" : "visualizador");
   }, []);
 
   const signOut = useCallback(async () => {
@@ -196,14 +244,11 @@ export function AuthStoreProvider({ children }: { children: React.ReactNode }) {
 
     setUser(null);
     setSession(null);
-    setAccessStatus("pending");
-    setRole("user");
+    applyProfile({ accessStatus: "pendente", role: "visualizador", vendedorNome: null, nome: null, profileId: null });
     setError(signOutError ? signOutError.message : null);
-  }, []);
+  }, [applyProfile]);
 
-  const refreshAccess = useCallback(async () => {
-    return refreshProfile(user);
-  }, [refreshProfile, user]);
+  const refreshAccess = useCallback(async () => refreshProfile(user), [refreshProfile, user]);
 
   const value = useMemo<AuthContextValue>(() => ({
     user,
@@ -212,13 +257,16 @@ export function AuthStoreProvider({ children }: { children: React.ReactNode }) {
     error,
     accessStatus,
     role,
+    vendedorNome,
+    nome,
+    profileId,
     isLocalMode,
     signIn,
     signUp,
     signOut,
     refreshAccess,
     clearError: () => setError(null),
-  }), [user, session, loading, error, accessStatus, role, isLocalMode, signIn, signUp, signOut, refreshAccess]);
+  }), [user, session, loading, error, accessStatus, role, vendedorNome, nome, profileId, isLocalMode, signIn, signUp, signOut, refreshAccess]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
