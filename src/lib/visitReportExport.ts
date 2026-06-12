@@ -7,6 +7,7 @@ import { formatDateBR } from "@/utils/dateUtils";
 import { formatDateTimeStamp } from "@/lib/exportService";
 
 export type OpportunityFilter = "todas" | "com" | "sem";
+export type NextActionFilter = "todas" | "com" | "sem";
 
 export interface VisitReportFilters {
   dataInicial: string;
@@ -18,6 +19,7 @@ export interface VisitReportFilters {
   resultadoVisita: string;
   tipoAcao: string;
   oportunidade: OpportunityFilter;
+  proximaAcao: NextActionFilter;
 }
 
 export interface VisitReportBundle {
@@ -40,6 +42,8 @@ export interface EnrichedVisitReport extends RelatorioVisita {
   rotaExport: string;
   vendedorExport: string;
   hasOportunidade: boolean;
+  hasProximaAcao: boolean;
+  proximaAcaoExport: string;
 }
 
 export interface VisitReportSummary {
@@ -47,8 +51,14 @@ export interface VisitReportSummary {
   visitasComOportunidade: number;
   visitasSemOportunidade: number;
   totalClientesVisitados: number;
+  clientesComOportunidade: number;
+  clientesSemOportunidade: number;
+  visitasComProximaAcao: number;
+  visitasSemProximaAcao: number;
   porVendedor: Array<{ label: string; total: number }>;
   porResultado: Array<{ label: string; total: number }>;
+  porCidade: Array<{ label: string; total: number }>;
+  proximasAcoes: Array<{ visitaId: string; dataVisita: string; cliente: string; vendedor: string; acao: string }>;
 }
 
 export const defaultVisitReportFilters: VisitReportFilters = {
@@ -61,11 +71,12 @@ export const defaultVisitReportFilters: VisitReportFilters = {
   resultadoVisita: "",
   tipoAcao: "",
   oportunidade: "todas",
+  proximaAcao: "todas",
 };
 
 const normalize = (value?: string | null) => String(value ?? "").trim();
 const lower = (value?: string | null) => normalize(value).toLocaleLowerCase("pt-BR");
-const text = (value?: string | number | null) => normalize(String(value ?? "")) || "-";
+const text = (value?: string | number | null) => normalize(String(value ?? "")) || "—";
 const safeFilePart = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9-_]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").toLowerCase() || "relatorio";
 
 function countBy<T>(rows: T[], getKey: (row: T) => string | undefined) {
@@ -84,7 +95,9 @@ export function enrichVisitReports(bundle: VisitReportBundle) {
     const negocio = bundle.negocios.find((n) => n.id === visit.negocioId || n.oportunidadeId === visit.oportunidadeId || n.lancamentoId === visit.lancamentoId);
     const lancamento = bundle.lancamentos.find((l) => l.id === visit.lancamentoId || l.id === visit.acaoId || l.acaoAgendaId === visit.acaoId || l.oportunidadeId === visit.oportunidadeId);
     const proximaAcao = bundle.proximasAcoes.find((a) => a.id === visit.origemAgendaId || a.id === visit.acaoId || a.proximaAcaoId === visit.origemAgendaId || a.oportunidadeId === visit.oportunidadeId || a.negocioId === visit.negocioId);
+    const proximaAcaoExport = normalize(visit.proximaAcaoRecomendada) || proximaAcao?.descricao || lancamento?.proximaAcao || "";
     const hasOportunidade = Boolean(visit.oportunidadeId || oportunidade || visit.negocioId || negocio || visit.resultadoVisita === "Visita realizada com oportunidade");
+    const hasProximaAcao = Boolean(proximaAcaoExport || proximaAcao || lancamento?.proximaAcaoId || lancamento?.dataProximaAcao);
 
     return {
       ...visit,
@@ -98,6 +111,8 @@ export function enrichVisitReports(bundle: VisitReportBundle) {
       rotaExport: cliente?.rota || "",
       vendedorExport: normalize(visit.vendedor) || oportunidade?.vendedor || negocio?.vendedor || cliente?.vendedor || lancamento?.vendedor || proximaAcao?.responsavel || "",
       hasOportunidade,
+      hasProximaAcao,
+      proximaAcaoExport,
     };
   });
 }
@@ -114,18 +129,33 @@ export function filterVisitReports(visits: EnrichedVisitReport[], filters: Visit
     if (filters.tipoAcao && visit.tipoAcao !== filters.tipoAcao) return false;
     if (filters.oportunidade === "com" && !visit.hasOportunidade) return false;
     if (filters.oportunidade === "sem" && visit.hasOportunidade) return false;
+    if (filters.proximaAcao === "com" && !visit.hasProximaAcao) return false;
+    if (filters.proximaAcao === "sem" && visit.hasProximaAcao) return false;
     return true;
   }).sort((a, b) => `${a.dataVisita} ${a.horario || ""}`.localeCompare(`${b.dataVisita} ${b.horario || ""}`));
 }
 
 export function summarizeVisitReports(visits: EnrichedVisitReport[]): VisitReportSummary {
+  const clientKey = (visit: EnrichedVisitReport) => visit.clienteId || visit.clienteNomeExport;
+  const clientesComOportunidade = new Set(visits.filter((v) => v.hasOportunidade).map(clientKey).filter(Boolean)).size;
+  const clientesVisitados = new Set(visits.map(clientKey).filter(Boolean));
+
   return {
     totalVisitas: visits.length,
     visitasComOportunidade: visits.filter((v) => v.hasOportunidade).length,
     visitasSemOportunidade: visits.filter((v) => !v.hasOportunidade).length,
-    totalClientesVisitados: new Set(visits.map((v) => v.clienteId || v.clienteNomeExport).filter(Boolean)).size,
+    totalClientesVisitados: clientesVisitados.size,
+    clientesComOportunidade,
+    clientesSemOportunidade: Math.max(clientesVisitados.size - clientesComOportunidade, 0),
+    visitasComProximaAcao: visits.filter((v) => v.hasProximaAcao).length,
+    visitasSemProximaAcao: visits.filter((v) => !v.hasProximaAcao).length,
     porVendedor: countBy(visits, (v) => v.vendedorExport),
     porResultado: countBy(visits, (v) => v.resultadoVisita),
+    porCidade: countBy(visits, (v) => v.cidadeExport),
+    proximasAcoes: visits
+      .filter((v) => v.hasProximaAcao)
+      .map((v) => ({ visitaId: v.id, dataVisita: v.dataVisita, cliente: v.clienteNomeExport, vendedor: v.vendedorExport, acao: v.proximaAcaoExport || v.proximaAcao?.descricao || v.lancamento?.proximaAcao || "" }))
+      .filter((v) => normalize(v.acao)),
   };
 }
 
@@ -140,6 +170,8 @@ export function describeVisitReportFilters(filters: VisitReportFilters, clientes
     filters.tipoAcao && `Tipo de ação: ${filters.tipoAcao}`,
     filters.oportunidade === "com" && "Somente visitas com oportunidade",
     filters.oportunidade === "sem" && "Somente visitas sem oportunidade",
+    filters.proximaAcao === "com" && "Somente visitas com próxima ação",
+    filters.proximaAcao === "sem" && "Somente visitas sem próxima ação",
   ].filter(Boolean) as string[];
 }
 
@@ -150,26 +182,26 @@ export function visitReportPeriodText(filters: VisitReportFilters) {
 
 const visitRows = (visits: EnrichedVisitReport[]) => visits.map((visit) => ({
   dataVisita: visit.dataVisita,
-  horario: visit.horario || "",
+  horario: visit.horario || "—",
   clienteNome: visit.clienteNomeExport,
-  fazenda: visit.fazenda || "",
-  cidade: visit.cidadeExport,
-  vendedor: visit.vendedorExport,
+  fazenda: visit.fazenda || "—",
+  cidade: visit.cidadeExport || "—",
+  vendedor: visit.vendedorExport || "—",
   tipoAcao: visit.tipoAcao,
-  objetivoOriginal: visit.objetivoOriginal || "",
-  resumoVisita: visit.resumoVisita || "",
-  pontosAvaliados: visit.pontosAvaliados || "",
-  dadosColetados: visit.dadosColetados || "",
-  necessidadeIdentificada: visit.necessidadeIdentificada || visit.oportunidade?.necessidade || "",
-  produtosSolucoesDiscutidas: visit.produtosSolucoesDiscutidas || visit.oportunidade?.produtosInteresse?.join(", ") || visit.negocio?.produtos?.join(", ") || "",
-  potencialNegocio: visit.potencialNegocio || (visit.oportunidade?.valorEstimado ? String(visit.oportunidade.valorEstimado) : visit.negocio?.valorPotencial ? String(visit.negocio.valorPotencial) : ""),
+  objetivoOriginal: visit.objetivoOriginal || "—",
+  resumoVisita: visit.resumoVisita || "—",
+  pontosAvaliados: visit.pontosAvaliados || "—",
+  dadosColetados: visit.dadosColetados || "—",
+  necessidadeIdentificada: visit.necessidadeIdentificada || visit.oportunidade?.necessidade || "—",
+  produtosSolucoesDiscutidas: visit.produtosSolucoesDiscutidas || visit.oportunidade?.produtosInteresse?.join(", ") || visit.negocio?.produtos?.join(", ") || "—",
+  potencialNegocio: visit.potencialNegocio || (visit.oportunidade?.valorEstimado ? String(visit.oportunidade.valorEstimado) : visit.negocio?.valorPotencial ? String(visit.negocio.valorPotencial) : "—"),
   resultadoVisita: visit.resultadoVisita,
-  proximaAcaoRecomendada: visit.proximaAcaoRecomendada || visit.proximaAcao?.descricao || visit.lancamento?.proximaAcao || "",
-  observacoesGerais: visit.observacoesGerais || "",
-  oportunidadeId: visit.oportunidadeId || visit.oportunidade?.id || "",
-  acaoId: visit.acaoId || visit.origemAgendaId || visit.proximaAcao?.id || "",
-  lancamentoId: visit.lancamentoId || visit.lancamento?.id || "",
-  negocioId: visit.negocioId || visit.negocio?.id || "",
+  proximaAcaoRecomendada: visit.proximaAcaoExport || "—",
+  observacoesGerais: visit.observacoesGerais || "—",
+  origemAgendaId: visit.origemAgendaId || "—",
+  lancamentoId: visit.lancamentoId || visit.lancamento?.id || "—",
+  oportunidadeId: visit.oportunidadeId || visit.oportunidade?.id || "—",
+  negocioId: visit.negocioId || visit.negocio?.id || "—",
   createdAt: visit.createdAt,
   updatedAt: visit.updatedAt,
 }));
@@ -184,7 +216,12 @@ export function exportVisitReportsXlsx(visits: EnrichedVisitReport[], filters: V
     { indicador: "Visitas com oportunidade", valor: summary.visitasComOportunidade },
     { indicador: "Visitas sem oportunidade", valor: summary.visitasSemOportunidade },
     { indicador: "Total de clientes visitados", valor: summary.totalClientesVisitados },
+    { indicador: "Clientes com oportunidade gerada", valor: summary.clientesComOportunidade },
+    { indicador: "Clientes sem oportunidade", valor: summary.clientesSemOportunidade },
+    { indicador: "Visitas com próxima ação", valor: summary.visitasComProximaAcao },
+    { indicador: "Visitas sem próxima ação", valor: summary.visitasSemProximaAcao },
     ...summary.porVendedor.map((item) => ({ indicador: `Visitas por vendedor - ${item.label}`, valor: item.total })),
+    ...summary.porCidade.map((item) => ({ indicador: `Visitas por cidade - ${item.label}`, valor: item.total })),
     ...summary.porResultado.map((item) => ({ indicador: `Visitas por resultado - ${item.label}`, valor: item.total })),
   ];
   const workbook = XLSX.utils.book_new();
@@ -203,6 +240,60 @@ function addFooter(doc: jsPDF) {
   }
 }
 
+function visitDetailsRows(visit: EnrichedVisitReport) {
+  return [
+    ["Data da visita", `${formatDateBR(visit.dataVisita)}${visit.horario ? ` às ${visit.horario}` : ""}`],
+    ["Cliente", text(visit.clienteNomeExport)],
+    ["Fazenda/propriedade", text(visit.fazenda)],
+    ["Cidade", text(visit.cidadeExport)],
+    ["Vendedor/responsável", text(visit.vendedorExport)],
+    ["Tipo de ação", text(visit.tipoAcao)],
+    ["Objetivo original", text(visit.objetivoOriginal)],
+    ["Resumo da visita", text(visit.resumoVisita)],
+    ["Pontos avaliados", text(visit.pontosAvaliados)],
+    ["Dados coletados", text(visit.dadosColetados)],
+    ["Necessidade identificada", text(visit.necessidadeIdentificada || visit.oportunidade?.necessidade)],
+    ["Produtos/soluções discutidas", text(visit.produtosSolucoesDiscutidas || visit.oportunidade?.produtosInteresse?.join(", ") || visit.negocio?.produtos?.join(", "))],
+    ["Potencial de negócio", text(visit.potencialNegocio || visit.oportunidade?.valorEstimado || visit.negocio?.valorPotencial)],
+    ["Resultado da visita", text(visit.resultadoVisita)],
+    ["Próxima ação recomendada", text(visit.proximaAcaoExport)],
+    ["Observações gerais", text(visit.observacoesGerais)],
+    ["Ação de agenda", text(visit.origemAgendaId || visit.acaoId || visit.proximaAcao?.id)],
+    ["Lançamento", text(visit.lancamentoId || visit.lancamento?.id)],
+    ["Oportunidade", text(visit.oportunidadeId || visit.oportunidade?.id)],
+    ["Negócio", text(visit.negocioId || visit.negocio?.id)],
+  ];
+}
+
+export function exportSingleVisitReportPdf(visit: EnrichedVisitReport) {
+  const doc = new jsPDF({ unit: "mm", format: "a4" });
+  const margin = 12;
+  const width = doc.internal.pageSize.getWidth();
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(16);
+  doc.text("Safra Vision / Safra 26/27", width / 2, 16, { align: "center" });
+  doc.setFontSize(12);
+  doc.text("Relatório individual de visita", width / 2, 23, { align: "center" });
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  doc.text(`Gerado em ${new Date().toLocaleString("pt-BR")}`, margin, 32);
+
+  autoTable(doc, {
+    startY: 38,
+    theme: "grid",
+    head: [["Campo", "Informação"]],
+    body: visitDetailsRows(visit),
+    styles: { fontSize: 9, cellPadding: 2, valign: "top" },
+    headStyles: { fillColor: [35, 89, 64], textColor: 255 },
+    columnStyles: { 0: { cellWidth: 50, fontStyle: "bold" }, 1: { cellWidth: width - margin * 2 - 50 } },
+    margin: { left: margin, right: margin },
+  });
+
+  addFooter(doc);
+  doc.save(`relatorio-visita-${safeFilePart(visit.clienteNomeExport)}-${safeFilePart(visit.dataVisita)}.pdf`);
+}
+
 export function exportVisitReportsPdf(visits: EnrichedVisitReport[], filters: VisitReportFilters, clientes: Cliente[]) {
   const doc = new jsPDF({ unit: "mm", format: "a4" });
   const margin = 12;
@@ -214,69 +305,90 @@ export function exportVisitReportsPdf(visits: EnrichedVisitReport[], filters: Vi
   doc.setFontSize(16);
   doc.text("Safra Vision / Safra 26/27", width / 2, 16, { align: "center" });
   doc.setFontSize(12);
-  doc.text("Relatório executivo de visitas", width / 2, 23, { align: "center" });
+  doc.text("Relatório consolidado de visitas", width / 2, 23, { align: "center" });
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
-  doc.text(`Período: ${visitReportPeriodText(filters)}`, margin, 32);
+  doc.text(`Período filtrado: ${visitReportPeriodText(filters)}`, margin, 32);
   doc.text(`Filtros: ${filtersText.join("; ") || "Sem filtros adicionais"}`, margin, 38, { maxWidth: width - margin * 2 });
 
   autoTable(doc, {
-    startY: 45,
+    startY: 46,
     theme: "grid",
-    head: [["Total", "Com oportunidade", "Sem oportunidade", "Clientes visitados"]],
-    body: [[summary.totalVisitas, summary.visitasComOportunidade, summary.visitasSemOportunidade, summary.totalClientesVisitados]],
-    styles: { fontSize: 9, cellPadding: 2 },
+    head: [["Total de visitas", "Clientes visitados", "Clientes com oportunidade", "Clientes sem oportunidade", "Com próxima ação"]],
+    body: [[summary.totalVisitas, summary.totalClientesVisitados, summary.clientesComOportunidade, summary.clientesSemOportunidade, summary.visitasComProximaAcao]],
+    styles: { fontSize: 8.5, cellPadding: 2 },
+    headStyles: { fillColor: [35, 89, 64], textColor: 255 },
     margin: { left: margin, right: margin },
   });
 
-  const firstY = ((doc as jsPDF & { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 45) + 4;
+  const firstY = ((doc as jsPDF & { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 46) + 4;
   autoTable(doc, {
     startY: firstY,
     theme: "striped",
-    head: [["Visitas por vendedor", "Qtd.", "Principais resultados", "Qtd."]],
-    body: Array.from({ length: Math.max(summary.porVendedor.length, summary.porResultado.length, 1) }).map((_, index) => [
-      summary.porVendedor[index]?.label || "",
-      summary.porVendedor[index]?.total || "",
-      summary.porResultado[index]?.label || "",
-      summary.porResultado[index]?.total || "",
+    head: [["Visitas por vendedor", "Qtd.", "Visitas por cidade", "Qtd.", "Visitas por resultado", "Qtd."]],
+    body: Array.from({ length: Math.max(summary.porVendedor.length, summary.porCidade.length, summary.porResultado.length, 1) }).map((_, index) => [
+      summary.porVendedor[index]?.label || "—",
+      summary.porVendedor[index]?.total || "—",
+      summary.porCidade[index]?.label || "—",
+      summary.porCidade[index]?.total || "—",
+      summary.porResultado[index]?.label || "—",
+      summary.porResultado[index]?.total || "—",
     ]),
-    styles: { fontSize: 8, cellPadding: 1.8 },
+    styles: { fontSize: 7.5, cellPadding: 1.6 },
     margin: { left: margin, right: margin },
   });
 
-  let y = ((doc as jsPDF & { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? firstY) + 7;
+  const clientesResumo = Array.from(
+    visits.reduce((map, visit) => {
+      const key = visit.clienteId || visit.clienteNomeExport;
+      const current = map.get(key);
+      map.set(key, { cliente: visit.clienteNomeExport, hasOportunidade: Boolean(current?.hasOportunidade || visit.hasOportunidade) });
+      return map;
+    }, new Map<string, { cliente: string; hasOportunidade: boolean }>()).values(),
+  ).sort((a, b) => a.cliente.localeCompare(b.cliente));
+
+  let y = ((doc as jsPDF & { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? firstY) + 6;
+  autoTable(doc, {
+    startY: y,
+    theme: "grid",
+    head: [["Clientes visitados", "Status de oportunidade"]],
+    body: clientesResumo.length > 0 ? clientesResumo.map((cliente) => [cliente.cliente, cliente.hasOportunidade ? "Com oportunidade gerada" : "Sem oportunidade"]) : [["—", "—"]],
+    styles: { fontSize: 8, cellPadding: 1.7 },
+    margin: { left: margin, right: margin },
+  });
+
+  y = ((doc as jsPDF & { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? y) + 6;
+  autoTable(doc, {
+    startY: y,
+    theme: "striped",
+    head: [["Próximas ações recomendadas", "Cliente", "Vendedor", "Data da visita"]],
+    body: summary.proximasAcoes.length > 0 ? summary.proximasAcoes.map((acao) => [acao.acao, acao.cliente, text(acao.vendedor), formatDateBR(acao.dataVisita)]) : [["—", "—", "—", "—"]],
+    styles: { fontSize: 7.8, cellPadding: 1.6, valign: "top" },
+    margin: { left: margin, right: margin },
+  });
+
+  y = ((doc as jsPDF & { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? y) + 7;
   doc.setFont("helvetica", "bold");
   doc.setFontSize(12);
-  doc.text("Lista de visitas", margin, y);
+  doc.text("Lista resumida das visitas", margin, y);
   y += 4;
 
-  visits.forEach((visit, index) => {
-    autoTable(doc, {
-      startY: y,
-      theme: "grid",
-      head: [[`Visita ${index + 1} — ${formatDateBR(visit.dataVisita)} ${visit.horario ? `às ${visit.horario}` : ""}`, visit.clienteNomeExport]],
-      body: [
-        ["Fazenda / Cidade", `${text(visit.fazenda)} / ${text(visit.cidadeExport)}`],
-        ["Vendedor / Tipo de ação", `${text(visit.vendedorExport)} / ${text(visit.tipoAcao)}`],
-        ["Objetivo original", text(visit.objetivoOriginal)],
-        ["Resumo da visita", text(visit.resumoVisita)],
-        ["Pontos avaliados", text(visit.pontosAvaliados)],
-        ["Dados coletados", text(visit.dadosColetados)],
-        ["Necessidade identificada", text(visit.necessidadeIdentificada || visit.oportunidade?.necessidade)],
-        ["Produtos/soluções discutidas", text(visit.produtosSolucoesDiscutidas || visit.oportunidade?.produtosInteresse?.join(", ") || visit.negocio?.produtos?.join(", "))],
-        ["Potencial de negócio", text(visit.potencialNegocio || visit.oportunidade?.valorEstimado || visit.negocio?.valorPotencial)],
-        ["Resultado", text(visit.resultadoVisita)],
-        ["Próxima ação recomendada", text(visit.proximaAcaoRecomendada || visit.proximaAcao?.descricao || visit.lancamento?.proximaAcao)],
-        ["Observações gerais", text(visit.observacoesGerais)],
-        ["Vínculos", `Oportunidade: ${text(visit.oportunidadeId || visit.oportunidade?.id)} | Ação: ${text(visit.acaoId || visit.origemAgendaId || visit.proximaAcao?.id)} | Lançamento: ${text(visit.lancamentoId || visit.lancamento?.id)} | Negócio: ${text(visit.negocioId || visit.negocio?.id)}`],
-      ],
-      styles: { fontSize: 8, cellPadding: 1.7, valign: "top" },
-      headStyles: { fillColor: [35, 89, 64], textColor: 255 },
-      columnStyles: { 0: { cellWidth: 44, fontStyle: "bold" }, 1: { cellWidth: width - margin * 2 - 44 } },
-      margin: { left: margin, right: margin },
-      pageBreak: "auto",
-    });
-    y = ((doc as jsPDF & { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? y) + 5;
+  autoTable(doc, {
+    startY: y,
+    theme: "grid",
+    head: [["Data", "Cliente", "Cidade", "Vendedor", "Resultado", "Próxima ação"]],
+    body: visits.map((visit) => [
+      `${formatDateBR(visit.dataVisita)}${visit.horario ? ` ${visit.horario}` : ""}`,
+      visit.clienteNomeExport,
+      text(visit.cidadeExport),
+      text(visit.vendedorExport),
+      text(visit.resultadoVisita),
+      text(visit.proximaAcaoExport),
+    ]),
+    styles: { fontSize: 7.2, cellPadding: 1.4, valign: "top" },
+    headStyles: { fillColor: [35, 89, 64], textColor: 255 },
+    margin: { left: margin, right: margin },
+    pageBreak: "auto",
   });
 
   addFooter(doc);
