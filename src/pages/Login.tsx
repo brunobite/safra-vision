@@ -31,13 +31,13 @@ export default function Login() {
   const [localClearError, setLocalClearError] = useState<string | null>(null);
 
   const statusMessage =
-    accessStatus === "pending"
-      ? "Conta aguardando aprovação administrativa para acesso à nuvem."
-      : accessStatus === "blocked"
-        ? "Conta bloqueada para acesso à nuvem."
-        : accessStatus === "active"
-          ? "Nuvem preparada (sincronização real será habilitada no Sprint 17C)."
-          : "Conta inativa para recursos de nuvem.";
+    (accessStatus === "pendente" || accessStatus === "pending")
+      ? "Usuário aguardando liberação pelo administrador."
+      : (accessStatus === "bloqueado" || accessStatus === "blocked")
+        ? "Acesso bloqueado. Procure um administrador."
+        : (accessStatus === "ativo" || accessStatus === "active")
+          ? "Acesso liberado ao app."
+          : "Usuário inativo. Procure um administrador.";
 
   const handleClearLocalSession = async () => {
     setLocalClearError(null);
@@ -63,7 +63,7 @@ export default function Login() {
     <div className="container mx-auto max-w-lg p-4">
       <Card>
         <CardHeader>
-          <CardTitle>Login e Acesso à Nuvem</CardTitle>
+          <CardTitle>Login e Acesso ao Safra Vision</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           {isLocalMode && (
@@ -75,7 +75,7 @@ export default function Login() {
           {user && (
             <Alert>
               <AlertDescription>
-                Usuário autenticado: {user.email} | role: {role} | status: {accessStatus}
+                Usuário autenticado: {user.email} | papel: {role} | status: {accessStatus}
               </AlertDescription>
             </Alert>
           )}

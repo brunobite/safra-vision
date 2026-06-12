@@ -11,6 +11,7 @@ import { runAccountSyncCheck, runAccountSyncNow, type AccountSyncStatus } from "
 import { addAccountSyncHistoryEvent, getHistoryStatusFromAccountSyncStatus, type AccountSyncHistoryEvent } from "@/lib/accountSyncUi";
 import { getFreshSupabaseAccessContext } from "@/lib/supabaseAccess";
 import { useAuth } from "@/store/AuthStore";
+import { isOwnSellerData, normalizeRole } from "@/lib/permissions";
 import { calcularPotencialCliente } from "@/utils/businessRules";
 import { normalizeClientesForPersistence } from "@/lib/clientNormalization";
 
@@ -78,7 +79,7 @@ const defaultFilters: Filters = {
 };
 
 export function AppStoreProvider({ children }: { children: ReactNode }) {
-  const { session, accessStatus, loading: authLoading } = useAuth();
+  const { session, accessStatus, loading: authLoading, role, vendedorNome } = useAuth();
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [lancamentos, setLancamentos] = useState<Lancamento[]>([]);
   const [metasEmpresa, setMetasEmpresa] = useState<MetaEmpresa[]>([]);
@@ -373,7 +374,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     setSyncStatus("syncing");
     setSyncError(null);
     const result = await runControlledUploadSync(
-      { session: syncSession, accessStatus: syncAccessStatus, firstUploadConfirmed },
+      { session: syncSession, accessStatus: syncAccessStatus === "ativo" ? "active" : syncAccessStatus, firstUploadConfirmed },
       { mode: "manual", bypassCooldown: true },
     );
     await applySyncResult(result, "manual");
@@ -452,7 +453,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       return { result: { ok: false, skipped: false, message: fresh.error } };
     }
 
-    if (fresh.accessStatus !== "active") {
+    if (!["active", "ativo"].includes(fresh.accessStatus ?? "")) {
       return {
         result: {
           ok: true,
@@ -466,7 +467,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     return {
       context: {
         session: fresh.session,
-        accessStatus: fresh.accessStatus,
+        accessStatus: "active",
         firstUploadConfirmed,
       },
     };
@@ -609,10 +610,21 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     });
   }, [ticketsMedios, setClientes]);
 
-  const cMap = useMemo(() => new Map(clientes.map(c => [c.id, c])), [clientes]);
+  const normalizedRole = normalizeRole(role);
+  const isSellerScope = normalizedRole === "vendedor";
+  const scopedClientes = useMemo(() => isSellerScope ? clientes.filter((cliente) => isOwnSellerData(vendedorNome, cliente.vendedor)) : clientes, [clientes, isSellerScope, vendedorNome]);
+  const scopedClienteIds = useMemo(() => new Set(scopedClientes.map((cliente) => cliente.id)), [scopedClientes]);
+  const scopedLancamentos = useMemo(() => isSellerScope ? lancamentos.filter((lancamento) => scopedClienteIds.has(lancamento.clienteId) || isOwnSellerData(vendedorNome, lancamento.vendedor)) : lancamentos, [isSellerScope, lancamentos, scopedClienteIds, vendedorNome]);
+  const scopedNegocios = useMemo(() => isSellerScope ? negocios.filter((negocio) => scopedClienteIds.has(negocio.clienteId) || isOwnSellerData(vendedorNome, negocio.vendedor)) : negocios, [isSellerScope, negocios, scopedClienteIds, vendedorNome]);
+  const scopedOportunidades = useMemo(() => isSellerScope ? oportunidades.filter((oportunidade) => scopedClienteIds.has(oportunidade.clienteId) || isOwnSellerData(vendedorNome, oportunidade.responsavel || oportunidade.vendedor)) : oportunidades, [isSellerScope, oportunidades, scopedClienteIds, vendedorNome]);
+  const scopedOrcamentos = useMemo(() => isSellerScope ? orcamentos.filter((orcamento) => scopedClienteIds.has(orcamento.clienteId) || isOwnSellerData(vendedorNome, orcamento.responsavel || orcamento.vendedor)) : orcamentos, [isSellerScope, orcamentos, scopedClienteIds, vendedorNome]);
+  const scopedProximasAcoes = useMemo(() => isSellerScope ? proximasAcoes.filter((acao) => (acao.clienteId && scopedClienteIds.has(acao.clienteId)) || isOwnSellerData(vendedorNome, acao.responsavel)) : proximasAcoes, [isSellerScope, proximasAcoes, scopedClienteIds, vendedorNome]);
+  const scopedRelatoriosVisita = useMemo(() => isSellerScope ? relatoriosVisita.filter((relatorio) => scopedClienteIds.has(relatorio.clienteId) || isOwnSellerData(vendedorNome, relatorio.vendedor)) : relatoriosVisita, [isSellerScope, relatoriosVisita, scopedClienteIds, vendedorNome]);
+
+  const cMap = useMemo(() => new Map(scopedClientes.map(c => [c.id, c])), [scopedClientes]);
   const pMap = useMemo(() => new Map(produtos.map(p => [p.id, p])), [produtos]);
 
-  const filteredLancs = useMemo(() => lancamentos.filter(l => {
+  const filteredLancs = useMemo(() => scopedLancamentos.filter(l => {
     const c = cMap.get(l.clienteId);
     if (filters.dataInicial && l.data < filters.dataInicial) return false;
     if (filters.dataFinal && l.data > filters.dataFinal) return false;
@@ -624,9 +636,9 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     if (filters.frente && l.frente !== filters.frente) return false;
     if (filters.vendedor && l.vendedor !== filters.vendedor) return false;
     return true;
-  }), [lancamentos, filters, cMap]);
+  }), [scopedLancamentos, filters, cMap]);
 
-  const filteredNegs = useMemo(() => negocios.filter(n => {
+  const filteredNegs = useMemo(() => scopedNegocios.filter(n => {
     const c = cMap.get(n.clienteId);
     const dt = n.ultimaAtualizacao || n.dataCriacao;
     if (filters.dataInicial && dt < filters.dataInicial) return false;
@@ -637,9 +649,9 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     if (filters.rota && c?.rota !== filters.rota) return false;
     if (filters.vendedor && n.vendedor !== filters.vendedor) return false;
     return true;
-  }), [negocios, filters, cMap]);
+  }), [scopedNegocios, filters, cMap]);
 
-  const filteredOportunidades = useMemo(() => oportunidades.filter(o => {
+  const filteredOportunidades = useMemo(() => scopedOportunidades.filter(o => {
     const c = cMap.get(o.clienteId);
     const dt = o.updatedAt || o.createdAt;
     if (filters.dataInicial && dt < filters.dataInicial) return false;
@@ -651,16 +663,23 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     if (filters.status && o.etapa !== filters.status) return false;
     if (filters.vendedor && o.responsavel !== filters.vendedor) return false;
     return true;
-  }), [oportunidades, filters, cMap]);
+  }), [scopedOportunidades, filters, cMap]);
+
+  const blockReadOnlySetter = useCallback(<T,>(setter: React.Dispatch<React.SetStateAction<T>>): React.Dispatch<React.SetStateAction<T>> => {
+    if (normalizedRole !== "visualizador") return setter;
+    return () => {
+      console.warn("Permissão negada: perfil visualizador não pode alterar dados.");
+    };
+  }, [normalizedRole]);
 
   return (
     <Ctx.Provider value={{
-      clientes, setClientes, lancamentos, setLancamentos,
-      metasEmpresa, setMetasEmpresa, metasPessoais, setMetasPessoais,
-      metasVendedor, setMetasVendedor, metasCategoria, setMetasCategoria,
-      eventos, setEventos, prioridadesP1, setPrioridadesP1,
-      negocios, setNegocios, oportunidades, setOportunidades, historicoFunil, setHistoricoFunil, produtos, setProdutos,
-      regras, setRegras, vendedores, setVendedores, ticketsMedios, setTicketsMedios, orcamentos, setOrcamentos, empresas, setEmpresas, proximasAcoes, setProximasAcoes, relatoriosVisita, setRelatoriosVisita, formasPagamento, setFormasPagamento, prazosPagamento, setPrazosPagamento, appConfig, setAppConfig,
+      clientes: scopedClientes, setClientes: blockReadOnlySetter(setClientes), lancamentos: scopedLancamentos, setLancamentos: blockReadOnlySetter(setLancamentos),
+      metasEmpresa, setMetasEmpresa: blockReadOnlySetter(setMetasEmpresa), metasPessoais, setMetasPessoais: blockReadOnlySetter(setMetasPessoais),
+      metasVendedor, setMetasVendedor: blockReadOnlySetter(setMetasVendedor), metasCategoria, setMetasCategoria: blockReadOnlySetter(setMetasCategoria),
+      eventos, setEventos: blockReadOnlySetter(setEventos), prioridadesP1, setPrioridadesP1: blockReadOnlySetter(setPrioridadesP1),
+      negocios: scopedNegocios, setNegocios: blockReadOnlySetter(setNegocios), oportunidades: scopedOportunidades, setOportunidades: blockReadOnlySetter(setOportunidades), historicoFunil, setHistoricoFunil: blockReadOnlySetter(setHistoricoFunil), produtos, setProdutos: blockReadOnlySetter(setProdutos),
+      regras, setRegras: blockReadOnlySetter(setRegras), vendedores, setVendedores: blockReadOnlySetter(setVendedores), ticketsMedios, setTicketsMedios: blockReadOnlySetter(setTicketsMedios), orcamentos: scopedOrcamentos, setOrcamentos: blockReadOnlySetter(setOrcamentos), empresas, setEmpresas: blockReadOnlySetter(setEmpresas), proximasAcoes: scopedProximasAcoes, setProximasAcoes: blockReadOnlySetter(setProximasAcoes), relatoriosVisita: scopedRelatoriosVisita, setRelatoriosVisita: blockReadOnlySetter(setRelatoriosVisita), formasPagamento, setFormasPagamento: blockReadOnlySetter(setFormasPagamento), prazosPagamento, setPrazosPagamento: blockReadOnlySetter(setPrazosPagamento), appConfig, setAppConfig: blockReadOnlySetter(setAppConfig),
       isLoading, isReady, dbError, isSaving, lastSavedAt, saveError, pendingSyncCount, refreshPendingSyncCount, syncStatus, syncError, lastAutoSyncAt, accountSyncStatus, accountSyncHistory, runManualUploadSync, runAccountSyncNowForAccount, restoreAccountSnapshot,
       filters, setFilters,
       filtered: { lancamentos: filteredLancs, negocios: filteredNegs, oportunidades: filteredOportunidades },

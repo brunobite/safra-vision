@@ -33,6 +33,7 @@ import { enqueueSyncItem, requeueFailedAndStaleSyncItems } from "@/lib/syncQueue
 import { findRemoteOnlyClientTestCandidates, softDeleteRemoteClientTests, type RemoteOnlyClientTestCandidate } from "@/lib/remoteCleanup";
 import { findLocalTestRecordCandidates, getSyncQueueAudit, type SyncQueueAudit, type TestRecordCandidate } from "@/lib/syncAudit";
 import { useAuth } from "@/store/AuthStore";
+import { UserAccessPanel } from "@/components/users/UserAccessPanel";
 import { getAccountSyncUserMessage, getAccountSyncVisualState, SYNC_HOMOLOGATION_CHECKLIST } from "@/lib/accountSyncUi";
 import { calcularMetaCarteira, calcularPotencialCarteira, calcularPotencialCliente, distribuirMetaPorPotencial, limitarPercentualAcerto, normalizarValorNaoNegativo, resolverVendedorCanonico } from "@/utils/businessRules";
 import { fmtBRL } from "@/utils/calculations";
@@ -228,15 +229,15 @@ export default function Configuracoes() {
   const [cloudLastRefreshAt, setCloudLastRefreshAt] = useState<string>("");
   const [cloudAuthError, setCloudAuthError] = useState<string | null>(null);
   const lastSyncAt = appConfig.syncMeta?.lastUploadAt || appConfig.syncMeta?.lastDownloadAt || "";
-  const shouldWarnAboutStaleAccess = Boolean(cloudSessionExists && cloudAccessStatus !== "active");
+  const shouldWarnAboutStaleAccess = Boolean(cloudSessionExists && !["active", "ativo"].includes(cloudAccessStatus ?? ""));
   const canCompareCloud = Boolean(
     cloudSessionExists
-      && cloudAccessStatus === "active"
+      && ["active", "ativo"].includes(cloudAccessStatus ?? "")
       && Boolean(cloudRole)
-      && ["admin", "gestor", "vendedor", "operacional", "consulta", "user"].includes(cloudRole!),
+      && ["administrador", "admin", "gestor", "vendedor", "visualizador", "operacional", "consulta", "user"].includes(cloudRole!),
   );
-  const canViewAudit = Boolean(cloudSessionExists && cloudAccessStatus === "active");
-  const canCleanTests = Boolean(canViewAudit && cloudRole === "admin");
+  const canViewAudit = Boolean(cloudSessionExists && ["active", "ativo"].includes(cloudAccessStatus ?? ""));
+  const canCleanTests = Boolean(canViewAudit && ["administrador", "admin"].includes(cloudRole ?? ""));
   const selectedTestCandidates = testCandidates.filter((candidate) => selectedTestKeys.includes(candidate.key));
   const selectedRemoteOnlyCandidates = remoteOnlyCandidates.filter((candidate) => selectedRemoteOnlyIds.includes(candidate.id));
   const lastSyncPanelError = cloudAuthError || syncError;
@@ -1112,6 +1113,7 @@ export default function Configuracoes() {
             <SelectItem value="dados-empresa">Empresas</SelectItem>
             <SelectItem value="banco-local">Banco local</SelectItem>
             <SelectItem value="sync-cloud">Sincronização em nuvem</SelectItem>
+            <SelectItem value="usuarios-acessos">Usuários e acessos</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -1124,7 +1126,10 @@ export default function Configuracoes() {
         <TabsTrigger value="dados-empresa">Empresas</TabsTrigger>
         <TabsTrigger value="banco-local">Banco local</TabsTrigger>
         <TabsTrigger value="sync-cloud">Sincronização em nuvem</TabsTrigger>
+        <TabsTrigger value="usuarios-acessos">Usuários e acessos</TabsTrigger>
       </TabsList>
+
+      <TabsContent value="usuarios-acessos" className="space-y-3"><UserAccessPanel /></TabsContent>
 
       <TabsContent value="comissao" className="space-y-3">
         <div className="flex justify-end"><Button className="w-full sm:w-auto" onClick={openNew}><Plus className="mr-1 h-4 w-4" /> Nova regra</Button></div>

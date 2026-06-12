@@ -1,8 +1,8 @@
 import type { Session, User } from "@supabase/supabase-js";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 
-export type SupabaseAccessStatus = "pending" | "active" | "blocked" | "inactive";
-export type SupabaseUserRole = "admin" | "gestor" | "vendedor" | "operacional" | "consulta" | "user";
+export type SupabaseAccessStatus = "pendente" | "ativo" | "bloqueado" | "inativo" | "pending" | "active" | "blocked" | "inactive";
+export type SupabaseUserRole = "administrador" | "admin" | "gestor" | "vendedor" | "visualizador" | "operacional" | "consulta" | "user";
 
 export type FreshSupabaseAccessContext = {
   session: Session | null;
@@ -65,9 +65,9 @@ export async function getFreshSupabaseAccessContext(): Promise<FreshSupabaseAcce
     const { data: profile, error: profileError } = await withTimeout(
       Promise.resolve(
         supabase
-          .from("profiles")
-          .select("status, role")
-          .eq("id", user.id)
+          .from("user_profiles")
+          .select("status, papel")
+          .eq("user_id", user.id)
           .maybeSingle(),
       ),
       SUPABASE_ACCESS_TIMEOUT_MS,
@@ -79,12 +79,12 @@ export async function getFreshSupabaseAccessContext(): Promise<FreshSupabaseAcce
     }
 
     if (!profile) {
-      return { ...baseContext, error: "Profile não encontrado." };
+      return { ...baseContext, role: user.email?.toLowerCase() === "bitencourttec@gmail.com" ? "administrador" : null, accessStatus: user.email?.toLowerCase() === "bitencourttec@gmail.com" ? "ativo" : null, error: "Perfil de acesso não encontrado." };
     }
 
     return {
       ...baseContext,
-      role: (profile.role as SupabaseUserRole | null) ?? null,
+      role: (profile.papel as SupabaseUserRole | null) ?? null,
       accessStatus: (profile.status as SupabaseAccessStatus | null) ?? null,
       error: null,
     };
