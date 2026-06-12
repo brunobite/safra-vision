@@ -118,6 +118,8 @@ export const GOOGLE_CALENDAR_OFFLINE_MANUAL_SYNC_MESSAGE = "Você está offline.
 const GOOGLE_CALENDAR_AUTH_TIMEOUT_MS = 120_000;
 const GOOGLE_CALENDAR_AUTH_TIMEOUT_MESSAGE = "Autorização não concluída. Verifique se você rolou até o final da tela do Google e tocou em Continuar/Permitir.";
 const GOOGLE_CALENDAR_RECONNECT_MESSAGE = "Precisa renovar autorização do Google Calendar. Acesse Configurações e conecte novamente neste dispositivo.";
+export const GOOGLE_CALENDAR_REVOKED_RECONNECT_MESSAGE = "Autorização do Google Calendar expirada ou revogada. Reconecte em Configurações.";
+export const GOOGLE_CALENDAR_RECONNECT_SETTINGS_HINT = "Reconecte o Google Calendar em Configurações.";
 
 export function isGoogleCalendarOffline(): boolean {
   return typeof navigator !== "undefined" && navigator.onLine === false;
@@ -206,6 +208,20 @@ async function readSupabaseFunctionErrorMessage(error: unknown): Promise<string>
   }
 
   return fallback;
+}
+
+export function isGoogleCalendarRevokedOrExpiredError(error: unknown): boolean {
+  const normalized = friendlyGoogleError(error).toLowerCase();
+  return normalized.includes("invalid_grant")
+    || normalized.includes("token has been expired or revoked")
+    || normalized.includes("expired or revoked")
+    || normalized.includes("refresh token revoked/expired")
+    || normalized.includes("revoked/expired")
+    || normalized.includes("autorização do google calendar expirada ou revogada")
+    || normalized.includes("revogada")
+    || normalized.includes("revogado")
+    || normalized.includes("expirada")
+    || normalized.includes("expirado");
 }
 
 export function isGoogleCalendarEventNotFoundError(error: unknown): boolean {
@@ -482,8 +498,8 @@ async function invokeGoogleCalendarBackend<T>(functionName: string, body?: unkno
   return payload as T;
 }
 
-export async function startGoogleCalendarBackendOAuth(): Promise<string> {
-  const response = await invokeGoogleCalendarBackend<{ authUrl: string }>("google-calendar-oauth-start", {});
+export async function startGoogleCalendarBackendOAuth(options: { forceConsent?: boolean } = {}): Promise<string> {
+  const response = await invokeGoogleCalendarBackend<{ authUrl: string }>("google-calendar-oauth-start", { forceConsent: options.forceConsent === true });
   if (!response.authUrl) throw new Error("Backend não retornou URL de autorização do Google Calendar.");
   return response.authUrl;
 }
@@ -653,7 +669,12 @@ export function metadataAfterGoogleCalendarSuccess(event: GoogleCalendarApiEvent
 }
 
 export function metadataAfterGoogleCalendarError(error: unknown): Pick<GoogleCalendarSyncMetadata, "googleCalendarStatus" | "googleCalendarLastError"> {
-  return { googleCalendarStatus: "error", googleCalendarLastError: friendlyGoogleError(error) };
+  return {
+    googleCalendarStatus: "error",
+    googleCalendarLastError: isGoogleCalendarRevokedOrExpiredError(error)
+      ? GOOGLE_CALENDAR_REVOKED_RECONNECT_MESSAGE
+      : friendlyGoogleError(error),
+  };
 }
 
 export function metadataAfterGoogleCalendarOfflinePending(item: { googleCalendarEventId?: string } = {}): Pick<GoogleCalendarSyncMetadata, "googleCalendarStatus" | "googleCalendarLastError"> {

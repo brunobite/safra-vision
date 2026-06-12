@@ -59,20 +59,30 @@ async function hmacSha256(message: string): Promise<string> {
   return base64UrlEncode(String.fromCharCode(...new Uint8Array(signature)));
 }
 
-export async function createSignedState(userId: string): Promise<string> {
-  const payload = base64UrlEncode(JSON.stringify({ user_id: userId, nonce: crypto.randomUUID(), exp: Math.floor(Date.now() / 1000) + 600 }));
+export type GoogleCalendarOAuthState = {
+  user_id: string;
+  forceConsent?: boolean;
+};
+
+export async function createSignedState(userId: string, options: { forceConsent?: boolean } = {}): Promise<string> {
+  const payload = base64UrlEncode(JSON.stringify({
+    user_id: userId,
+    nonce: crypto.randomUUID(),
+    exp: Math.floor(Date.now() / 1000) + 600,
+    forceConsent: options.forceConsent === true,
+  }));
   const signature = await hmacSha256(payload);
   return `${payload}.${signature}`;
 }
 
-export async function verifySignedState(state: string): Promise<{ user_id: string }> {
+export async function verifySignedState(state: string): Promise<GoogleCalendarOAuthState> {
   const [payload, signature] = state.split(".");
   if (!payload || !signature) throw new Error("State OAuth inválido.");
   const expected = await hmacSha256(payload);
   if (signature !== expected) throw new Error("State OAuth inválido.");
-  const parsed = JSON.parse(base64UrlDecode(payload)) as { user_id?: string; exp?: number };
+  const parsed = JSON.parse(base64UrlDecode(payload)) as { user_id?: string; exp?: number; forceConsent?: boolean };
   if (!parsed.user_id || !parsed.exp || parsed.exp < Math.floor(Date.now() / 1000)) throw new Error("State OAuth expirado.");
-  return { user_id: parsed.user_id };
+  return { user_id: parsed.user_id, forceConsent: parsed.forceConsent === true };
 }
 
 export function getAppRedirectUrl(status: "connected" | "error", message?: string): string {

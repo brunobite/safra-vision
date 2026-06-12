@@ -67,6 +67,8 @@ function isRefreshTokenAuthorizationError(error: unknown): boolean {
   return message.includes("invalid_grant")
     || message.includes("token has been expired or revoked")
     || message.includes("expired or revoked")
+    || message.includes("refresh token revoked/expired")
+    || message.includes("revoked/expired")
     || message.includes("revogado")
     || message.includes("expirado")
     || message.includes("unauthorized_client");
@@ -118,8 +120,8 @@ async function handleUpsert(req: Request): Promise<Response> {
         .update({ revoked_at: now, updated_at: now })
         .eq("id", connection.id);
       if (revokeError) logGoogleCalendar("error", "failed_to_mark_connection_revoked", { user_id: user.id, calendarId, operation, message: revokeError.message });
-      logGoogleCalendar("error", "refresh_token_authorization_failed", { user_id: user.id, calendarId, operation, message: "Falha ao renovar autorização do Google Calendar. Reconecte em Configurações." });
-      throw new HttpError("Falha ao renovar autorização do Google Calendar. Reconecte em Configurações.", 401);
+      logGoogleCalendar("error", "refresh_token_authorization_failed", { user_id: user.id, calendarId, operation, message: "Autorização do Google Calendar expirada ou revogada. Reconecte em Configurações." });
+      throw new HttpError("Autorização do Google Calendar expirada ou revogada. Reconecte em Configurações.", 401);
     }
     const httpError = httpErrorFromUnknown(error);
     logGoogleCalendar("error", "refresh_token_failed", { user_id: user.id, calendarId, operation, message: httpError.message });

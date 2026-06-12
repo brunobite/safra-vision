@@ -38,7 +38,7 @@ import { calcularMetaCarteira, calcularPotencialCarteira, calcularPotencialClien
 import { fmtBRL } from "@/utils/calculations";
 import { chaveCategoriaComercial, getCategoriasComerciais, normalizarCategoriaComercial } from "@/utils/commercialCategories";
 import * as XLSX from "xlsx";
-import { disconnectGoogleCalendar, disconnectGoogleCalendarBackend, getGoogleCalendarAuthStatus, getGoogleCalendarBackendStatus, getGoogleCalendarClientId, getGoogleCalendarLastAuthError, hasGoogleCalendarAccess, initGoogleCalendarClient, isGoogleCalendarBackendAvailable, isGoogleCalendarPreferenceEnabled, isGoogleIdentityServicesLoaded, requestGoogleCalendarAccess, setGoogleCalendarPreferenceEnabled, startGoogleCalendarBackendOAuth, type GoogleCalendarAuthStatus, type GoogleCalendarBackendStatus } from "@/lib/googleCalendar";
+import { disconnectGoogleCalendar, disconnectGoogleCalendarBackend, getGoogleCalendarAuthStatus, getGoogleCalendarBackendStatus, getGoogleCalendarClientId, getGoogleCalendarLastAuthError, hasGoogleCalendarAccess, initGoogleCalendarClient, isGoogleCalendarBackendAvailable, isGoogleCalendarPreferenceEnabled, isGoogleIdentityServicesLoaded, requestGoogleCalendarAccess, setGoogleCalendarPreferenceEnabled, startGoogleCalendarBackendOAuth, isGoogleCalendarRevokedOrExpiredError, type GoogleCalendarAuthStatus, type GoogleCalendarBackendStatus } from "@/lib/googleCalendar";
 
 const APLICAR: { v: AplicarSobre; label: string }[] = [
   { v: "realizado_empresa", label: "Realizado empresa" }, { v: "realizado_pessoal", label: "Realizado pessoal" },
@@ -1017,11 +1017,14 @@ export default function Configuracoes() {
   const googleCalendarPersistentAvailable = !isLocalMode && isGoogleCalendarBackendAvailable() && Boolean(session?.access_token);
   const googleCalendarModeLabel = googleCalendarPersistentAvailable ? "Backend persistente ativo" : "Modo sessão";
   const googleCalendarEffectiveConnected = googleCalendarBackendStatus.connected || googleCalendarDisplayStatus === "connected";
+  const googleCalendarNeedsReconnect = googleCalendarDisplayStatus === "token_expired"
+    || googleCalendarDisplayStatus === "auth_error"
+    || isGoogleCalendarRevokedOrExpiredError(googleCalendarBackendStatus.error || googleCalendarLastFriendlyError || "");
 
-  const conectarGoogleCalendar = async () => {
+  const conectarGoogleCalendar = async (forceConsent = false) => {
     setGoogleCalendarError(null);
     if (isGoogleCalendarBackendAvailable() && session?.access_token) {
-      return startGoogleCalendarBackendOAuth()
+      return startGoogleCalendarBackendOAuth({ forceConsent })
         .then((authUrl) => window.location.assign(authUrl))
         .catch((error) => {
           const message = error instanceof Error ? error.message : "Erro de autorização do Google Calendar.";
@@ -1263,7 +1266,7 @@ export default function Configuracoes() {
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button onClick={conectarGoogleCalendar} disabled={!googleCalendarClientIdLoaded && !googleCalendarPersistentAvailable}>Conectar Google Calendar</Button>
+            <Button onClick={() => conectarGoogleCalendar(googleCalendarNeedsReconnect)} disabled={!googleCalendarClientIdLoaded && !googleCalendarPersistentAvailable}>{googleCalendarNeedsReconnect ? "Reconectar Google Calendar" : "Conectar Google Calendar"}</Button>
             <Button variant="outline" onClick={desconectarGoogleCalendar}>Desconectar Google Calendar</Button>
             <Button variant="secondary" onClick={testarGoogleCalendar}>Testar fallback sessão</Button>
           </div>
