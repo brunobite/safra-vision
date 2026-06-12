@@ -1,9 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { supabase } from "@/lib/supabase";
+import { useNavigate } from "react-router-dom";
+import { canView } from "@/lib/permissions";
 import { useAuth } from "@/store/AuthStore";
 
 const isSupabaseStorageKey = (key: string) => {
@@ -26,9 +28,19 @@ const clearSupabaseStorageKeys = (storage: Storage) => {
 
 export default function Login() {
   const { user, loading, error, accessStatus, role, isLocalMode, signIn, signUp, signOut, refreshAccess, clearError } = useAuth();
+  const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [localClearError, setLocalClearError] = useState<string | null>(null);
+
+  const hasActiveAccess = accessStatus === "ativo" || accessStatus === "active";
+  const canEnterApp = Boolean(user) && !loading && hasActiveAccess && canView("/", role);
+
+  useEffect(() => {
+    if (canEnterApp) {
+      navigate("/", { replace: true });
+    }
+  }, [canEnterApp, navigate]);
 
   const statusMessage =
     (accessStatus === "pendente" || accessStatus === "pending")
@@ -102,6 +114,9 @@ export default function Login() {
             <Button variant="secondary" disabled={loading} onClick={() => signUp(email, password)}>Criar conta</Button>
             {user && (
               <>
+                {canEnterApp && (
+                  <Button disabled={loading} onClick={() => navigate("/")}>Entrar no app</Button>
+                )}
                 <Button variant="outline" disabled={loading} onClick={() => refreshAccess()}>Atualizar status</Button>
                 <Button variant="outline" onClick={() => signOut()}>Sair</Button>
               </>
