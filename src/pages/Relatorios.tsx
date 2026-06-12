@@ -19,11 +19,13 @@ import {
   defaultVisitReportFilters,
   describeVisitReportFilters,
   enrichVisitReports,
+  exportSingleVisitReportPdf,
   exportVisitReportsPdf,
   exportVisitReportsXlsx,
   filterVisitReports,
   summarizeVisitReports,
   visitReportPeriodText,
+  type NextActionFilter,
   type OpportunityFilter,
 } from "@/lib/visitReportExport";
 import { formatDateBR } from "@/utils/dateUtils";
@@ -66,6 +68,7 @@ export default function Relatorios() {
     { label: "Com oportunidade", value: String(visitSummary.visitasComOportunidade) },
     { label: "Sem oportunidade", value: String(visitSummary.visitasSemOportunidade) },
     { label: "Clientes visitados", value: String(visitSummary.totalClientesVisitados) },
+    { label: "Próximas ações", value: String(visitSummary.visitasComProximaAcao) },
   ] : [
     { label: "Realizado empresa", value: fmtBRL(realized) },
     { label: "% empresa", value: fmtPct(pctMeta) },
@@ -113,6 +116,7 @@ export default function Relatorios() {
             <div className="space-y-1"><Label>Resultado da visita</Label><Select value={visitFilters.resultadoVisita || "all"} onValueChange={v => setVisitFilters(f => ({ ...f, resultadoVisita: v === "all" ? "" : v }))}><SelectTrigger><SelectValue placeholder="Resultado" /></SelectTrigger><SelectContent><SelectItem value="all">Todos os resultados</SelectItem>{uniqueResults.map(resultado => <SelectItem key={resultado} value={resultado}>{resultado}</SelectItem>)}</SelectContent></Select></div>
             <div className="space-y-1"><Label>Tipo de ação</Label><Select value={visitFilters.tipoAcao || "all"} onValueChange={v => setVisitFilters(f => ({ ...f, tipoAcao: v === "all" ? "" : v }))}><SelectTrigger><SelectValue placeholder="Tipo de ação" /></SelectTrigger><SelectContent><SelectItem value="all">Todos os tipos</SelectItem>{uniqueActionTypes.map(tipo => <SelectItem key={tipo} value={tipo}>{tipo}</SelectItem>)}</SelectContent></Select></div>
             <div className="space-y-1"><Label>Oportunidade</Label><Select value={visitFilters.oportunidade} onValueChange={(v: OpportunityFilter) => setVisitFilters(f => ({ ...f, oportunidade: v }))}><SelectTrigger><SelectValue placeholder="Oportunidade" /></SelectTrigger><SelectContent><SelectItem value="todas">Com e sem oportunidade</SelectItem><SelectItem value="com">Somente com oportunidade</SelectItem><SelectItem value="sem">Somente sem oportunidade</SelectItem></SelectContent></Select></div>
+            <div className="space-y-1"><Label>Próxima ação</Label><Select value={visitFilters.proximaAcao} onValueChange={(v: NextActionFilter) => setVisitFilters(f => ({ ...f, proximaAcao: v }))}><SelectTrigger><SelectValue placeholder="Próxima ação" /></SelectTrigger><SelectContent><SelectItem value="todas">Com e sem próxima ação</SelectItem><SelectItem value="com">Somente com próxima ação</SelectItem><SelectItem value="sem">Somente sem próxima ação</SelectItem></SelectContent></Select></div>
           </div>
         </CollapsibleContent>
       </Collapsible>}
@@ -120,7 +124,7 @@ export default function Relatorios() {
       <div className="flex flex-wrap gap-2">
         <Button onClick={() => setShowReport(true)}>Visualizar relatório</Button>
         {!isVisitReport && <Button variant="secondary" onClick={() => window.print()}>Salvar/Gerar PDF</Button>}
-        {isVisitReport && <Button variant="secondary" disabled={!canExportVisits} onClick={() => exportVisitReportsPdf(filteredVisits, visitFilters, store.clientes)}><FileText className="mr-2 h-4 w-4" />Exportar PDF</Button>}
+        {isVisitReport && <Button variant="secondary" disabled={!canExportVisits} onClick={() => exportVisitReportsPdf(filteredVisits, visitFilters, store.clientes)}><FileText className="mr-2 h-4 w-4" />Exportar PDF consolidado</Button>}
         {isVisitReport && <Button variant="outline" disabled={!canExportVisits} onClick={() => exportVisitReportsXlsx(filteredVisits, visitFilters, store.clientes)}><FileSpreadsheet className="mr-2 h-4 w-4" />Exportar XLSX</Button>}
         {!isVisitReport && <Button variant="outline" onClick={() => window.print()}>Imprimir</Button>}
         {isVisitReport && <Button variant="outline" onClick={() => window.print()}><Download className="mr-2 h-4 w-4" />Imprimir prévia</Button>}
@@ -134,16 +138,17 @@ export default function Relatorios() {
       <ReportHeader title={reportLabels[filters.reportType]} period={periodText} filters={isVisitReport ? visitFilterLabels : [filters.vendedor && `Vendedor: ${filters.vendedor}`, filters.rota && `Rota: ${filters.rota}`, currentClient && `Cliente: ${currentClient.nome}`].filter(Boolean) as string[]} />
       <ReportSummaryCards items={summary} />
 
-      {isVisitReport && <ReportSection title="Prévia do relatório de visitas">
+      {isVisitReport && <ReportSection title="Relatórios de visita">
         {filteredVisits.length === 0 && <p className="text-sm text-muted-foreground">Nenhum relatório de visita encontrado para o período e filtros selecionados.</p>}
         {filteredVisits.length > 0 && <div className="space-y-4">
-          <div className="grid gap-3 md:grid-cols-2">
+          <div className="grid gap-3 md:grid-cols-3">
             <div className="rounded-md border p-3"><h3 className="font-medium">Visitas por vendedor</h3><ul className="mt-2 space-y-1 text-sm">{visitSummary.porVendedor.map(item => <li key={item.label} className="flex justify-between"><span>{item.label}</span><strong>{item.total}</strong></li>)}</ul></div>
+            <div className="rounded-md border p-3"><h3 className="font-medium">Visitas por cidade</h3><ul className="mt-2 space-y-1 text-sm">{visitSummary.porCidade.map(item => <li key={item.label} className="flex justify-between"><span>{item.label}</span><strong>{item.total}</strong></li>)}</ul></div>
             <div className="rounded-md border p-3"><h3 className="font-medium">Principais resultados</h3><ul className="mt-2 space-y-1 text-sm">{visitSummary.porResultado.map(item => <li key={item.label} className="flex justify-between gap-3"><span>{item.label}</span><strong>{item.total}</strong></li>)}</ul></div>
           </div>
           <Table>
-            <TableHeader><TableRow><TableHead>Data</TableHead><TableHead>Cliente</TableHead><TableHead className="hidden md:table-cell">Vendedor</TableHead><TableHead className="hidden lg:table-cell">Resultado</TableHead><TableHead>Oportunidade</TableHead></TableRow></TableHeader>
-            <TableBody>{filteredVisits.slice(0, 20).map(visit => <TableRow key={visit.id}><TableCell>{formatDateBR(visit.dataVisita)} {visit.horario || ""}</TableCell><TableCell>{visit.clienteNomeExport}<span className="block text-xs text-muted-foreground">{visit.fazenda || visit.cidadeExport}</span></TableCell><TableCell className="hidden md:table-cell">{visit.vendedorExport || "-"}</TableCell><TableCell className="hidden lg:table-cell">{visit.resultadoVisita}</TableCell><TableCell>{visit.hasOportunidade ? "Sim" : "Não"}</TableCell></TableRow>)}</TableBody>
+            <TableHeader><TableRow><TableHead>Data</TableHead><TableHead>Cliente</TableHead><TableHead className="hidden md:table-cell">Vendedor</TableHead><TableHead className="hidden lg:table-cell">Resultado</TableHead><TableHead>Oportunidade</TableHead><TableHead className="text-right">Ações</TableHead></TableRow></TableHeader>
+            <TableBody>{filteredVisits.slice(0, 20).map(visit => <TableRow key={visit.id}><TableCell>{formatDateBR(visit.dataVisita)} {visit.horario || ""}</TableCell><TableCell>{visit.clienteNomeExport}<span className="block text-xs text-muted-foreground">{visit.fazenda || visit.cidadeExport || "—"}</span></TableCell><TableCell className="hidden md:table-cell">{visit.vendedorExport || "—"}</TableCell><TableCell className="hidden lg:table-cell">{visit.resultadoVisita || "—"}</TableCell><TableCell>{visit.hasOportunidade ? "Sim" : "Não"}</TableCell><TableCell className="text-right"><Button type="button" size="sm" variant="outline" onClick={() => exportSingleVisitReportPdf(visit)}><FileText className="mr-2 h-4 w-4" />PDF da visita</Button></TableCell></TableRow>)}</TableBody>
           </Table>
           {filteredVisits.length > 20 && <p className="text-xs text-muted-foreground">Prévia exibindo as 20 primeiras visitas. PDF e XLSX exportam todas as {filteredVisits.length} visitas filtradas.</p>}
         </div>}
