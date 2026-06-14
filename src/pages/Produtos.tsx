@@ -12,6 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Switch } from "@/components/ui/switch";
 import { useAppStore } from "@/store/AppStore";
+import { useAuth } from "@/store/AuthStore";
 import { Produto } from "@/types";
 import { PRODUCT_STANDARD_UNITS, normalizeProductUnit } from "@/lib/importService";
 import { fmtBRL, fmtNum } from "@/utils/calculations";
@@ -19,6 +20,8 @@ import { controlaEstoqueProduto, estoqueDisponivelProduto } from "@/utils/produc
 import { getCategoriasComerciais, normalizarCategoriaComercial } from "@/utils/commercialCategories";
 import { ArrowLeft, Boxes, Eye, Pencil, Plus, Search, Trash2, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
+import { canCreate, canDelete, canEdit, canManage, canView } from "@/lib/permissions";
+import { recordAuditLog } from "@/lib/audit";
 
 const ALL = "__all__";
 const UNIDADES = PRODUCT_STANDARD_UNITS;
@@ -50,6 +53,16 @@ function estoqueStatus(disponivel: number) {
 
 export default function Produtos() {
   const { produtos, setProdutos, ticketsMedios, negocios, oportunidades, orcamentos } = useAppStore();
+  const { role, accessStatus, user, permissions } = useAuth();
+  const permissionContext = { role, accessStatus, email: user?.email, permissions };
+  const canViewProdutos = canView("produtos", permissionContext);
+  const canCreateProdutos = canCreate("produtos", permissionContext);
+  const canEditProdutos = canEdit("produtos", permissionContext);
+  const canDeleteProdutos = canDelete("produtos", permissionContext);
+  const canManageProdutos = canManage("produtos", permissionContext);
+  const canCreateOrManageProdutos = canCreateProdutos || canManageProdutos;
+  const canEditOrManageProdutos = canEditProdutos || canManageProdutos;
+  const canDeleteOrManageProdutos = canDeleteProdutos || canManageProdutos;
   const [busca, setBusca] = useState("");
   const [fCat, setFCat] = useState("");
   const [fForn, setFForn] = useState("");
@@ -82,12 +95,14 @@ export default function Produtos() {
   }, [negocios, oportunidades, orcamentos, selectedProduct]);
 
   const openNew = () => {
+    if (!canCreateOrManageProdutos) return toast.error("Você não tem permissão para criar produtos.");
     setEdit(null);
     setForm({ ...empty });
     setOpen(true);
   };
 
   const openEdit = (p: Produto) => {
+    if (!canEditOrManageProdutos) return toast.error("Você não tem permissão para editar produtos.");
     setEdit(p);
     const { id, ...rest } = p;
     void id;
@@ -96,6 +111,8 @@ export default function Produtos() {
   };
 
   const save = () => {
+    if (edit && !canEditOrManageProdutos) return toast.error("Você não tem permissão para editar produtos.");
+    if (!edit && !canCreateOrManageProdutos) return toast.error("Você não tem permissão para criar produtos.");
     if (!form.nome || !form.codigo) return toast.error("Código e nome obrigatórios.");
     const unidade = normalizeProductUnit(form.unidade);
     if (!unidade) return toast.error("Unidade obrigatória.");
@@ -107,24 +124,30 @@ export default function Produtos() {
     if (controlaEstoque && disponivel < 0) toast.warning("Estoque disponível negativo: revise estoque atual e reservado.");
 
     if (edit) {
-      setProdutos((prev) => prev.map((p) => p.id === edit.id ? { ...p, ...form, categoria, unidade, controlaEstoque, margem, id: edit.id, createdAt: p.createdAt, updatedAt: now, ultimaAtualizacao: now.slice(0, 10) } : p));
+      const updated: Produto = { ...edit, ...form, categoria, unidade, controlaEstoque, margem, id: edit.id, createdAt: edit.createdAt, updatedAt: now, ultimaAtualizacao: now.slice(0, 10) };
+      setProdutos((prev) => prev.map((p) => p.id === edit.id ? { ...updated, createdAt: p.createdAt } : p));
+      void recordAuditLog({ action: "editar_produto", resource: "produtos", entityId: edit.id, entityLabel: updated.nome, beforeData: edit, afterData: updated });
     } else {
       const novo: Produto = { ...form, categoria, unidade, controlaEstoque, margem, id: `p${Date.now()}`, createdAt: now, updatedAt: now, ultimaAtualizacao: now.slice(0, 10) };
       setProdutos((prev) => [...prev, novo]);
       setSelectedId(novo.id);
+      void recordAuditLog({ action: "criar_produto", resource: "produtos", entityId: novo.id, entityLabel: novo.nome, beforeData: null, afterData: novo });
     }
     setOpen(false);
     toast.success("Produto salvo no cadastro mestre.");
   };
 
   const excluir = (p: Produto) => {
+    if (!canDeleteOrManageProdutos) return toast.error("Você não tem permissão para excluir produtos.");
     if (!window.confirm("Esta ação não pode ser desfeita nesta versão. Deseja continuar?")) return;
     setProdutos((prev) => prev.filter((x) => x.id !== p.id));
     if (selectedId === p.id) setSelectedId(null);
+    void recordAuditLog({ action: "excluir_produto", resource: "produtos", entityId: p.id, entityLabel: p.nome, beforeData: p, afterData: null });
     toast.success("Produto excluído.");
   };
 
   const ajustarEstoque = (p: Produto) => {
+    if (!canEditOrManageProdutos) return toast.error("Você não tem permissão para ajustar estoque.");
     openEdit(p);
     toast.info(controlaEstoqueProduto(p) ? "Ajuste estoque atual, reservado e local na ficha do produto." : "Produto sem controle de estoque: ative o controle para editar estoque.");
   };
@@ -139,6 +162,15 @@ export default function Produtos() {
     return <Badge className={status.cls}>{status.label}</Badge>;
   };
 
+  if (!canViewProdutos) {
+    return (
+      <Card className="p-6">
+        <h2 className="text-xl font-semibold">Você não tem permissão para visualizar Produtos.</h2>
+        <p className="mt-2 text-sm text-muted-foreground">Solicite acesso ao administrador para consultar o cadastro mestre de produtos.</p>
+      </Card>
+    );
+  }
+
   if (selectedProduct) {
     const controlaEstoque = controlaEstoqueProduto(selectedProduct);
     const disponivel = estoqueDisponivelProduto(selectedProduct);
@@ -152,8 +184,8 @@ export default function Produtos() {
             <p className="text-sm text-muted-foreground">Cadastro mestre com preço, custo, estoque e vínculos operacionais.</p>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" onClick={() => ajustarEstoque(selectedProduct)}><Boxes className="mr-2 h-4 w-4" />Ajustar estoque</Button>
-            <Button onClick={() => openEdit(selectedProduct)}><Pencil className="mr-2 h-4 w-4" />Editar produto</Button>
+            {canEditOrManageProdutos && <Button variant="outline" onClick={() => ajustarEstoque(selectedProduct)}><Boxes className="mr-2 h-4 w-4" />Ajustar estoque</Button>}
+            {canEditOrManageProdutos && <Button onClick={() => openEdit(selectedProduct)}><Pencil className="mr-2 h-4 w-4" />Editar produto</Button>}
           </div>
         </div>
 
@@ -228,7 +260,7 @@ export default function Produtos() {
           <h2 className="text-2xl font-semibold tracking-tight">Produtos</h2>
           <p className="text-sm text-muted-foreground">Cadastro central de produtos, preços, estoque e reservas.</p>
         </div>
-        <Button onClick={openNew}><Plus className="mr-1 h-4 w-4" /> Novo produto</Button>
+        {canCreateOrManageProdutos && <Button onClick={openNew}><Plus className="mr-1 h-4 w-4" /> Novo produto</Button>}
       </div>
 
       <Card className="p-4">
@@ -351,7 +383,7 @@ export default function Produtos() {
   }
 
   function renderActions(p: Produto, estoque = false) {
-    return <><Button size="icon" variant="ghost" title="Abrir ficha" onClick={() => setSelectedId(p.id)}><Eye className="h-3.5 w-3.5" /></Button><Button size="icon" variant="ghost" title={estoque ? "Ajustar estoque" : "Editar"} onClick={() => estoque ? ajustarEstoque(p) : openEdit(p)}>{estoque ? <Boxes className="h-3.5 w-3.5" /> : <Pencil className="h-3.5 w-3.5" />}</Button><Button size="icon" variant="ghost" title="Excluir" onClick={() => excluir(p)}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button></>;
+    return <><Button size="icon" variant="ghost" title="Abrir ficha" onClick={() => setSelectedId(p.id)}><Eye className="h-3.5 w-3.5" /></Button>{canEditOrManageProdutos && <Button size="icon" variant="ghost" title={estoque ? "Ajustar estoque" : "Editar"} onClick={() => estoque ? ajustarEstoque(p) : openEdit(p)}>{estoque ? <Boxes className="h-3.5 w-3.5" /> : <Pencil className="h-3.5 w-3.5" />}</Button>}{canDeleteOrManageProdutos && <Button size="icon" variant="ghost" title="Excluir" onClick={() => excluir(p)}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button>}</>;
   }
 
   function renderDialog() {
