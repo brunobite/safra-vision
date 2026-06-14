@@ -143,8 +143,8 @@ export function AuthStoreProvider({ children }: { children: React.ReactNode }) {
         ? {
             accessStatus: normalizeAccessStatus(data.status),
             role: normalizeRole(data.papel),
-            vendedorNome: data.vendedor_nome ?? null,
-            vendedorId: data.vendedor_id ?? null,
+            vendedorNome: data.nome ?? data.vendedor_nome ?? null,
+            vendedorId: data.user_id ?? data.vendedor_id ?? null,
             empresaId: data.empresa_id ?? null,
             nome: data.nome ?? null,
             profileId: data.id ?? null,

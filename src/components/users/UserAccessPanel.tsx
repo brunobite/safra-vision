@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { AlertTriangle, Plus, RefreshCw, ShieldCheck } from "lucide-react";
+import { Plus, RefreshCw, ShieldCheck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -38,7 +38,6 @@ type CreateUserForm = {
   confirmPassword: string;
   nome: string;
   papel: Papel;
-  vendedor_id: string;
   status: StatusPerfil;
 };
 
@@ -50,20 +49,14 @@ type AdminCreateUserResponse = {
 
 const papeis: Papel[] = ["administrador", "gestor", "vendedor", "visualizador"];
 const statuses: StatusPerfil[] = ["pendente", "ativo", "inativo", "bloqueado"];
-const NONE = "__none";
-
 const initialForm: CreateUserForm = {
   email: "",
   password: "",
   confirmPassword: "",
   nome: "",
   papel: "vendedor",
-  vendedor_id: "",
   status: "ativo",
 };
-
-const getSellerName = (vendedores: { id: string; nome: string }[], vendedorId?: string | null, vendedorNome?: string | null) =>
-  vendedores.find((vendedor) => vendedor.id === vendedorId)?.nome || vendedorNome || null;
 
 const isValidEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
@@ -80,7 +73,6 @@ async function readFunctionErrorMessage(error: unknown): Promise<string> {
 
 export function UserAccessPanel() {
   const { role, user, isLocalMode, refreshAccess } = useAuth();
-  const { vendedores } = useAppStore();
   const [profiles, setProfiles] = useState<UserProfileRow[]>([]);
   const [draftNames, setDraftNames] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
@@ -90,8 +82,6 @@ export function UserAccessPanel() {
 
   const authContext = { role, accessStatus: "ativo" as const, email: user?.email };
   const canManage = canManageUsers(authContext);
-  const vendedoresAtivos = useMemo(() => vendedores.filter((vendedor) => vendedor.ativo), [vendedores]);
-  const vendedorById = useMemo(() => new Map(vendedores.map((vendedor) => [vendedor.id, vendedor])), [vendedores]);
 
   const loadUsers = useCallback(async () => {
     if (!supabase || !canManage) return;
@@ -199,16 +189,6 @@ export function UserAccessPanel() {
       return;
     }
 
-    const selectedSeller = form.vendedor_id ? vendedorById.get(form.vendedor_id) : null;
-    if (form.papel === "vendedor" && !selectedSeller) {
-      toast.error("Vincule um vendedor operacional para usuários com papel vendedor.");
-      return;
-    }
-    if (form.vendedor_id && !selectedSeller) {
-      toast.error("Vendedor vinculado inexistente.");
-      return;
-    }
-
     setLoading(true);
     try {
       const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
@@ -222,8 +202,8 @@ export function UserAccessPanel() {
           password,
           nome,
           papel: form.papel,
-          vendedor_id: form.papel === "vendedor" ? selectedSeller?.id ?? null : null,
-          vendedor_nome: form.papel === "vendedor" ? selectedSeller?.nome ?? null : null,
+          vendedor_id: null,
+          vendedor_nome: form.papel === "vendedor" ? nome : null,
           status: form.status,
         },
         headers: { Authorization: `Bearer ${accessToken}` },
@@ -260,8 +240,8 @@ export function UserAccessPanel() {
         ...changes,
         papel: isBruno ? "administrador" : changes.papel,
         status: isBruno ? "ativo" : changes.status,
-        vendedor_id: isBruno || (changes.papel && changes.papel !== "vendedor") ? null : changes.vendedor_id,
-        vendedor_nome: isBruno || (changes.papel && changes.papel !== "vendedor") ? null : changes.vendedor_nome,
+        vendedor_id: null,
+        vendedor_nome: changes.papel === "vendedor" ? (changes.nome ?? profile.nome) : null,
         aprovado_por: approving ? user.id : undefined,
         aprovado_em: approving ? new Date().toISOString() : undefined,
       };
@@ -294,7 +274,7 @@ export function UserAccessPanel() {
         <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
           <div>
             <h3 className="flex items-center gap-2 font-semibold"><ShieldCheck className="h-4 w-4" /> Usuários e acessos</h3>
-            <p className="text-sm text-muted-foreground">Cadastre usuários diretamente, defina papel operacional, status de acesso e vínculo com vendedor.</p>
+            <p className="text-sm text-muted-foreground">Cadastre usuários diretamente, defina papel operacional, status de acesso e escopo comercial (usuário = agente operacional).</p>
           </div>
           <Button variant="outline" onClick={() => void loadUsers()} disabled={loading}><RefreshCw className="mr-2 h-4 w-4" />Atualizar</Button>
         </div>
@@ -303,16 +283,16 @@ export function UserAccessPanel() {
           <div><Label>Senha inicial</Label><Input type="password" value={form.password} onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))} placeholder="Mínimo 8 caracteres" autoComplete="new-password" /></div>
           <div><Label>Confirmar senha</Label><Input type="password" value={form.confirmPassword} onChange={(event) => setForm((current) => ({ ...current, confirmPassword: event.target.value }))} placeholder="Repita a senha" autoComplete="new-password" /></div>
           <div><Label>Nome</Label><Input value={form.nome} onChange={(event) => setForm((current) => ({ ...current, nome: event.target.value }))} placeholder="Nome do usuário" /></div>
-          <div><Label>Papel</Label><Select value={form.papel} onValueChange={(value) => setForm((current) => ({ ...current, papel: value as Papel, vendedor_id: value === "vendedor" ? current.vendedor_id : "" }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{papeis.map((papel) => <SelectItem key={papel} value={papel}>{papel}</SelectItem>)}</SelectContent></Select></div>
+          <div><Label>Papel</Label><Select value={form.papel} onValueChange={(value) => setForm((current) => ({ ...current, papel: value as Papel }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{papeis.map((papel) => <SelectItem key={papel} value={papel}>{papel}</SelectItem>)}</SelectContent></Select></div>
           <div><Label>Status de acesso</Label><Select value={form.status} onValueChange={(value) => setForm((current) => ({ ...current, status: value as StatusPerfil }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{statuses.map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}</SelectContent></Select></div>
-          <div><Label>Vendedor vinculado</Label><Select value={form.vendedor_id || NONE} onValueChange={(value) => setForm((current) => ({ ...current, vendedor_id: value === NONE ? "" : value }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={NONE}>Sem vínculo</SelectItem>{vendedoresAtivos.map((vendedor) => <SelectItem key={vendedor.id} value={vendedor.id}>{vendedor.nome}</SelectItem>)}</SelectContent></Select></div>
+          <div className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground xl:col-span-1">Usuários ativos são os agentes comerciais. Para papel vendedor, o nome do usuário será exibido comercialmente.</div>
           <div className="flex items-end md:col-span-3 xl:col-span-7"><Button className="w-full md:w-auto" onClick={() => void createUser()} disabled={loading}><Plus className="mr-2 h-4 w-4" />Cadastrar usuário</Button></div>
         </div>
       </Card>
 
       <Card className="overflow-x-auto p-0">
         <Table>
-          <TableHeader><TableRow><TableHead>Usuário</TableHead><TableHead>Status</TableHead><TableHead>Papel</TableHead><TableHead>Vendedor</TableHead><TableHead>Aprovação</TableHead><TableHead>Ações</TableHead></TableRow></TableHeader>
+          <TableHeader><TableRow><TableHead>Usuário</TableHead><TableHead>Status</TableHead><TableHead>Papel</TableHead><TableHead>Agente comercial</TableHead><TableHead>Aprovação</TableHead><TableHead>Ações</TableHead></TableRow></TableHeader>
           <TableBody>
             {profiles.length === 0 ? <TableRow><TableCell colSpan={6} className="text-sm text-muted-foreground">Nenhum usuário cadastrado.</TableCell></TableRow> : profiles.map((profile) => (
               <React.Fragment key={profile.id}>
@@ -320,7 +300,7 @@ export function UserAccessPanel() {
                 <TableCell><div className="space-y-1"><Input className="h-8 min-w-52" value={draftNames[profile.id] ?? profile.nome ?? ""} placeholder="Sem nome" onChange={(event) => setDraftNames((current) => ({ ...current, [profile.id]: event.target.value }))} onBlur={(event) => { const nome = event.target.value.trim(); if (nome !== (profile.nome ?? "")) void updateProfile(profile, { nome }); }} /></div><div className="text-xs text-muted-foreground">{profile.email}</div></TableCell>
                 <TableCell><Badge variant={profile.status === "ativo" ? "default" : profile.status === "pendente" ? "secondary" : "destructive"}>{profile.status}</Badge></TableCell>
                 <TableCell><Select value={profile.papel} disabled={profile.email.toLowerCase() === BRUNO_ADMIN_EMAIL} onValueChange={(value) => { const applyTemplate = window.confirm("Deseja aplicar o modelo padrão deste papel? Cancelar mantém permissões personalizadas."); void updateProfile(profile, { papel: value as Papel }).then(() => { if (applyTemplate) { setPermissionDrafts((current) => ({ ...current, [profile.id]: roleTemplate(value as Papel) })); void savePermissions({ ...profile, papel: value as Papel }); } }); }}><SelectTrigger className="w-40"><SelectValue /></SelectTrigger><SelectContent>{papeis.map((papel) => <SelectItem key={papel} value={papel}>{papel}</SelectItem>)}</SelectContent></Select></TableCell>
-                <TableCell><div className="space-y-1"><Select value={profile.vendedor_id || NONE} disabled={profile.email.toLowerCase() === BRUNO_ADMIN_EMAIL} onValueChange={(value) => { const selectedSeller = value === NONE ? null : vendedorById.get(value); void updateProfile(profile, { vendedor_id: selectedSeller?.id ?? null, vendedor_nome: selectedSeller?.nome ?? null }); }}><SelectTrigger className="w-56"><SelectValue placeholder={getSellerName(vendedores, profile.vendedor_id, profile.vendedor_nome) || "Sem vínculo"} /></SelectTrigger><SelectContent><SelectItem value={NONE}>Sem vínculo</SelectItem>{vendedoresAtivos.map((vendedor) => <SelectItem key={vendedor.id} value={vendedor.id}>{vendedor.nome}</SelectItem>)}</SelectContent></Select>{profile.vendedor_id && !vendedorById.get(profile.vendedor_id)?.ativo && <div className="flex items-center gap-1 text-xs text-amber-700"><AlertTriangle className="h-3 w-3" />vendedor inativo</div>}{profile.papel === "vendedor" && !profile.vendedor_id && <div className="flex items-center gap-1 text-xs text-destructive"><AlertTriangle className="h-3 w-3" />Vendedor sem vínculo operacional.</div>}{!profile.vendedor_id && profile.vendedor_nome && <div className="text-xs text-muted-foreground">Legado: {profile.vendedor_nome}</div>}</div></TableCell>
+                <TableCell><div className="text-sm">{profile.papel === "vendedor" ? (profile.nome || profile.email) : "—"}</div>{profile.vendedor_id && <div className="text-xs text-muted-foreground">Legado: {profile.vendedor_nome || profile.vendedor_id}</div>}</TableCell>
                 <TableCell className="text-xs text-muted-foreground">{profile.aprovado_em ? new Date(profile.aprovado_em).toLocaleString("pt-BR") : "Pendente"}</TableCell>
                 <TableCell><div className="flex flex-wrap gap-2"><Button size="sm" variant="secondary" onClick={() => void togglePermissions(profile)}>Permissões</Button>{statuses.map((status) => <Button key={status} size="sm" variant={status === profile.status ? "default" : "outline"} disabled={loading || (profile.email.toLowerCase() === BRUNO_ADMIN_EMAIL && status !== "ativo")} onClick={() => void updateProfile(profile, { status })}>{status === "ativo" && profile.status !== "ativo" ? "Reativar" : status}</Button>)}</div></TableCell>
               </TableRow>

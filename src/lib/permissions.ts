@@ -4,7 +4,7 @@ export type UserRole = "administrador" | "gestor" | "vendedor" | "visualizador" 
 export const BRUNO_ADMIN_EMAIL = "bitencourttec@gmail.com";
 
 export const permissionResources = [
-  "dashboard", "clientes", "agenda", "proximas_acoes", "lancamentos", "funil", "orcamentos", "produtos", "metas", "rotas", "prioridades", "eventos", "relatorios", "configuracoes", "usuarios_acessos", "sincronizacao", "google_calendar", "importacoes", "empresas", "vendedores", "auditoria_operacional",
+  "dashboard", "clientes", "agenda", "proximas_acoes", "lancamentos", "funil", "orcamentos", "produtos", "metas", "rotas", "prioridades", "eventos", "relatorios", "configuracoes", "usuarios_acessos", "sincronizacao", "google_calendar", "importacoes", "empresas", "vendedores", "auditoria_operacional", "excecao_preco_minimo",
 ] as const;
 
 export const permissionActions = ["can_view", "can_create", "can_edit", "can_delete", "can_import", "can_export", "can_manage"] as const;
@@ -40,7 +40,7 @@ const ADMIN_ROLES = new Set<UserRole>(["administrador", "admin"]);
 const READ_ONLY_ROLES = new Set<UserRole>(["visualizador", "consulta"]);
 
 export const resourceLabels: Record<PermissionResource, string> = {
-  dashboard: "Dashboard", clientes: "Clientes", agenda: "Agenda", proximas_acoes: "Próximas ações", lancamentos: "Lançamentos", funil: "Funil", orcamentos: "Orçamentos", produtos: "Produtos", metas: "Metas", rotas: "Rotas", prioridades: "Prioridades", eventos: "Eventos", relatorios: "Relatórios", configuracoes: "Configurações", usuarios_acessos: "Usuários e acessos", sincronizacao: "Sincronização", google_calendar: "Google Calendar", importacoes: "Importações", empresas: "Empresas", vendedores: "Vendedores", auditoria_operacional: "Auditoria operacional",
+  dashboard: "Dashboard", clientes: "Clientes", agenda: "Agenda", proximas_acoes: "Próximas ações", lancamentos: "Lançamentos", funil: "Funil", orcamentos: "Orçamentos", produtos: "Produtos", metas: "Metas", rotas: "Rotas", prioridades: "Prioridades", eventos: "Eventos", relatorios: "Relatórios", configuracoes: "Configurações", usuarios_acessos: "Usuários e acessos", sincronizacao: "Sincronização", google_calendar: "Google Calendar", importacoes: "Importações", empresas: "Empresas", vendedores: "Vendedores", auditoria_operacional: "Auditoria operacional", excecao_preco_minimo: "Exceção preço mínimo",
 };
 
 export const routeResourceMap: Record<string, PermissionResource> = {
@@ -111,6 +111,7 @@ export const canImport = (resource: PermissionEntity | string, contextOrRole?: P
 export const canExport = (resource: PermissionEntity | string, contextOrRole?: PermissionContext | UserRole | string | null) => resolvePermission(resource, contextOrRole).can_export;
 export const canManage = (resource: PermissionEntity | string, contextOrRole?: PermissionContext | UserRole | string | null) => resolvePermission(resource, contextOrRole).can_manage;
 export const canManageUsers = (contextOrRole?: PermissionContext | UserRole | string | null) => canManage("usuarios_acessos", contextOrRole) || canEdit("usuarios_acessos", contextOrRole);
+export const canSaveBelowMinimumPrice = (contextOrRole?: PermissionContext | UserRole | string | null) => canManage("excecao_preco_minimo", contextOrRole);
 
 export function isOwnSellerData(vendedorVinculado: string | null | undefined, candidate: string | null | undefined): boolean {
   if (!vendedorVinculado) return true;
