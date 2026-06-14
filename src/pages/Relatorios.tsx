@@ -30,6 +30,10 @@ import {
 } from "@/lib/visitReportExport";
 import { formatDateBR } from "@/utils/dateUtils";
 import { getCategoriasComerciais } from "@/utils/commercialCategories";
+import { recordAuditLog } from "@/lib/audit";
+import { canExport } from "@/lib/permissions";
+import { useAuth } from "@/store/AuthStore";
+import { toast } from "sonner";
 
 const reportLabels: Record<ReportType, string> = {
   geral: "Relatório Geral",
@@ -44,6 +48,7 @@ const reportLabels: Record<ReportType, string> = {
 
 export default function Relatorios() {
   const store = useAppStore();
+  const { role, accessStatus, user, permissions } = useAuth();
   const [filters, setFilters] = useState(defaultReportFilters);
   const [visitFilters, setVisitFilters] = useState(defaultVisitReportFilters);
   const [showReport, setShowReport] = useState(false);
@@ -83,7 +88,10 @@ export default function Relatorios() {
   const uniqueResults = Array.from(new Set(store.relatoriosVisita.map((v) => v.resultadoVisita).filter(Boolean))).sort();
   const uniqueActionTypes = Array.from(new Set(store.relatoriosVisita.map((v) => v.tipoAcao).filter(Boolean))).sort();
   const categorias = useMemo(() => getCategoriasComerciais({ produtos: store.produtos, metasCategoria: store.metasCategoria, ticketsMedios: store.ticketsMedios, orcamentos: store.orcamentos, oportunidades: store.oportunidades, negocios: store.negocios }), [store.produtos, store.metasCategoria, store.ticketsMedios, store.orcamentos, store.oportunidades, store.negocios]);
-  const canExportVisits = filteredVisits.length > 0;
+  const canExportReports = canExport("relatorios", { role, accessStatus, email: user?.email, permissions });
+  const canExportVisits = filteredVisits.length > 0 && canExportReports;
+  const auditExport = (format: string) => recordAuditLog({ action: `exportar_${format}`, resource: "relatorios", entityLabel: reportLabels[filters.reportType], metadata: { filtros: filters, visitas: filteredVisits.length } });
+  const guardedPrint = () => { if (!canExportReports) { toast.error("Você não tem permissão para exportar relatórios."); return; } void auditExport("pdf"); window.print(); };
 
   return <div className="space-y-4">
     <div className="no-print space-y-3 rounded-lg border bg-card p-4">
@@ -123,11 +131,11 @@ export default function Relatorios() {
 
       <div className="flex flex-wrap gap-2">
         <Button onClick={() => setShowReport(true)}>Visualizar relatório</Button>
-        {!isVisitReport && <Button variant="secondary" onClick={() => window.print()}>Salvar/Gerar PDF</Button>}
-        {isVisitReport && <Button variant="secondary" disabled={!canExportVisits} onClick={() => exportVisitReportsPdf(filteredVisits, visitFilters, store.clientes)}><FileText className="mr-2 h-4 w-4" />Exportar PDF consolidado</Button>}
-        {isVisitReport && <Button variant="outline" disabled={!canExportVisits} onClick={() => exportVisitReportsXlsx(filteredVisits, visitFilters, store.clientes)}><FileSpreadsheet className="mr-2 h-4 w-4" />Exportar XLSX</Button>}
-        {!isVisitReport && <Button variant="outline" onClick={() => window.print()}>Imprimir</Button>}
-        {isVisitReport && <Button variant="outline" onClick={() => window.print()}><Download className="mr-2 h-4 w-4" />Imprimir prévia</Button>}
+        {!isVisitReport && <Button variant="secondary" onClick={guardedPrint}>Salvar/Gerar PDF</Button>}
+        {isVisitReport && <Button variant="secondary" disabled={!canExportVisits} onClick={() => { void auditExport("pdf"); exportVisitReportsPdf(filteredVisits, visitFilters, store.clientes); }}><FileText className="mr-2 h-4 w-4" />Exportar PDF consolidado</Button>}
+        {isVisitReport && <Button variant="outline" disabled={!canExportVisits} onClick={() => { void auditExport("xlsx"); exportVisitReportsXlsx(filteredVisits, visitFilters, store.clientes); }}><FileSpreadsheet className="mr-2 h-4 w-4" />Exportar XLSX</Button>}
+        {!isVisitReport && <Button variant="outline" onClick={guardedPrint}>Imprimir</Button>}
+        {isVisitReport && <Button variant="outline" onClick={guardedPrint}><Download className="mr-2 h-4 w-4" />Imprimir prévia</Button>}
         <Button variant="ghost" onClick={() => { setFilters(defaultReportFilters); setVisitFilters(defaultVisitReportFilters); setShowReport(false); }}>Limpar filtros</Button>
       </div>
       {isVisitReport && <p className="text-sm text-muted-foreground">{store.relatoriosVisita.length === 0 ? "Nenhum relatório de visita salvo no cache/app store." : `${filteredVisits.length} visita(s) encontrada(s) para os filtros atuais.`} A exportação fica bloqueada quando não há visitas no período selecionado.</p>}
@@ -148,7 +156,7 @@ export default function Relatorios() {
           </div>
           <Table>
             <TableHeader><TableRow><TableHead>Data</TableHead><TableHead>Cliente</TableHead><TableHead className="hidden md:table-cell">Vendedor</TableHead><TableHead className="hidden lg:table-cell">Resultado</TableHead><TableHead>Oportunidade</TableHead><TableHead className="text-right">Ações</TableHead></TableRow></TableHeader>
-            <TableBody>{filteredVisits.slice(0, 20).map(visit => <TableRow key={visit.id}><TableCell>{formatDateBR(visit.dataVisita)} {visit.horario || ""}</TableCell><TableCell>{visit.clienteNomeExport}<span className="block text-xs text-muted-foreground">{visit.fazenda || visit.cidadeExport || "—"}</span></TableCell><TableCell className="hidden md:table-cell">{visit.vendedorExport || "—"}</TableCell><TableCell className="hidden lg:table-cell">{visit.resultadoVisita || "—"}</TableCell><TableCell>{visit.hasOportunidade ? "Sim" : "Não"}</TableCell><TableCell className="text-right"><Button type="button" size="sm" variant="outline" onClick={() => exportSingleVisitReportPdf(visit)}><FileText className="mr-2 h-4 w-4" />PDF da visita</Button></TableCell></TableRow>)}</TableBody>
+            <TableBody>{filteredVisits.slice(0, 20).map(visit => <TableRow key={visit.id}><TableCell>{formatDateBR(visit.dataVisita)} {visit.horario || ""}</TableCell><TableCell>{visit.clienteNomeExport}<span className="block text-xs text-muted-foreground">{visit.fazenda || visit.cidadeExport || "—"}</span></TableCell><TableCell className="hidden md:table-cell">{visit.vendedorExport || "—"}</TableCell><TableCell className="hidden lg:table-cell">{visit.resultadoVisita || "—"}</TableCell><TableCell>{visit.hasOportunidade ? "Sim" : "Não"}</TableCell><TableCell className="text-right"><Button type="button" size="sm" variant="outline" onClick={() => { void auditExport("pdf_visita"); exportSingleVisitReportPdf(visit); }}><FileText className="mr-2 h-4 w-4" />PDF da visita</Button></TableCell></TableRow>)}</TableBody>
           </Table>
           {filteredVisits.length > 20 && <p className="text-xs text-muted-foreground">Prévia exibindo as 20 primeiras visitas. PDF e XLSX exportam todas as {filteredVisits.length} visitas filtradas.</p>}
         </div>}
