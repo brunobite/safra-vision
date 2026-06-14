@@ -41,12 +41,12 @@ export function gerarPdfOrcamento(orcamento: Orcamento, cliente?: Cliente, empre
   doc.text(`Total: ${fmtBRL(orcamento.valorTotal)}`, margem + 95, y);
   doc.text(`Custo médio/ha: ${fmtBRL(orcamento.custoPorHectare)}`, margem + 140, y);
   y += 6;
-  doc.text(`Forma pagamento: ${toText(orcamento.formaPagamento)} | Prazo: ${toText(orcamento.prazoPagamento)}`, margem, y);
+  doc.text(`Forma pagamento: ${toText(orcamento.formaPagamento)} | Prazo pagamento: ${toText(orcamento.prazoPagamento)} | Entrega: ${toText(orcamento.prazoEntrega)}`, margem, y);
   y += 5;
   doc.text(`Observações comerciais: ${toText(orcamento.observacoes)}`, margem, y);
   y += 10;
   doc.setFontSize(8.5);
-  doc.text(`Validade da proposta até ${formatDateBR(orcamento.validade)}. Sujeita a disponibilidade de estoque e confirmação comercial.`, margem, y);
+  doc.text(`Rodapé técnico/comercial: validade da proposta até ${formatDateBR(orcamento.validade)}; sujeita a disponibilidade de estoque, política de preço mínimo e confirmação comercial.`, margem, y);
 
   doc.save(`orcamento-${sanitizeForFileName(cliente?.nome, "cliente")}-${sanitizeForFileName(orcamento.codigo)}-v${orcamento.versao || 1}.pdf`);
 }

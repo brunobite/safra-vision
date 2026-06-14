@@ -244,6 +244,7 @@ export interface Negocio {
   motivoPerda?: string;
   formaPagamento?: string;
   prazoPagamento?: string;
+  prazoEntrega?: string;
   observacoes?: string;
   itensEstimados?: OportunidadeItemEstimado[];
   segmento?: string;
@@ -396,6 +397,7 @@ export interface Produto {
   custo: number;
   margem?: number;
   controlaEstoque?: boolean;
+  representacaoComissionado?: boolean;
   estoqueAtual: number;
   estoqueReservado: number;
   localEstoque?: string;
@@ -470,7 +472,7 @@ export interface ImportLog {
 
 export interface NegocioProdutoItem { produtoId: string; quantidade: number; precoUnitario: number; }
 
-export type OrcamentoStatus = "Rascunho" | "Enviado" | "Em revisão" | "Reenviado" | "Aprovado" | "Perdido" | "Expirado" | "Cancelado" | "Aberto" | "Em negociação" | "Recusado" | "Vencido" | "Reprovado";
+export type OrcamentoStatus = "Rascunho" | "Enviado" | "Em negociação" | "Aprovado" | "Recusado" | "Cancelado" | "Convertido" | "Em revisão" | "Reenviado" | "Perdido" | "Expirado" | "Aberto" | "Vencido" | "Reprovado";
 export type UnidadeDose = "L/ha" | "mL/ha" | "kg/ha" | "g/ha" | "ton/ha" | "un/ha";
 
 export interface OrcamentoItem {
@@ -484,6 +486,12 @@ export interface OrcamentoItem {
   areaHa: number;
   quantidadeTotal: number;
   precoUnitario: number;
+  precoMinimo?: number;
+  desconto?: number;
+  controlaEstoque?: boolean;
+  representacaoComissionado?: boolean;
+  estoqueDisponivel?: number;
+  abaixoPrecoMinimo?: boolean;
   valorTotalItem: number;
   custoPorHaItem: number;
   observacoes?: string;
@@ -508,6 +516,8 @@ export interface Orcamento {
   id: string;
   codigo: string;
   clienteId: string;
+  fazenda?: string;
+  cidade?: string;
   negocioId?: string;
   oportunidadeId?: string;
   vendedor: string;
@@ -523,6 +533,7 @@ export interface Orcamento {
   custoPorHectare: number;
   formaPagamento?: string;
   prazoPagamento?: string;
+  prazoEntrega?: string;
   observacoes?: string;
   itensEstimados?: OportunidadeItemEstimado[];
   segmento?: string;
