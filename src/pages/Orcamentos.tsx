@@ -14,7 +14,8 @@ import { calcularQuantidadeComercial, DOSE_UNIDADES, isOrcamentoBloqueado, recal
 import { gerarPdfOrcamento } from "@/lib/orcamentoPdf";
 import { formatDateBR } from "@/utils/dateUtils";
 import { useAuth } from "@/store/AuthStore";
-import { canCreate, canEdit, canExport, canManage, canSaveBelowMinimumPrice, canView, isOwnSellerData } from "@/lib/permissions";
+import { canCreate, canEdit, canExport, canManage, canSaveBelowMinimumPrice, canView, isAdminRole, normalizeRole } from "@/lib/permissions";
+import { supabase } from "@/lib/supabase";
 import { recordAuditLog } from "@/lib/audit";
 
 const STATUS_OFICIAIS: OrcamentoStatus[] = ["Rascunho", "Enviado", "Em negociação", "Aprovado", "Recusado", "Cancelado", "Convertido"];
@@ -22,10 +23,14 @@ const STATUS_LEGADO: OrcamentoStatus[] = ["Aberto", "Em negociação", "Recusado
 const CANAIS_ENVIO = ["WhatsApp", "E-mail", "Presencial", "Ligação", "Outro"] as const;
 const validade7 = (base: string) => new Date(new Date(base).getTime() + 7 * 86400000).toISOString().slice(0, 10);
 
+type CommercialAgent = { user_id: string; nome: string; papel: "vendedor" | "gestor" | "administrador" | "visualizador"; status: string };
+type TeamMember = { gestor_user_id: string; vendedor_user_id: string; ativo: boolean };
+const sameText = (a?: string | null, b?: string | null) => Boolean(a && b && a.trim().toLowerCase() === b.trim().toLowerCase());
+
 const novoItem = (idx: number, areaHa = 0): OrcamentoItem => ({ id: `i${Date.now()}-${idx}`, produtoId: "", produtoNome: "", categoria: "", unidadeProduto: "LT", dosePorHa: 0, unidadeDose: "L/ha", areaHa, quantidadeTotal: 0, precoUnitario: 0, precoMinimo: 0, desconto: 0, valorTotalItem: 0, custoPorHaItem: 0 });
 
 export default function Orcamentos() {
-  const { orcamentos, setOrcamentos, clientes, produtos, setProdutos, empresas, oportunidades, vendedores, formasPagamento, prazosPagamento, proximasAcoes, setProximasAcoes, setOportunidades, setHistoricoFunil } = useAppStore();
+  const { orcamentos, setOrcamentos, clientes, produtos, setProdutos, empresas, oportunidades, formasPagamento, prazosPagamento, proximasAcoes, setProximasAcoes, setOportunidades, setHistoricoFunil } = useAppStore();
   const { role, accessStatus, user, vendedorNome, vendedorId, permissions } = useAuth();
   const permissionContext = { role, accessStatus, email: user?.email, vendedorNome, vendedorId, permissions };
   const canViewOrcamentos = canView("orcamentos", permissionContext);
@@ -35,7 +40,12 @@ export default function Orcamentos() {
   const canManageOrcamentos = canManage("orcamentos", permissionContext);
   const canUseMinimumPriceException = canSaveBelowMinimumPrice(permissionContext);
   const [params] = useSearchParams();
-  const vendedoresAtivos = vendedores.filter((v) => v.ativo);
+  const normalizedRole = normalizeRole(role);
+  const isAdmin = isAdminRole(role);
+  const isGestor = normalizedRole === "gestor";
+  const isVendedor = normalizedRole === "vendedor";
+  const [commercialAgents, setCommercialAgents] = useState<CommercialAgent[]>([]);
+  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const formasPagamentoAtivas = formasPagamento.filter((f) => f.ativo);
   const prazosPagamentoAtivos = prazosPagamento.filter((p) => p.ativo);
   const formasPagamentoFallback = ["Boleto", "Pix", "Dinheiro", "Cartão", "Safra", "Barter", "Outro"];
@@ -52,7 +62,51 @@ export default function Orcamentos() {
 
   const isLegacy = Boolean(edit?.id && !edit?.oportunidadeId);
   const oportunidadesAbertasCliente = oportunidades.filter((o) => o.clienteId === form.clienteId && !["Ganha", "Perdida", "Cancelada", "Suspensa/Sem timing"].includes(o.etapa));
-  const orcamentosVisiveis = canManageOrcamentos ? orcamentos : orcamentos.filter((o) => isOwnSellerData(vendedorId || vendedorNome, o.vendedorId || o.responsavelId || o.vendedor || o.responsavel));
+  useEffect(() => {
+    if (!supabase) {
+      const localName = vendedorNome || user?.user_metadata?.nome || user?.email || "Administrador local";
+      setCommercialAgents([{ user_id: user?.id || "local-admin", nome: localName, papel: normalizedRole, status: "ativo" }]);
+      return;
+    }
+    if (!user) {
+      setCommercialAgents([]);
+      return;
+    }
+    void (async () => {
+      const [{ data: profilesData, error: profilesError }, { data: teamData, error: teamError }] = await Promise.all([
+        supabase.from("user_profiles").select("user_id,nome,email,papel,status").eq("status", "ativo").in("papel", ["vendedor", "gestor"]),
+        supabase.from("user_team_members").select("gestor_user_id,vendedor_user_id,ativo").eq("ativo", true),
+      ]);
+      if (profilesError) toast.error(profilesError.message);
+      if (teamError) console.warn("Não foi possível carregar equipes de gestores:", teamError.message);
+      setCommercialAgents((profilesData ?? []).filter((profile) => profile.user_id).map((profile) => ({ user_id: profile.user_id!, nome: profile.nome || profile.email || profile.user_id!, papel: normalizeRole(profile.papel) as CommercialAgent["papel"], status: profile.status || "ativo" })));
+      setTeamMembers((teamData ?? []) as TeamMember[]);
+    })();
+  }, [normalizedRole, user, vendedorNome]);
+
+  const teamSellerIds = useMemo(() => new Set(teamMembers.filter((member) => member.gestor_user_id === user?.id && member.ativo).map((member) => member.vendedor_user_id)), [teamMembers, user?.id]);
+  const selectableAgents = useMemo(() => {
+    if (isAdmin) return commercialAgents;
+    if (isGestor) return commercialAgents.filter((agent) => agent.user_id === user?.id || teamSellerIds.has(agent.user_id));
+    return commercialAgents.filter((agent) => agent.user_id === user?.id);
+  }, [commercialAgents, isAdmin, isGestor, teamSellerIds, user?.id]);
+
+  const canSeeOrcamento = (orcamento: Orcamento) => {
+    if (isAdmin) return true;
+    const ownId = user?.id;
+    const candidateIds = [orcamento.vendedorUserId, orcamento.responsavelUserId, orcamento.createdByUserId].filter(Boolean);
+    if (isGestor) {
+      if (candidateIds.some((id) => id === ownId || teamSellerIds.has(id!))) return true;
+      if (!orcamento.vendedorUserId && !orcamento.responsavelUserId) return selectableAgents.some((agent) => sameText(agent.nome, orcamento.vendedorNome || orcamento.responsavelNome || orcamento.vendedor || orcamento.responsavel));
+      return false;
+    }
+    if (isVendedor) {
+      if (candidateIds.some((id) => id === ownId)) return true;
+      return sameText(vendedorNome, orcamento.vendedorNome) || sameText(vendedorNome, orcamento.responsavelNome) || sameText(vendedorNome, orcamento.vendedor) || sameText(vendedorNome, orcamento.responsavel);
+    }
+    return canViewOrcamentos && (candidateIds.includes(ownId) || sameText(vendedorNome, orcamento.vendedorNome || orcamento.responsavelNome || orcamento.vendedor || orcamento.responsavel));
+  };
+  const orcamentosVisiveis = orcamentos.filter(canSeeOrcamento);
   const statusOptions = Array.from(new Set([...(isLegacy ? [...STATUS_LEGADO, ...STATUS_OFICIAIS] : STATUS_OFICIAIS), form.status]));
   const orcamentoBloqueado = isOrcamentoBloqueado(form, oportunidades);
 
@@ -66,11 +120,16 @@ export default function Orcamentos() {
     return { ...next, itens, subtotal, valorTotal, custoPorHectare: next.areaAplicacaoHa > 0 ? valorTotal / next.areaAplicacaoHa : 0 };
   };
 
+  const applyAgentToOrcamento = (orcamento: Orcamento, agent: CommercialAgent): Orcamento => ({ ...orcamento, vendedorId: agent.user_id, vendedorUserId: agent.user_id, vendedorNome: agent.nome, vendedor: agent.nome, responsavelId: agent.user_id, responsavelUserId: agent.user_id, responsavelNome: agent.nome, responsavel: agent.nome });
+
+  const currentUserAgent = (): CommercialAgent => ({ user_id: user?.id || vendedorId || "", nome: vendedorNome || user?.user_metadata?.nome || user?.email || "", papel: normalizedRole as CommercialAgent["papel"], status: "ativo" });
+
   const novoOrcamento = () => {
     const current = new Date().toISOString();
+    const base: Orcamento = { id: "", codigo: `ORC-${Date.now()}`, versao: 1, clienteId: "", empresaId: empresaPadrao, vendedor: "", data: current.slice(0, 10), validade: validade7(current.slice(0, 10)), status: "Rascunho", areaAplicacaoHa: 0, itens: [], subtotal: 0, descontoTotal: 0, valorTotal: 0, custoPorHectare: 0, createdAt: current, updatedAt: current, prazoPagamento: prazoPagamentoPadrao, formaPagamento: formaPagamentoPadrao, createdByUserId: user?.id, updatedByUserId: user?.id };
     setEdit(null);
     setMotivoRevisao("");
-    setForm({ id: "", codigo: `ORC-${Date.now()}`, versao: 1, clienteId: "", empresaId: empresaPadrao, vendedor: "", data: current.slice(0, 10), validade: validade7(current.slice(0, 10)), status: "Rascunho", areaAplicacaoHa: 0, itens: [], subtotal: 0, descontoTotal: 0, valorTotal: 0, custoPorHectare: 0, createdAt: current, updatedAt: current, prazoPagamento: prazoPagamentoPadrao, formaPagamento: formaPagamentoPadrao });
+    setForm(isVendedor ? applyAgentToOrcamento(base, currentUserAgent()) : base);
     setOpen(true);
   };
 
@@ -87,8 +146,11 @@ export default function Orcamentos() {
 
   const save = () => {
     if (orcamentoBloqueado) return toast.error("Orçamento bloqueado: oportunidade já fechada. Para nova negociação, crie uma nova oportunidade.");
-    const currentUserName = vendedorNome || user?.user_metadata?.nome || user?.email || "";
-    const payload = recalc({ ...form, vendedorId: user?.id || form.vendedorId, vendedor: currentUserName || form.vendedor, vendedorUserId: user?.id || form.vendedorUserId, vendedorNome: currentUserName || form.vendedorNome, responsavelId: user?.id || form.responsavelId, responsavel: currentUserName || form.responsavel, responsavelUserId: user?.id || form.responsavelUserId, responsavelNome: currentUserName || form.responsavelNome, createdByUserId: form.createdByUserId || user?.id, updatedByUserId: user?.id || form.updatedByUserId, motivoRevisao: motivoRevisao || form.motivoRevisao, updatedAt: new Date().toISOString() });
+    const selectedAgent = isVendedor ? currentUserAgent() : selectableAgents.find((agent) => agent.user_id === (form.responsavelUserId || form.vendedorUserId || form.responsavelId || form.vendedorId));
+    if ((isAdmin || isGestor) && !selectedAgent) return toast.error("Selecione o responsável comercial.");
+    if (isGestor && selectedAgent && selectedAgent.user_id !== user?.id && !teamSellerIds.has(selectedAgent.user_id)) return toast.error("Gestor só pode criar orçamento para si ou para vendedores da própria equipe.");
+    const ownerApplied = selectedAgent ? applyAgentToOrcamento(form, selectedAgent) : form;
+    const payload = recalc({ ...ownerApplied, createdByUserId: form.createdByUserId || user?.id, updatedByUserId: user?.id || form.updatedByUserId, motivoRevisao: motivoRevisao || form.motivoRevisao, updatedAt: new Date().toISOString() });
     if (!payload.clienteId) return toast.error("Cliente obrigatório");
     const excecoesPreco = payload.itens.filter((it) => it.abaixoPrecoMinimo);
     if (excecoesPreco.length && !canUseMinimumPriceException) return toast.error("Preço abaixo do mínimo exige a permissão específica excecao_preco_minimo.");
@@ -97,10 +159,11 @@ export default function Orcamentos() {
     if (payload.status === "Enviado" && (!payload.canalEnvio || !payload.dataEnvio)) return toast.error("Informe canal e data de envio");
 
     const idNovo = payload.id || `orc${Date.now()}`;
-    if (edit && !canEditOrcamentos) return toast.error("Você não tem permissão para editar orçamentos.");
+    if (edit && (!canEditOrcamentos || !canSeeOrcamento(edit))) return toast.error("Você não tem permissão para editar este orçamento.");
     if (!edit && !canCreateOrcamentos) return toast.error("Você não tem permissão para criar orçamentos.");
     setOrcamentos((prev) => edit ? prev.map((o) => (o.id === edit.id ? payload : o)) : [{ ...payload, id: idNovo, createdAt: new Date().toISOString(), orcamentoOrigemId: payload.orcamentoOrigemId || idNovo }, ...prev]);
     void recordAuditLog({ action: edit ? "editar_orcamento" : "criar_orcamento", resource: "orcamentos", entityId: idNovo, entityLabel: payload.codigo, beforeData: edit || null, afterData: payload });
+    if (edit && (edit.responsavelUserId !== payload.responsavelUserId || edit.responsavelNome !== payload.responsavelNome)) void recordAuditLog({ action: "alterar_responsavel_orcamento", resource: "orcamentos", entityId: idNovo, entityLabel: payload.codigo, metadata: { de: edit.responsavelNome || edit.responsavel, para: payload.responsavelNome || payload.responsavel } });
     if (edit?.status !== payload.status) void recordAuditLog({ action: "alterar_status_orcamento", resource: "orcamentos", entityId: idNovo, entityLabel: payload.codigo, metadata: { de: edit?.status, para: payload.status } });
     if ((payload.descontoTotal || 0) > 0 || payload.itens.some((it) => (it.desconto || 0) > 0)) void recordAuditLog({ action: "aplicar_desconto_orcamento", resource: "orcamentos", entityId: idNovo, entityLabel: payload.codigo, metadata: { descontoTotal: payload.descontoTotal, itens: payload.itens.map((it) => ({ produtoId: it.produtoId, desconto: it.desconto || 0 })) } });
     if (excecoesPreco.length) void recordAuditLog({ action: "preco_abaixo_minimo_autorizado", resource: "orcamentos", entityId: idNovo, entityLabel: payload.codigo, metadata: { itens: excecoesPreco.map((it) => ({ produtoId: it.produtoId, precoUnitario: it.precoUnitario, desconto: it.desconto, precoMinimo: it.precoMinimo })) } });
@@ -182,7 +245,7 @@ export default function Orcamentos() {
     {orcamentosVisiveis.map((o) => <Card key={o.id} className="p-3">
       <div className="flex flex-col gap-2 md:flex-row md:items-center">
         <div className="flex-1 text-sm"><div className="font-semibold">{o.codigo} v{o.versao || 1} · {clientes.find((c) => c.id === o.clienteId)?.nome || "Sem cliente"}</div>
-          <div className="text-muted-foreground">Status: {o.status} · Validade: {formatDateBR(o.validade)} · Vendedor: {o.vendedor || "-"}</div>
+          <div className="text-muted-foreground">Status: {o.status} · Validade: {formatDateBR(o.validade)} · Responsável: {o.responsavelNome || o.vendedorNome || o.responsavel || o.vendedor || "-"}</div>
           <div className="text-muted-foreground">Oportunidade: {o.oportunidadeId || "Legado/sem vínculo"} · Envio: {o.canalEnvio || "-"} {o.dataEnvio ? `em ${formatDateBR(o.dataEnvio)}` : ""}</div></div>
         <div className="text-sm font-semibold">{fmtBRL(o.valorTotal)}</div>
         <div className="flex flex-wrap gap-2">
@@ -205,7 +268,7 @@ export default function Orcamentos() {
         <div><Label>Cidade</Label><Input value={form.cidade || clientes.find((c) => c.id === form.clienteId)?.cidade || ""} onChange={(e) => setForm({ ...form, cidade: e.target.value })} /></div>
         <div><Label>Oportunidade vinculada</Label><Select value={form.oportunidadeId || (isLegacy ? "legacy" : "")} onValueChange={(v) => setForm({ ...form, oportunidadeId: v === "legacy" ? undefined : v })} disabled={orcamentoBloqueado}><SelectTrigger><SelectValue placeholder="Obrigatório para novo orçamento" /></SelectTrigger><SelectContent>{isLegacy && <SelectItem value="legacy">Legado/sem vínculo</SelectItem>}{oportunidadesAbertasCliente.map((o) => <SelectItem key={o.id} value={o.id}>{o.etapa} · {o.necessidade || o.id}</SelectItem>)}</SelectContent></Select></div>
         <div><Label>Empresa</Label><Select value={form.empresaId} onValueChange={(v) => setForm({ ...form, empresaId: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{empresas.filter((e) => e.ativa).map((e) => <SelectItem key={e.id} value={e.id}>{e.nomeFantasia}</SelectItem>)}</SelectContent></Select></div>
-        <div><Label>Vendedor/Responsável</Label><Select value={form.responsavel || form.vendedor || ""} onValueChange={(v) => setForm({ ...form, responsavel: v, vendedor: v })}><SelectTrigger><SelectValue placeholder="Selecione o vendedor" /></SelectTrigger><SelectContent>{vendedoresAtivos.length ? vendedoresAtivos.map((v) => <SelectItem key={v.id} value={v.nome}>{v.nome}</SelectItem>) : <SelectItem value="Sem vendedor cadastrado">Sem vendedor cadastrado</SelectItem>}</SelectContent></Select></div>
+        {!isVendedor && <div><Label>Responsável comercial</Label><Select value={form.responsavelUserId || form.vendedorUserId || ""} onValueChange={(agentId) => { const agent = selectableAgents.find((item) => item.user_id === agentId); if (agent) setForm(applyAgentToOrcamento(form, agent)); }}><SelectTrigger><SelectValue placeholder="Selecione o responsável" /></SelectTrigger><SelectContent>{selectableAgents.length ? selectableAgents.map((agent) => <SelectItem key={agent.user_id} value={agent.user_id}>{agent.nome} · {agent.papel}</SelectItem>) : <SelectItem value="sem-agente" disabled>Nenhum agente disponível</SelectItem>}</SelectContent></Select></div>}
         <div><Label>Data</Label><Input type="date" value={form.data} onChange={(e) => setForm({ ...form, data: e.target.value })} /></div>
         <div><Label>Validade</Label><Input type="date" value={form.validade || ""} onChange={(e) => setForm({ ...form, validade: e.target.value })} /></div>
         <div><Label>Status</Label><Select value={form.status} onValueChange={(v: OrcamentoStatus) => setForm({ ...form, status: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{statusOptions.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent></Select></div>

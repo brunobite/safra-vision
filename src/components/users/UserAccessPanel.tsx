@@ -7,6 +7,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { supabase } from "@/lib/supabase";
 import { BRUNO_ADMIN_EMAIL, canManageUsers, permissionActions, permissionResources, resourceLabels, roleTemplate, type PermissionAction, type UserPermission } from "@/lib/permissions";
@@ -16,6 +17,8 @@ import { recordAuditLog } from "@/lib/audit";
 
 type Papel = "administrador" | "gestor" | "vendedor" | "visualizador";
 type StatusPerfil = "pendente" | "ativo" | "inativo" | "bloqueado";
+
+type TeamMemberRow = { id: string; gestor_user_id: string; vendedor_user_id: string; ativo: boolean };
 
 type UserProfileRow = {
   id: string;
@@ -79,6 +82,8 @@ export function UserAccessPanel() {
   const [form, setForm] = useState<CreateUserForm>(initialForm);
   const [expandedProfileId, setExpandedProfileId] = useState<string | null>(null);
   const [permissionDrafts, setPermissionDrafts] = useState<Record<string, UserPermission[]>>({});
+  const [selectedManagerId, setSelectedManagerId] = useState<string>("");
+  const [teamMembers, setTeamMembers] = useState<TeamMemberRow[]>([]);
 
   const authContext = { role, accessStatus: "ativo" as const, email: user?.email };
   const canManage = canManageUsers(authContext);
@@ -93,6 +98,9 @@ export function UserAccessPanel() {
         .order("created_at", { ascending: false });
       if (profilesError) throw profilesError;
       setProfiles((profilesData ?? []) as UserProfileRow[]);
+      const { data: teamData, error: teamError } = await supabase.from("user_team_members").select("id,gestor_user_id,vendedor_user_id,ativo").eq("ativo", true);
+      if (teamError) throw teamError;
+      setTeamMembers((teamData ?? []) as TeamMemberRow[]);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Erro ao carregar usuários.";
       toast.error(message);
@@ -161,6 +169,26 @@ export function UserAccessPanel() {
   useEffect(() => {
     setDraftNames(Object.fromEntries(profiles.map((profile) => [profile.id, profile.nome ?? ""])));
   }, [profiles]);
+
+  useEffect(() => {
+    if (!selectedManagerId) setSelectedManagerId(profiles.find((profile) => profile.papel === "gestor" && profile.status === "ativo" && profile.user_id)?.user_id ?? "");
+  }, [profiles, selectedManagerId]);
+
+  const toggleTeamMember = async (seller: UserProfileRow, checked: boolean) => {
+    if (!supabase || !selectedManagerId || !seller.user_id) return;
+    const beforeData = teamMembers.filter((member) => member.gestor_user_id === selectedManagerId);
+    const existing = teamMembers.find((member) => member.gestor_user_id === selectedManagerId && member.vendedor_user_id === seller.user_id);
+    if (existing) {
+      const { error } = await supabase.from("user_team_members").update({ ativo: checked }).eq("id", existing.id);
+      if (error) { toast.error(error.message); return; }
+    } else {
+      const { error } = await supabase.from("user_team_members").insert({ gestor_user_id: selectedManagerId, vendedor_user_id: seller.user_id, ativo: checked });
+      if (error) { toast.error(error.message); return; }
+    }
+    await recordAuditLog({ action: "alterar_equipe_gestor", resource: "usuarios_acessos", entityId: selectedManagerId, entityLabel: profiles.find((profile) => profile.user_id === selectedManagerId)?.email, beforeData, afterData: { vendedor_user_id: seller.user_id, ativo: checked } });
+    await loadUsers();
+    toast.success("Equipe do gestor atualizada.");
+  };
 
   const createUser = async () => {
     if (!supabase || !user) return;
@@ -287,6 +315,23 @@ export function UserAccessPanel() {
           <div><Label>Status de acesso</Label><Select value={form.status} onValueChange={(value) => setForm((current) => ({ ...current, status: value as StatusPerfil }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{statuses.map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}</SelectContent></Select></div>
           <div className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground xl:col-span-1">Usuários ativos são os agentes comerciais. Para papel vendedor, o nome do usuário será exibido comercialmente.</div>
           <div className="flex items-end md:col-span-3 xl:col-span-7"><Button className="w-full md:w-auto" onClick={() => void createUser()} disabled={loading}><Plus className="mr-2 h-4 w-4" />Cadastrar usuário</Button></div>
+        </div>
+      </Card>
+
+
+      <Card className="p-4 space-y-3">
+        <div>
+          <h3 className="font-semibold">Equipe do gestor</h3>
+          <p className="text-sm text-muted-foreground">Selecione um gestor ativo e marque os vendedores subordinados. Cada gestor mantém sua própria equipe.</p>
+        </div>
+        <div className="grid gap-3 md:grid-cols-3">
+          <div><Label>Gestor</Label><Select value={selectedManagerId} onValueChange={setSelectedManagerId}><SelectTrigger><SelectValue placeholder="Selecione um gestor" /></SelectTrigger><SelectContent>{profiles.filter((profile) => profile.papel === "gestor" && profile.status === "ativo" && profile.user_id).map((profile) => <SelectItem key={profile.user_id!} value={profile.user_id!}>{profile.nome || profile.email}</SelectItem>)}</SelectContent></Select></div>
+          <div className="md:col-span-2 rounded-md border p-3">
+            {profiles.filter((profile) => profile.papel === "vendedor" && profile.status === "ativo" && profile.user_id).length === 0 ? <div className="text-sm text-muted-foreground">Nenhum vendedor ativo disponível.</div> : profiles.filter((profile) => profile.papel === "vendedor" && profile.status === "ativo" && profile.user_id).map((seller) => {
+              const checked = teamMembers.some((member) => member.gestor_user_id === selectedManagerId && member.vendedor_user_id === seller.user_id && member.ativo);
+              return <label key={seller.id} className="flex items-center gap-2 py-1 text-sm"><Checkbox checked={checked} disabled={!selectedManagerId} onCheckedChange={(value) => void toggleTeamMember(seller, value === true)} />{seller.nome || seller.email}</label>;
+            })}
+          </div>
         </div>
       </Card>
 
