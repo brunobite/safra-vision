@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase";
-import { normalizeAccessStatus, normalizeRole, type AccessStatus, type UserRole } from "@/lib/permissions";
+import { normalizeAccessStatus, normalizeRole, type AccessStatus, type UserPermission, type UserRole } from "@/lib/permissions";
 
 type AccessProfile = {
   accessStatus: AccessStatus;
@@ -11,6 +11,7 @@ type AccessProfile = {
   empresaId: string | null;
   nome: string | null;
   profileId: string | null;
+  permissions: UserPermission[];
 };
 
 type AuthContextValue = {
@@ -25,6 +26,7 @@ type AuthContextValue = {
   empresaId: string | null;
   nome: string | null;
   profileId: string | null;
+  permissions: UserPermission[];
   isLocalMode: boolean;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string) => Promise<void>;
@@ -59,6 +61,7 @@ const localAdminProfile: AccessProfile = {
   empresaId: null,
   nome: "Administrador local",
   profileId: "local",
+  permissions: [],
 };
 
 export function AuthStoreProvider({ children }: { children: React.ReactNode }) {
@@ -73,6 +76,7 @@ export function AuthStoreProvider({ children }: { children: React.ReactNode }) {
   const [empresaId, setEmpresaId] = useState<string | null>(null);
   const [nome, setNome] = useState<string | null>(null);
   const [profileId, setProfileId] = useState<string | null>(null);
+  const [permissions, setPermissions] = useState<UserPermission[]>([]);
 
   const isLocalMode = !isSupabaseConfigured;
 
@@ -84,11 +88,12 @@ export function AuthStoreProvider({ children }: { children: React.ReactNode }) {
     setEmpresaId(profile.empresaId);
     setNome(profile.nome);
     setProfileId(profile.profileId);
+    setPermissions(profile.permissions);
   }, []);
 
   const refreshProfile = useCallback(async (currentUser: User | null): Promise<AccessProfile> => {
     if (!supabase || !currentUser) {
-      const fallbackProfile = supabase ? { accessStatus: "pendente", role: "visualizador", vendedorNome: null, vendedorId: null, empresaId: null, nome: null, profileId: null } satisfies AccessProfile : localAdminProfile;
+      const fallbackProfile = supabase ? { accessStatus: "pendente", role: "visualizador", vendedorNome: null, vendedorId: null, empresaId: null, nome: null, profileId: null, permissions: [] } satisfies AccessProfile : localAdminProfile;
       applyProfile(fallbackProfile);
       return fallbackProfile;
     }
@@ -118,11 +123,20 @@ export function AuthStoreProvider({ children }: { children: React.ReactNode }) {
       if (profileError) {
         setError(profileError.message);
         const fallbackProfile: AccessProfile = adminEmails.has(email)
-          ? { accessStatus: "ativo", role: "administrador", vendedorNome: null, vendedorId: null, empresaId: null, nome: currentUser.user_metadata?.nome ?? null, profileId: null }
-          : { accessStatus: "pendente", role: "visualizador", vendedorNome: null, vendedorId: null, empresaId: null, nome: null, profileId: null };
+          ? { accessStatus: "ativo", role: "administrador", vendedorNome: null, vendedorId: null, empresaId: null, nome: currentUser.user_metadata?.nome ?? null, profileId: null, permissions: [] }
+          : { accessStatus: "pendente", role: "visualizador", vendedorNome: null, vendedorId: null, empresaId: null, nome: null, profileId: null, permissions: [] };
         applyProfile(fallbackProfile);
         return fallbackProfile;
       }
+
+      const { data: permissionsData, error: permissionsError } = data?.id
+        ? await withTimeout(
+            Promise.resolve(supabase.from("user_permissions").select("id,user_profile_id,user_id,resource,can_view,can_create,can_edit,can_delete,can_import,can_export,can_manage").eq("user_profile_id", data.id)),
+            AUTH_TIMEOUT_MS,
+            "Tempo excedido ao buscar permissões do usuário.",
+          )
+        : { data: [], error: null };
+      if (permissionsError) console.warn("Não foi possível carregar permissões granulares:", permissionsError.message);
 
       const brunoFallback = adminEmails.has(email);
       const nextProfile: AccessProfile = data
@@ -134,6 +148,7 @@ export function AuthStoreProvider({ children }: { children: React.ReactNode }) {
             empresaId: data.empresa_id ?? null,
             nome: data.nome ?? null,
             profileId: data.id ?? null,
+            permissions: (permissionsData ?? []) as UserPermission[],
           }
         : {
             accessStatus: brunoFallback ? "ativo" : "pendente",
@@ -143,6 +158,7 @@ export function AuthStoreProvider({ children }: { children: React.ReactNode }) {
             empresaId: null,
             nome: currentUser.user_metadata?.nome ?? null,
             profileId: null,
+            permissions: [],
           };
 
       applyProfile(nextProfile);
@@ -151,8 +167,8 @@ export function AuthStoreProvider({ children }: { children: React.ReactNode }) {
       const message = error instanceof Error ? error.message : "Erro desconhecido ao buscar perfil Supabase.";
       setError(message);
       const fallbackProfile: AccessProfile = adminEmails.has(email)
-        ? { accessStatus: "ativo", role: "administrador", vendedorNome: null, vendedorId: null, empresaId: null, nome: currentUser.user_metadata?.nome ?? null, profileId: null }
-        : { accessStatus: "pendente", role: "visualizador", vendedorNome: null, vendedorId: null, empresaId: null, nome: null, profileId: null };
+        ? { accessStatus: "ativo", role: "administrador", vendedorNome: null, vendedorId: null, empresaId: null, nome: currentUser.user_metadata?.nome ?? null, profileId: null, permissions: [] }
+        : { accessStatus: "pendente", role: "visualizador", vendedorNome: null, vendedorId: null, empresaId: null, nome: null, profileId: null, permissions: [] };
       applyProfile(fallbackProfile);
       return fallbackProfile;
     }
@@ -201,7 +217,7 @@ export function AuthStoreProvider({ children }: { children: React.ReactNode }) {
       } catch (error) {
         const message = error instanceof Error ? error.message : "Erro desconhecido ao atualizar sessão Supabase.";
         setError(message);
-        applyProfile({ accessStatus: "pendente", role: "visualizador", vendedorNome: null, vendedorId: null, empresaId: null, nome: null, profileId: null });
+        applyProfile({ accessStatus: "pendente", role: "visualizador", vendedorNome: null, vendedorId: null, empresaId: null, nome: null, profileId: null, permissions: [] });
       } finally {
         if (isMounted) setLoading(false);
       }
@@ -258,7 +274,7 @@ export function AuthStoreProvider({ children }: { children: React.ReactNode }) {
 
     setUser(null);
     setSession(null);
-    applyProfile({ accessStatus: "pendente", role: "visualizador", vendedorNome: null, vendedorId: null, empresaId: null, nome: null, profileId: null });
+    applyProfile({ accessStatus: "pendente", role: "visualizador", vendedorNome: null, vendedorId: null, empresaId: null, nome: null, profileId: null, permissions: [] });
     setError(signOutError ? signOutError.message : null);
   }, [applyProfile]);
 
@@ -276,13 +292,14 @@ export function AuthStoreProvider({ children }: { children: React.ReactNode }) {
     empresaId,
     nome,
     profileId,
+    permissions,
     isLocalMode,
     signIn,
     signUp,
     signOut,
     refreshAccess,
     clearError: () => setError(null),
-  }), [user, session, loading, error, accessStatus, role, vendedorNome, vendedorId, empresaId, nome, profileId, isLocalMode, signIn, signUp, signOut, refreshAccess]);
+  }), [user, session, loading, error, accessStatus, role, vendedorNome, vendedorId, empresaId, nome, profileId, isLocalMode, signIn, signUp, signOut, refreshAccess, permissions]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

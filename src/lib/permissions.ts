@@ -1,39 +1,55 @@
 export type AccessStatus = "pendente" | "ativo" | "inativo" | "bloqueado" | "pending" | "active" | "inactive" | "blocked";
 export type UserRole = "administrador" | "gestor" | "vendedor" | "visualizador" | "admin" | "operacional" | "consulta" | "user";
 
-export type PermissionEntity =
-  | "clientes"
-  | "agenda"
-  | "produtos"
-  | "metas"
-  | "funil"
-  | "relatorios"
-  | "configuracoes"
-  | "importacoes"
-  | "usuarios"
-  | "orcamentos"
-  | "lancamentos";
+export const BRUNO_ADMIN_EMAIL = "bitencourttec@gmail.com";
+
+export const permissionResources = [
+  "dashboard", "clientes", "agenda", "proximas_acoes", "lancamentos", "funil", "orcamentos", "produtos", "metas", "rotas", "prioridades", "eventos", "relatorios", "configuracoes", "usuarios_acessos", "sincronizacao", "google_calendar", "importacoes", "empresas", "vendedores", "auditoria_operacional",
+] as const;
+
+export const permissionActions = ["can_view", "can_create", "can_edit", "can_delete", "can_import", "can_export", "can_manage"] as const;
+
+export type PermissionResource = (typeof permissionResources)[number];
+export type PermissionAction = (typeof permissionActions)[number];
+export type PermissionEntity = PermissionResource | "usuarios";
+
+export type UserPermission = {
+  id?: string;
+  user_profile_id?: string | null;
+  user_id?: string | null;
+  resource: PermissionResource;
+  can_view: boolean;
+  can_create: boolean;
+  can_edit: boolean;
+  can_delete: boolean;
+  can_import: boolean;
+  can_export: boolean;
+  can_manage: boolean;
+};
+
+export type PermissionContext = {
+  role?: UserRole | string | null;
+  accessStatus?: AccessStatus | string | null;
+  email?: string | null;
+  vendedorId?: string | null;
+  vendedorNome?: string | null;
+  permissions?: UserPermission[] | null;
+};
 
 const ADMIN_ROLES = new Set<UserRole>(["administrador", "admin"]);
 const READ_ONLY_ROLES = new Set<UserRole>(["visualizador", "consulta"]);
 
-const routePermissions: Record<string, UserRole[]> = {
-  "/": ["administrador", "admin", "gestor", "vendedor", "visualizador", "consulta", "operacional", "user"],
-  "/clientes": ["administrador", "admin", "gestor", "vendedor", "visualizador", "consulta", "operacional", "user"],
-  "/agenda": ["administrador", "admin", "gestor", "vendedor", "visualizador", "consulta", "operacional", "user"],
-  "/proximas-acoes": ["administrador", "admin", "gestor", "vendedor", "visualizador", "consulta", "operacional", "user"],
-  "/lancamentos": ["administrador", "admin", "gestor", "vendedor", "visualizador", "consulta", "operacional", "user"],
-  "/funil": ["administrador", "admin", "gestor", "vendedor", "visualizador", "consulta"],
-  "/orcamentos": ["administrador", "admin", "gestor", "vendedor", "visualizador", "consulta"],
-  "/produtos": ["administrador", "admin", "visualizador", "consulta"],
-  "/metas": ["administrador", "admin", "gestor", "visualizador", "consulta"],
-  "/rotas": ["administrador", "admin", "gestor", "vendedor", "visualizador", "consulta"],
-  "/prioridades": ["administrador", "admin", "gestor", "vendedor", "visualizador", "consulta"],
-  "/eventos": ["administrador", "admin", "gestor", "vendedor", "visualizador", "consulta"],
-  "/relatorios": ["administrador", "admin", "gestor", "vendedor", "visualizador", "consulta"],
-  "/configuracoes": ["administrador", "admin"],
-  "/meu-acesso": ["administrador", "admin", "gestor", "vendedor", "visualizador", "consulta", "operacional", "user"],
+export const resourceLabels: Record<PermissionResource, string> = {
+  dashboard: "Dashboard", clientes: "Clientes", agenda: "Agenda", proximas_acoes: "Próximas ações", lancamentos: "Lançamentos", funil: "Funil", orcamentos: "Orçamentos", produtos: "Produtos", metas: "Metas", rotas: "Rotas", prioridades: "Prioridades", eventos: "Eventos", relatorios: "Relatórios", configuracoes: "Configurações", usuarios_acessos: "Usuários e acessos", sincronizacao: "Sincronização", google_calendar: "Google Calendar", importacoes: "Importações", empresas: "Empresas", vendedores: "Vendedores", auditoria_operacional: "Auditoria operacional",
 };
+
+export const routeResourceMap: Record<string, PermissionResource> = {
+  "/": "dashboard", "/clientes": "clientes", "/agenda": "agenda", "/proximas-acoes": "proximas_acoes", "/lancamentos": "lancamentos", "/funil": "funil", "/orcamentos": "orcamentos", "/produtos": "produtos", "/metas": "metas", "/rotas": "rotas", "/prioridades": "prioridades", "/eventos": "eventos", "/relatorios": "relatorios", "/configuracoes": "configuracoes", "/meu-acesso": "dashboard",
+};
+
+const emptyPermission = (resource: PermissionResource): UserPermission => ({ resource, can_view: false, can_create: false, can_edit: false, can_delete: false, can_import: false, can_export: false, can_manage: false });
+const fullPermission = (resource: PermissionResource): UserPermission => ({ resource, can_view: true, can_create: true, can_edit: true, can_delete: true, can_import: true, can_export: true, can_manage: true });
+const readPermission = (resource: PermissionResource): UserPermission => ({ ...emptyPermission(resource), can_view: true, can_export: resource === "relatorios" });
 
 export const normalizeRole = (role: UserRole | string | null | undefined): UserRole => {
   if (role === "admin") return "administrador";
@@ -52,54 +68,56 @@ export const normalizeAccessStatus = (status: AccessStatus | string | null | und
   return "pendente";
 };
 
+export const isProtectedBruno = (email?: string | null) => (email ?? "").trim().toLowerCase() === BRUNO_ADMIN_EMAIL;
 export const isAdminRole = (role: UserRole | string | null | undefined) => ADMIN_ROLES.has(role as UserRole) || normalizeRole(role) === "administrador";
 export const isReadOnlyRole = (role: UserRole | string | null | undefined) => READ_ONLY_ROLES.has(role as UserRole) || normalizeRole(role) === "visualizador";
 
-export function canView(route: string, role: UserRole | string | null | undefined): boolean {
+export function roleTemplate(role: UserRole | string | null | undefined): UserPermission[] {
   const normalized = normalizeRole(role);
-  const allowed = routePermissions[route] ?? routePermissions[`/${route.replace(/^\//, "").split("/")[0]}`];
-  return !allowed || allowed.includes(normalized) || (normalized === "administrador" && !route.includes("login"));
+  if (normalized === "administrador") return permissionResources.map(fullPermission);
+  if (normalized === "visualizador") return permissionResources.map(readPermission);
+  const allowed = new Set<PermissionResource>(normalized === "gestor"
+    ? ["dashboard", "clientes", "agenda", "funil", "orcamentos", "metas", "relatorios"]
+    : ["dashboard", "clientes", "agenda", "proximas_acoes", "lancamentos", "funil", "orcamentos", "relatorios"]);
+  return permissionResources.map((resource) => {
+    if (!allowed.has(resource)) return emptyPermission(resource);
+    return { ...readPermission(resource), can_create: resource !== "relatorios" && resource !== "dashboard", can_edit: resource !== "relatorios" && resource !== "dashboard", can_delete: normalized === "gestor" && !["dashboard", "relatorios"].includes(resource), can_export: resource === "relatorios", can_manage: false };
+  });
 }
 
-export function canCreate(entity: PermissionEntity, role: UserRole | string | null | undefined): boolean {
-  const normalized = normalizeRole(role);
-  if (normalized === "visualizador") return false;
-  if (normalized === "administrador") return true;
-  if (entity === "usuarios" || entity === "configuracoes" || entity === "importacoes" || entity === "produtos") return false;
-  if (normalized === "gestor") return ["clientes", "agenda", "metas", "funil", "relatorios", "orcamentos", "lancamentos"].includes(entity);
-  return ["clientes", "agenda", "funil", "orcamentos", "lancamentos"].includes(entity);
+export const normalizeResource = (resourceOrRoute: string): PermissionResource => {
+  const route = `/${resourceOrRoute.replace(/^\//, "").split("/")[0]}`;
+  if (routeResourceMap[resourceOrRoute]) return routeResourceMap[resourceOrRoute];
+  if (routeResourceMap[route]) return routeResourceMap[route];
+  if (resourceOrRoute === "usuarios") return "usuarios_acessos";
+  return permissionResources.includes(resourceOrRoute as PermissionResource) ? resourceOrRoute as PermissionResource : "dashboard";
+};
+
+function resolvePermission(resource: string, contextOrRole?: PermissionContext | UserRole | string | null): UserPermission {
+  const ctx: PermissionContext = typeof contextOrRole === "object" && contextOrRole !== null ? contextOrRole : { role: contextOrRole };
+  const normalizedResource = normalizeResource(resource);
+  if (isProtectedBruno(ctx.email)) return fullPermission(normalizedResource);
+  if (normalizeAccessStatus(ctx.accessStatus ?? "ativo") !== "ativo") return emptyPermission(normalizedResource);
+  const specific = ctx.permissions?.find((permission) => permission.resource === normalizedResource);
+  if (specific) return specific;
+  return roleTemplate(ctx.role).find((permission) => permission.resource === normalizedResource) ?? emptyPermission(normalizedResource);
 }
 
-export function canEdit(entity: PermissionEntity, role: UserRole | string | null | undefined): boolean {
-  return canCreate(entity, role);
-}
-
-export function canDelete(entity: PermissionEntity, role: UserRole | string | null | undefined): boolean {
-  const normalized = normalizeRole(role);
-  if (normalized === "administrador") return true;
-  if (normalized === "visualizador" || normalized === "vendedor") return false;
-  return !["usuarios", "configuracoes", "importacoes", "produtos"].includes(entity);
-}
-
-export function canImport(entity: PermissionEntity, role: UserRole | string | null | undefined): boolean {
-  return normalizeRole(role) === "administrador" && entity !== "usuarios";
-}
-
-export function canManageUsers(role: UserRole | string | null | undefined): boolean {
-  return normalizeRole(role) === "administrador";
-}
+export const canView = (resource: string, contextOrRole?: PermissionContext | UserRole | string | null) => resolvePermission(resource, contextOrRole).can_view;
+export const canCreate = (resource: PermissionEntity | string, contextOrRole?: PermissionContext | UserRole | string | null) => resolvePermission(resource, contextOrRole).can_create;
+export const canEdit = (resource: PermissionEntity | string, contextOrRole?: PermissionContext | UserRole | string | null) => resolvePermission(resource, contextOrRole).can_edit;
+export const canDelete = (resource: PermissionEntity | string, contextOrRole?: PermissionContext | UserRole | string | null) => resolvePermission(resource, contextOrRole).can_delete;
+export const canImport = (resource: PermissionEntity | string, contextOrRole?: PermissionContext | UserRole | string | null) => resolvePermission(resource, contextOrRole).can_import;
+export const canExport = (resource: PermissionEntity | string, contextOrRole?: PermissionContext | UserRole | string | null) => resolvePermission(resource, contextOrRole).can_export;
+export const canManage = (resource: PermissionEntity | string, contextOrRole?: PermissionContext | UserRole | string | null) => resolvePermission(resource, contextOrRole).can_manage;
+export const canManageUsers = (contextOrRole?: PermissionContext | UserRole | string | null) => canManage("usuarios_acessos", contextOrRole) || canEdit("usuarios_acessos", contextOrRole);
 
 export function isOwnSellerData(vendedorVinculado: string | null | undefined, candidate: string | null | undefined): boolean {
   if (!vendedorVinculado) return true;
   return (candidate ?? "").trim().toLowerCase() === vendedorVinculado.trim().toLowerCase();
 }
 
-export function isOwnSellerDataById(
-  vendedorIdVinculado: string | null | undefined,
-  vendedorNomeVinculado: string | null | undefined,
-  candidateVendedorId: string | null | undefined,
-  candidateVendedorNome: string | null | undefined,
-): boolean {
+export function isOwnSellerDataById(vendedorIdVinculado: string | null | undefined, vendedorNomeVinculado: string | null | undefined, candidateVendedorId: string | null | undefined, candidateVendedorNome: string | null | undefined): boolean {
   if (vendedorIdVinculado) {
     if (candidateVendedorId) return candidateVendedorId === vendedorIdVinculado;
     return isOwnSellerData(vendedorNomeVinculado, candidateVendedorNome);

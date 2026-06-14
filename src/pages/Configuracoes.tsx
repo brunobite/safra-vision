@@ -34,6 +34,7 @@ import { findRemoteOnlyClientTestCandidates, softDeleteRemoteClientTests, type R
 import { findLocalTestRecordCandidates, getSyncQueueAudit, type SyncQueueAudit, type TestRecordCandidate } from "@/lib/syncAudit";
 import { useAuth } from "@/store/AuthStore";
 import { UserAccessPanel } from "@/components/users/UserAccessPanel";
+import { AuditLogPanel } from "@/components/users/AuditLogPanel";
 import { getAccountSyncUserMessage, getAccountSyncVisualState, SYNC_HOMOLOGATION_CHECKLIST } from "@/lib/accountSyncUi";
 import { calcularMetaCarteira, calcularPotencialCarteira, calcularPotencialCliente, distribuirMetaPorPotencial, limitarPercentualAcerto, normalizarValorNaoNegativo, resolverVendedorCanonico } from "@/utils/businessRules";
 import { fmtBRL } from "@/utils/calculations";
@@ -1114,6 +1115,7 @@ export default function Configuracoes() {
             <SelectItem value="banco-local">Banco local</SelectItem>
             <SelectItem value="sync-cloud">Sincronização em nuvem</SelectItem>
             <SelectItem value="usuarios-acessos">Usuários e acessos</SelectItem>
+            <SelectItem value="auditoria-operacional">Auditoria operacional</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -1127,9 +1129,12 @@ export default function Configuracoes() {
         <TabsTrigger value="banco-local">Banco local</TabsTrigger>
         <TabsTrigger value="sync-cloud">Sincronização em nuvem</TabsTrigger>
         <TabsTrigger value="usuarios-acessos">Usuários e acessos</TabsTrigger>
+        <TabsTrigger value="auditoria-operacional">Auditoria operacional</TabsTrigger>
       </TabsList>
 
       <TabsContent value="usuarios-acessos" className="space-y-3"><UserAccessPanel /></TabsContent>
+
+      <TabsContent value="auditoria-operacional" className="space-y-3"><AuditLogPanel /></TabsContent>
 
       <TabsContent value="comissao" className="space-y-3">
         <div className="flex justify-end"><Button className="w-full sm:w-auto" onClick={openNew}><Plus className="mr-1 h-4 w-4" /> Nova regra</Button></div>

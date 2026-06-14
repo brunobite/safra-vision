@@ -129,7 +129,7 @@ const quickActions = [
 function AppSidebar() {
   const { isMobile, setOpenMobile } = useSidebar();
   const navigate = useNavigate();
-  const { user, role, nome, vendedorNome, signOut } = useAuth();
+  const { user, role, nome, vendedorNome, signOut, accessStatus, permissions } = useAuth();
 
   const displayName = nome || vendedorNome || user?.email || "Usuário";
 
@@ -165,7 +165,7 @@ function AppSidebar() {
       <SidebarContent>
         {Array.from(new Set(items.map((item) => item.group))).map((group) => {
           const visibleGroupItems = items.filter(
-            (item) => item.group === group && canView(item.url, role),
+            (item) => item.group === group && canView(item.url, { role, accessStatus, email: user?.email, permissions }),
           );
           if (visibleGroupItems.length === 0) return null;
           return (
@@ -225,7 +225,7 @@ function AppSidebar() {
 
 export default function AppLayout() {
   const [open, setOpen] = useState(false);
-  const { role, accessStatus, vendedorNome } = useAuth();
+  const { role, accessStatus, vendedorNome, permissions, user } = useAuth();
   const isOnline = useOnlineStatus();
   const { isSaving, lastSavedAt, pendingSyncCount, syncStatus, syncError } =
     useAppStore();
@@ -262,7 +262,7 @@ export default function AppLayout() {
   })();
   const visibleQuickActions = quickActions.filter(
     (action) =>
-      canView(action.url, role) &&
+      canView(action.url, { role, accessStatus, email: user?.email, permissions }) &&
       canCreate(
         action.url.includes("orcamentos")
           ? "orcamentos"
@@ -271,7 +271,7 @@ export default function AppLayout() {
             : action.url.includes("agenda")
               ? "agenda"
               : "lancamentos",
-        role,
+        { role, accessStatus, email: user?.email, permissions },
       ),
   );
   return (

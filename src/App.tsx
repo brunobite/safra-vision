@@ -31,13 +31,13 @@ const MeuAcesso = lazy(() => import("./pages/MeuAcesso"));
 
 
 function ProtectedPage({ route, children }: { route: string; children: React.ReactNode }) {
-  const { user, loading, accessStatus, role, isLocalMode } = useAuth();
+  const { user, loading, accessStatus, role, isLocalMode, permissions } = useAuth();
 
   if (loading) return <div className="p-6 text-sm text-muted-foreground">Validando acesso...</div>;
   if (!isLocalMode && !user) return <Navigate to="/login" replace />;
   if (accessStatus === "pendente" || accessStatus === "pending") return <Navigate to="/login" replace />;
   if (["inativo", "inactive", "bloqueado", "blocked"].includes(accessStatus)) return <Navigate to="/login" replace />;
-  if (!canView(route, role)) return <Navigate to="/" replace />;
+  if (!canView(route, { role, accessStatus, email: user?.email, permissions })) return <Navigate to="/" replace />;
 
   return <>{children}</>;
 }

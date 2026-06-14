@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { AlertTriangle, Plus, RefreshCw, ShieldCheck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -9,9 +9,10 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { supabase } from "@/lib/supabase";
-import { canManageUsers } from "@/lib/permissions";
+import { BRUNO_ADMIN_EMAIL, canManageUsers, permissionActions, permissionResources, resourceLabels, roleTemplate, type PermissionAction, type UserPermission } from "@/lib/permissions";
 import { useAuth } from "@/store/AuthStore";
 import { useAppStore } from "@/store/AppStore";
+import { recordAuditLog } from "@/lib/audit";
 
 type Papel = "administrador" | "gestor" | "vendedor" | "visualizador";
 type StatusPerfil = "pendente" | "ativo" | "inativo" | "bloqueado";
@@ -28,6 +29,7 @@ type UserProfileRow = {
   status: StatusPerfil;
   created_at: string;
   aprovado_em: string | null;
+  permissions_customized?: boolean | null;
 };
 
 type CreateUserForm = {
@@ -49,7 +51,6 @@ type AdminCreateUserResponse = {
 const papeis: Papel[] = ["administrador", "gestor", "vendedor", "visualizador"];
 const statuses: StatusPerfil[] = ["pendente", "ativo", "inativo", "bloqueado"];
 const NONE = "__none";
-const BRUNO_ADMIN_EMAIL = "bitencourttec@gmail.com";
 
 const initialForm: CreateUserForm = {
   email: "",
@@ -84,8 +85,11 @@ export function UserAccessPanel() {
   const [draftNames, setDraftNames] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [form, setForm] = useState<CreateUserForm>(initialForm);
+  const [expandedProfileId, setExpandedProfileId] = useState<string | null>(null);
+  const [permissionDrafts, setPermissionDrafts] = useState<Record<string, UserPermission[]>>({});
 
-  const canManage = canManageUsers(role);
+  const authContext = { role, accessStatus: "ativo" as const, email: user?.email };
+  const canManage = canManageUsers(authContext);
   const vendedoresAtivos = useMemo(() => vendedores.filter((vendedor) => vendedor.ativo), [vendedores]);
   const vendedorById = useMemo(() => new Map(vendedores.map((vendedor) => [vendedor.id, vendedor])), [vendedores]);
 
@@ -95,7 +99,7 @@ export function UserAccessPanel() {
     try {
       const { data: profilesData, error: profilesError } = await supabase
         .from("user_profiles")
-        .select("id,user_id,nome,email,papel,vendedor_id,vendedor_nome,empresa_id,status,created_at,aprovado_em")
+        .select("id,user_id,nome,email,papel,vendedor_id,vendedor_nome,empresa_id,status,created_at,aprovado_em,permissions_customized")
         .order("created_at", { ascending: false });
       if (profilesError) throw profilesError;
       setProfiles((profilesData ?? []) as UserProfileRow[]);
@@ -110,6 +114,59 @@ export function UserAccessPanel() {
   useEffect(() => {
     void loadUsers();
   }, [loadUsers]);
+
+
+  const loadPermissions = useCallback(async (profile: UserProfileRow) => {
+    if (!supabase) return;
+    const { data, error } = await supabase
+      .from("user_permissions")
+      .select("id,user_profile_id,user_id,resource,can_view,can_create,can_edit,can_delete,can_import,can_export,can_manage")
+      .eq("user_profile_id", profile.id);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    const rows = (data ?? []) as UserPermission[];
+    const fallback = roleTemplate(profile.papel);
+    setPermissionDrafts((current) => ({ ...current, [profile.id]: permissionResources.map((resource) => rows.find((row) => row.resource === resource) ?? fallback.find((row) => row.resource === resource)!) }));
+  }, []);
+
+  const togglePermissions = async (profile: UserProfileRow) => {
+    const next = expandedProfileId === profile.id ? null : profile.id;
+    setExpandedProfileId(next);
+    if (next && !permissionDrafts[profile.id]) await loadPermissions(profile);
+  };
+
+  const updatePermissionDraft = (profileId: string, resource: string, action: PermissionAction, checked: boolean) => {
+    setPermissionDrafts((current) => ({
+      ...current,
+      [profileId]: (current[profileId] ?? []).map((permission) => permission.resource === resource ? { ...permission, [action]: checked } : permission),
+    }));
+  };
+
+  const applyRoleTemplate = (profile: UserProfileRow) => {
+    if (profile.email.toLowerCase() === BRUNO_ADMIN_EMAIL) return;
+    setPermissionDrafts((current) => ({ ...current, [profile.id]: roleTemplate(profile.papel) }));
+  };
+
+  const savePermissions = async (profile: UserProfileRow) => {
+    if (!supabase) return;
+    if (profile.email.toLowerCase() === BRUNO_ADMIN_EMAIL) {
+      toast.error("Bruno mantém acesso total protegido.");
+      return;
+    }
+    const draft = permissionDrafts[profile.id] ?? roleTemplate(profile.papel);
+    const payload = draft.map((permission) => ({ ...permission, id: undefined, user_profile_id: profile.id, user_id: profile.user_id }));
+    const beforeData = permissionDrafts[profile.id];
+    const { error: deleteError } = await supabase.from("user_permissions").delete().eq("user_profile_id", profile.id);
+    if (deleteError) { toast.error(deleteError.message); return; }
+    const { error: insertError } = await supabase.from("user_permissions").insert(payload);
+    if (insertError) { toast.error(insertError.message); return; }
+    await supabase.from("user_profiles").update({ permissions_customized: true }).eq("id", profile.id);
+    await recordAuditLog({ action: "alterar_permissoes", resource: "usuarios_acessos", entityId: profile.id, entityLabel: profile.email, beforeData, afterData: payload });
+    toast.success("Permissões salvas.");
+    await loadUsers();
+  };
 
   useEffect(() => {
     setDraftNames(Object.fromEntries(profiles.map((profile) => [profile.id, profile.nome ?? ""])));
@@ -176,6 +233,11 @@ export function UserAccessPanel() {
       const payload = data as AdminCreateUserResponse | null;
       if (payload?.error) throw new Error(payload.error);
       if (!payload?.ok) throw new Error("Resposta inesperada ao cadastrar usuário.");
+      if (payload.profile?.id) {
+        const defaultPermissions = roleTemplate(form.papel).map((permission) => ({ ...permission, user_profile_id: payload.profile!.id, user_id: payload.profile!.user_id }));
+        await supabase.from("user_permissions").insert(defaultPermissions);
+        await recordAuditLog({ action: "criar_usuario", resource: "usuarios_acessos", entityId: payload.profile.id, entityLabel: payload.profile.email, afterData: { profile: payload.profile, permissions: defaultPermissions } });
+      }
 
       setForm(initialForm);
       toast.success("Usuário cadastrado com sucesso.");
@@ -206,6 +268,7 @@ export function UserAccessPanel() {
       const cleanPayload = Object.fromEntries(Object.entries(payload).filter(([, value]) => value !== undefined));
       const { error } = await supabase.from("user_profiles").update(cleanPayload).eq("id", profile.id);
       if (error) throw error;
+      await recordAuditLog({ action: "alterar_usuario", resource: "usuarios_acessos", entityId: profile.id, entityLabel: profile.email, beforeData: profile, afterData: cleanPayload });
       toast.success("Perfil atualizado.");
       await loadUsers();
       if (profile.user_id === user.id) await refreshAccess();
@@ -252,14 +315,32 @@ export function UserAccessPanel() {
           <TableHeader><TableRow><TableHead>Usuário</TableHead><TableHead>Status</TableHead><TableHead>Papel</TableHead><TableHead>Vendedor</TableHead><TableHead>Aprovação</TableHead><TableHead>Ações</TableHead></TableRow></TableHeader>
           <TableBody>
             {profiles.length === 0 ? <TableRow><TableCell colSpan={6} className="text-sm text-muted-foreground">Nenhum usuário cadastrado.</TableCell></TableRow> : profiles.map((profile) => (
-              <TableRow key={profile.id}>
+              <React.Fragment key={profile.id}>
+              <TableRow>
                 <TableCell><div className="space-y-1"><Input className="h-8 min-w-52" value={draftNames[profile.id] ?? profile.nome ?? ""} placeholder="Sem nome" onChange={(event) => setDraftNames((current) => ({ ...current, [profile.id]: event.target.value }))} onBlur={(event) => { const nome = event.target.value.trim(); if (nome !== (profile.nome ?? "")) void updateProfile(profile, { nome }); }} /></div><div className="text-xs text-muted-foreground">{profile.email}</div></TableCell>
                 <TableCell><Badge variant={profile.status === "ativo" ? "default" : profile.status === "pendente" ? "secondary" : "destructive"}>{profile.status}</Badge></TableCell>
-                <TableCell><Select value={profile.papel} disabled={profile.email.toLowerCase() === BRUNO_ADMIN_EMAIL} onValueChange={(value) => void updateProfile(profile, { papel: value as Papel })}><SelectTrigger className="w-40"><SelectValue /></SelectTrigger><SelectContent>{papeis.map((papel) => <SelectItem key={papel} value={papel}>{papel}</SelectItem>)}</SelectContent></Select></TableCell>
+                <TableCell><Select value={profile.papel} disabled={profile.email.toLowerCase() === BRUNO_ADMIN_EMAIL} onValueChange={(value) => { const applyTemplate = window.confirm("Deseja aplicar o modelo padrão deste papel? Cancelar mantém permissões personalizadas."); void updateProfile(profile, { papel: value as Papel }).then(() => { if (applyTemplate) { setPermissionDrafts((current) => ({ ...current, [profile.id]: roleTemplate(value as Papel) })); void savePermissions({ ...profile, papel: value as Papel }); } }); }}><SelectTrigger className="w-40"><SelectValue /></SelectTrigger><SelectContent>{papeis.map((papel) => <SelectItem key={papel} value={papel}>{papel}</SelectItem>)}</SelectContent></Select></TableCell>
                 <TableCell><div className="space-y-1"><Select value={profile.vendedor_id || NONE} disabled={profile.email.toLowerCase() === BRUNO_ADMIN_EMAIL} onValueChange={(value) => { const selectedSeller = value === NONE ? null : vendedorById.get(value); void updateProfile(profile, { vendedor_id: selectedSeller?.id ?? null, vendedor_nome: selectedSeller?.nome ?? null }); }}><SelectTrigger className="w-56"><SelectValue placeholder={getSellerName(vendedores, profile.vendedor_id, profile.vendedor_nome) || "Sem vínculo"} /></SelectTrigger><SelectContent><SelectItem value={NONE}>Sem vínculo</SelectItem>{vendedoresAtivos.map((vendedor) => <SelectItem key={vendedor.id} value={vendedor.id}>{vendedor.nome}</SelectItem>)}</SelectContent></Select>{profile.vendedor_id && !vendedorById.get(profile.vendedor_id)?.ativo && <div className="flex items-center gap-1 text-xs text-amber-700"><AlertTriangle className="h-3 w-3" />vendedor inativo</div>}{profile.papel === "vendedor" && !profile.vendedor_id && <div className="flex items-center gap-1 text-xs text-destructive"><AlertTriangle className="h-3 w-3" />Vendedor sem vínculo operacional.</div>}{!profile.vendedor_id && profile.vendedor_nome && <div className="text-xs text-muted-foreground">Legado: {profile.vendedor_nome}</div>}</div></TableCell>
                 <TableCell className="text-xs text-muted-foreground">{profile.aprovado_em ? new Date(profile.aprovado_em).toLocaleString("pt-BR") : "Pendente"}</TableCell>
-                <TableCell><div className="flex flex-wrap gap-2">{statuses.map((status) => <Button key={status} size="sm" variant={status === profile.status ? "default" : "outline"} disabled={loading || (profile.email.toLowerCase() === BRUNO_ADMIN_EMAIL && status !== "ativo")} onClick={() => void updateProfile(profile, { status })}>{status === "ativo" && profile.status !== "ativo" ? "Reativar" : status}</Button>)}</div></TableCell>
+                <TableCell><div className="flex flex-wrap gap-2"><Button size="sm" variant="secondary" onClick={() => void togglePermissions(profile)}>Permissões</Button>{statuses.map((status) => <Button key={status} size="sm" variant={status === profile.status ? "default" : "outline"} disabled={loading || (profile.email.toLowerCase() === BRUNO_ADMIN_EMAIL && status !== "ativo")} onClick={() => void updateProfile(profile, { status })}>{status === "ativo" && profile.status !== "ativo" ? "Reativar" : status}</Button>)}</div></TableCell>
               </TableRow>
+              {expandedProfileId === profile.id && <TableRow>
+                <TableCell colSpan={6}>
+                  <div className="space-y-3 rounded-md border bg-muted/20 p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div><strong>Matriz de permissões</strong><p className="text-xs text-muted-foreground">{profile.permissions_customized ? "Permissões personalizadas" : "Modelo do papel"}</p></div>
+                      <div className="flex gap-2"><Button size="sm" variant="outline" disabled={profile.email.toLowerCase() === BRUNO_ADMIN_EMAIL} onClick={() => applyRoleTemplate(profile)}>Aplicar modelo do papel</Button><Button size="sm" disabled={profile.email.toLowerCase() === BRUNO_ADMIN_EMAIL} onClick={() => void savePermissions(profile)}>Salvar permissões</Button></div>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <Table>
+                        <TableHeader><TableRow><TableHead>Módulo</TableHead>{permissionActions.map((action) => <TableHead key={action} className="text-center">{action.replace("can_", "")}</TableHead>)}</TableRow></TableHeader>
+                        <TableBody>{(permissionDrafts[profile.id] ?? roleTemplate(profile.papel)).map((permission) => <TableRow key={permission.resource}><TableCell>{resourceLabels[permission.resource]}</TableCell>{permissionActions.map((action) => <TableCell key={action} className="text-center"><input type="checkbox" checked={Boolean(permission[action])} disabled={profile.email.toLowerCase() === BRUNO_ADMIN_EMAIL} onChange={(event) => updatePermissionDraft(profile.id, permission.resource, action, event.target.checked)} /></TableCell>)}</TableRow>)}</TableBody>
+                      </Table>
+                    </div>
+                  </div>
+                </TableCell>
+              </TableRow>}
+              </React.Fragment>
             ))}
           </TableBody>
         </Table>
