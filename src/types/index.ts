@@ -45,6 +45,12 @@ export interface ProximaAcao {
   segmento?: string;
   responsavel?: string;
   responsavelId?: string;
+  responsavelUserId?: string;
+  responsavelNome?: string;
+  vendedorUserId?: string;
+  vendedorNome?: string;
+  createdByUserId?: string;
+  updatedByUserId?: string;
   lancamentoId?: string;
   proximaAcaoId?: string;
   dataConclusao?: string;
@@ -107,6 +113,10 @@ export interface Cliente {
   inativoManual?: boolean;
   vendedor?: string;
   vendedorId?: string;
+  responsavelUserId?: string;
+  responsavelNome?: string;
+  vendedorUserId?: string;
+  vendedorNome?: string;
   produtosInteresse?: string[];
   documento?: string;
   inscricaoEstadual?: string;
@@ -141,6 +151,9 @@ export interface RelatorioVisita {
   cidade?: string;
   vendedor?: string;
   vendedorId?: string;
+  actorUserId?: string;
+  responsavelUserId?: string;
+  vendedorUserId?: string;
   dataVisita: string;
   horario?: string;
   tipoAcao: TipoProximaAcao | TipoLancamento | string;
@@ -250,6 +263,12 @@ export interface Negocio {
   segmento?: string;
   responsavel?: string;
   responsavelId?: string;
+  responsavelUserId?: string;
+  responsavelNome?: string;
+  vendedorUserId?: string;
+  vendedorNome?: string;
+  createdByUserId?: string;
+  updatedByUserId?: string;
   proximaAcaoId?: string;
   dataPrevistaFechamento?: string;
   dataDecisao?: string;
@@ -286,6 +305,13 @@ export interface OportunidadeComercial {
   produtosInteresse?: string[];
   valorEstimado?: number;
   responsavel?: string;
+  responsavelId?: string;
+  responsavelUserId?: string;
+  responsavelNome?: string;
+  vendedorUserId?: string;
+  vendedorNome?: string;
+  createdByUserId?: string;
+  updatedByUserId?: string;
   etapa: EtapaOportunidade;
   previsaoFechamento?: string;
   probabilidade?: number;
@@ -410,6 +436,12 @@ export interface Produto {
   segmento?: string;
   responsavel?: string;
   responsavelId?: string;
+  responsavelUserId?: string;
+  responsavelNome?: string;
+  vendedorUserId?: string;
+  vendedorNome?: string;
+  createdByUserId?: string;
+  updatedByUserId?: string;
   proximaAcaoId?: string;
   dataPrevistaFechamento?: string;
   dataDecisao?: string;
@@ -499,6 +531,12 @@ export interface OrcamentoItem {
   segmento?: string;
   responsavel?: string;
   responsavelId?: string;
+  responsavelUserId?: string;
+  responsavelNome?: string;
+  vendedorUserId?: string;
+  vendedorNome?: string;
+  createdByUserId?: string;
+  updatedByUserId?: string;
   proximaAcaoId?: string;
   dataPrevistaFechamento?: string;
   dataDecisao?: string;
@@ -539,12 +577,23 @@ export interface Orcamento {
   segmento?: string;
   responsavel?: string;
   responsavelId?: string;
+  responsavelUserId?: string;
+  responsavelNome?: string;
+  vendedorUserId?: string;
+  vendedorNome?: string;
+  createdByUserId?: string;
+  updatedByUserId?: string;
   proximaAcaoId?: string;
   dataPrevistaFechamento?: string;
   dataDecisao?: string;
   motivoPerda?: string;
   createdAt: string;
-  updatedAt: string;
+  responsavelUserId?: string;
+  responsavelNome?: string;
+  vendedorUserId?: string;
+  vendedorNome?: string;
+  createdByUserId?: string;
+  updatedByUserId?: string;
 }
 
 export interface Empresa {

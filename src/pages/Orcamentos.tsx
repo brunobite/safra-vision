@@ -14,7 +14,7 @@ import { calcularQuantidadeComercial, DOSE_UNIDADES, isOrcamentoBloqueado, recal
 import { gerarPdfOrcamento } from "@/lib/orcamentoPdf";
 import { formatDateBR } from "@/utils/dateUtils";
 import { useAuth } from "@/store/AuthStore";
-import { canCreate, canEdit, canExport, canManage, canView, isOwnSellerData } from "@/lib/permissions";
+import { canCreate, canEdit, canExport, canManage, canSaveBelowMinimumPrice, canView, isOwnSellerData } from "@/lib/permissions";
 import { recordAuditLog } from "@/lib/audit";
 
 const STATUS_OFICIAIS: OrcamentoStatus[] = ["Rascunho", "Enviado", "Em negociação", "Aprovado", "Recusado", "Cancelado", "Convertido"];
@@ -33,6 +33,7 @@ export default function Orcamentos() {
   const canEditOrcamentos = canEdit("orcamentos", permissionContext);
   const canExportOrcamentos = canExport("orcamentos", permissionContext);
   const canManageOrcamentos = canManage("orcamentos", permissionContext);
+  const canUseMinimumPriceException = canSaveBelowMinimumPrice(permissionContext);
   const [params] = useSearchParams();
   const vendedoresAtivos = vendedores.filter((v) => v.ativo);
   const formasPagamentoAtivas = formasPagamento.filter((f) => f.ativo);
@@ -51,7 +52,7 @@ export default function Orcamentos() {
 
   const isLegacy = Boolean(edit?.id && !edit?.oportunidadeId);
   const oportunidadesAbertasCliente = oportunidades.filter((o) => o.clienteId === form.clienteId && !["Ganha", "Perdida", "Cancelada", "Suspensa/Sem timing"].includes(o.etapa));
-  const orcamentosVisiveis = canManageOrcamentos ? orcamentos : orcamentos.filter((o) => isOwnSellerData(vendedorId || vendedorNome, o.vendedorId || o.vendedor || o.responsavel));
+  const orcamentosVisiveis = canManageOrcamentos ? orcamentos : orcamentos.filter((o) => isOwnSellerData(vendedorId || vendedorNome, o.vendedorId || o.responsavelId || o.vendedor || o.responsavel));
   const statusOptions = Array.from(new Set([...(isLegacy ? [...STATUS_LEGADO, ...STATUS_OFICIAIS] : STATUS_OFICIAIS), form.status]));
   const orcamentoBloqueado = isOrcamentoBloqueado(form, oportunidades);
 
@@ -86,10 +87,11 @@ export default function Orcamentos() {
 
   const save = () => {
     if (orcamentoBloqueado) return toast.error("Orçamento bloqueado: oportunidade já fechada. Para nova negociação, crie uma nova oportunidade.");
-    const payload = recalc({ ...form, motivoRevisao: motivoRevisao || form.motivoRevisao, updatedAt: new Date().toISOString() });
+    const currentUserName = vendedorNome || user?.user_metadata?.nome || user?.email || "";
+    const payload = recalc({ ...form, vendedorId: user?.id || form.vendedorId, vendedor: currentUserName || form.vendedor, vendedorUserId: user?.id || form.vendedorUserId, vendedorNome: currentUserName || form.vendedorNome, responsavelId: user?.id || form.responsavelId, responsavel: currentUserName || form.responsavel, responsavelUserId: user?.id || form.responsavelUserId, responsavelNome: currentUserName || form.responsavelNome, createdByUserId: form.createdByUserId || user?.id, updatedByUserId: user?.id || form.updatedByUserId, motivoRevisao: motivoRevisao || form.motivoRevisao, updatedAt: new Date().toISOString() });
     if (!payload.clienteId) return toast.error("Cliente obrigatório");
     const excecoesPreco = payload.itens.filter((it) => it.abaixoPrecoMinimo);
-    if (excecoesPreco.length && !canManageOrcamentos) return toast.error("Preço abaixo do mínimo bloqueado para seu perfil.");
+    if (excecoesPreco.length && !canUseMinimumPriceException) return toast.error("Preço abaixo do mínimo exige a permissão específica excecao_preco_minimo.");
     const estouroEstoque = payload.itens.filter((it) => it.controlaEstoque && !it.representacaoComissionado && it.quantidadeTotal > (it.estoqueDisponivel || 0));
     if (estouroEstoque.length) toast.warning("Há itens acima do estoque disponível; produtos representados não bloqueiam por estoque.");
     if (payload.status === "Enviado" && (!payload.canalEnvio || !payload.dataEnvio)) return toast.error("Informe canal e data de envio");
@@ -223,7 +225,7 @@ export default function Orcamentos() {
           <div><Label>Desconto</Label><Input type="number" value={it.desconto || 0} onChange={(e) => { const itens = [...form.itens]; itens[idx] = { ...it, desconto: +e.target.value }; setForm(recalc({ ...form, itens })); }} disabled={!canManageOrcamentos} /></div>
           <div><Label>Subtotal item</Label><Input value={fmtBRL(total)} disabled /></div>
           <div><Label>Custo técnico/ha</Label><Input value={`${fmtBRL(it.custoPorHaItem || 0)}/ha`} disabled /></div>
-          {it.abaixoPrecoMinimo && <div className="md:col-span-12 rounded border border-red-300 bg-red-50 p-2 text-xs text-red-800">Alerta: preço líquido abaixo do preço mínimo. Somente gestor/administrador com permissão de gerenciamento pode salvar esta exceção.</div>}
+          {it.abaixoPrecoMinimo && <div className="md:col-span-12 rounded border border-red-300 bg-red-50 p-2 text-xs text-red-800">Alerta: preço líquido abaixo do preço mínimo. Somente usuários com a permissão específica excecao_preco_minimo podem salvar esta exceção.</div>}
           {it.controlaEstoque && !it.representacaoComissionado && <div className="md:col-span-12 text-xs text-muted-foreground">Estoque disponível: {it.estoqueDisponivel ?? Math.max(0, (p?.estoqueAtual || 0) - (p?.estoqueReservado || 0))}. {it.quantidadeTotal > (it.estoqueDisponivel || 0) ? "Quantidade acima do disponível." : "Reserva será feita somente ao aprovar."}</div>}
           <div className="md:col-span-12 text-xs text-muted-foreground">Necessidade técnica: {calc.necessidadeTecnica.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} {calc.unidadeBase} → Quantidade comercial: {calc.quantidadeComercial.toLocaleString("pt-BR", { maximumFractionDigits: 3 })} {p?.unidade || it.unidadeProduto} (volume comercial: {calc.volumeComercial.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} {calc.unidadeBase}). Preço base: {fmtBRL(precoBase)}/{calc.unidadeBase}. Valor total: {fmtBRL(total)}. Custo técnico: {fmtBRL(it.custoPorHaItem || 0)}/ha.</div>
         </div>; })}

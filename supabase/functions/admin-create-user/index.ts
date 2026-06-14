@@ -35,7 +35,6 @@ function assertValidPayload(payload: AdminCreateUserPayload) {
   if (!nome) throw new Error("Nome obrigatório.");
   if (!papel || !papeis.has(papel)) throw new Error("Papel inválido.");
   if (!statuses.has(status)) throw new Error("Status de acesso inválido.");
-  if (papel === "vendedor" && !payload.vendedor_id) throw new Error("Vendedor vinculado obrigatório para papel vendedor.");
   if (email === BRUNO_ADMIN_EMAIL) throw new Error("Bruno é um administrador protegido e não pode ser alterado por este fluxo.");
 
   return { email, password, nome, papel, status };
@@ -68,8 +67,8 @@ async function handle(req: Request): Promise<Response> {
   if (!payload) throw new Error("Payload inválido.");
   const { email, password, nome, papel, status } = assertValidPayload(payload);
 
-  const vendedorId = papel === "vendedor" ? payload.vendedor_id ?? null : null;
-  const vendedorNome = papel === "vendedor" ? payload.vendedor_nome ?? null : null;
+  const vendedorId = null;
+  const vendedorNome = papel === "vendedor" ? nome : null;
   const empresaId = payload.empresa_id ?? null;
 
   const { data: existingProfile, error: existingProfileError } = await service
