@@ -23,8 +23,7 @@ const STATUS_LEGADO: OrcamentoStatus[] = ["Aberto", "Em negociação", "Recusado
 const CANAIS_ENVIO = ["WhatsApp", "E-mail", "Presencial", "Ligação", "Outro"] as const;
 const validade7 = (base: string) => new Date(new Date(base).getTime() + 7 * 86400000).toISOString().slice(0, 10);
 
-type CommercialAgent = { user_id: string; nome: string; papel: "vendedor" | "gestor" | "administrador" | "visualizador"; status: string };
-type TeamMember = { gestor_user_id: string; vendedor_user_id: string; ativo: boolean };
+type CommercialAgent = { user_id: string; nome: string; papel: "vendedor" | "gestor" | "administrador" | "visualizador"; status: string; superior_user_id?: string | null };
 const sameText = (a?: string | null, b?: string | null) => Boolean(a && b && a.trim().toLowerCase() === b.trim().toLowerCase());
 
 const novoItem = (idx: number, areaHa = 0): OrcamentoItem => ({ id: `i${Date.now()}-${idx}`, produtoId: "", produtoNome: "", categoria: "", unidadeProduto: "LT", dosePorHa: 0, unidadeDose: "L/ha", areaHa, quantidadeTotal: 0, precoUnitario: 0, precoMinimo: 0, desconto: 0, valorTotalItem: 0, custoPorHaItem: 0 });
@@ -45,7 +44,7 @@ export default function Orcamentos() {
   const isGestor = normalizedRole === "gestor";
   const isVendedor = normalizedRole === "vendedor";
   const [commercialAgents, setCommercialAgents] = useState<CommercialAgent[]>([]);
-  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
+
   const formasPagamentoAtivas = formasPagamento.filter((f) => f.ativo);
   const prazosPagamentoAtivos = prazosPagamento.filter((p) => p.ativo);
   const formasPagamentoFallback = ["Boleto", "Pix", "Dinheiro", "Cartão", "Safra", "Barter", "Outro"];
@@ -73,18 +72,13 @@ export default function Orcamentos() {
       return;
     }
     void (async () => {
-      const [{ data: profilesData, error: profilesError }, { data: teamData, error: teamError }] = await Promise.all([
-        supabase.from("user_profiles").select("user_id,nome,email,papel,status").eq("status", "ativo").in("papel", ["vendedor", "gestor"]),
-        supabase.from("user_team_members").select("gestor_user_id,vendedor_user_id,ativo").eq("ativo", true),
-      ]);
+      const { data: profilesData, error: profilesError } = await supabase.from("user_profiles").select("user_id,nome,email,papel,status,superior_user_id").eq("status", "ativo").in("papel", ["vendedor", "gestor", "administrador"]);
       if (profilesError) toast.error(profilesError.message);
-      if (teamError) console.warn("Não foi possível carregar equipes de gestores:", teamError.message);
-      setCommercialAgents((profilesData ?? []).filter((profile) => profile.user_id).map((profile) => ({ user_id: profile.user_id!, nome: profile.nome || profile.email || profile.user_id!, papel: normalizeRole(profile.papel) as CommercialAgent["papel"], status: profile.status || "ativo" })));
-      setTeamMembers((teamData ?? []) as TeamMember[]);
+      setCommercialAgents((profilesData ?? []).filter((profile) => profile.user_id).map((profile) => ({ user_id: profile.user_id!, nome: profile.nome || profile.email || profile.user_id!, papel: normalizeRole(profile.papel) as CommercialAgent["papel"], status: profile.status || "ativo", superior_user_id: profile.superior_user_id })));
     })();
   }, [normalizedRole, user, vendedorNome]);
 
-  const teamSellerIds = useMemo(() => new Set(teamMembers.filter((member) => member.gestor_user_id === user?.id && member.ativo).map((member) => member.vendedor_user_id)), [teamMembers, user?.id]);
+  const teamSellerIds = useMemo(() => new Set(commercialAgents.filter((agent) => agent.papel === "vendedor" && agent.superior_user_id === user?.id).map((agent) => agent.user_id)), [commercialAgents, user?.id]);
   const selectableAgents = useMemo(() => {
     if (isAdmin) return commercialAgents;
     if (isGestor) return commercialAgents.filter((agent) => agent.user_id === user?.id || teamSellerIds.has(agent.user_id));

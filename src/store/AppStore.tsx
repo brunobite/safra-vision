@@ -11,6 +11,7 @@ import { runAccountSyncCheck, runAccountSyncNow, type AccountSyncStatus } from "
 import { addAccountSyncHistoryEvent, getHistoryStatusFromAccountSyncStatus, type AccountSyncHistoryEvent } from "@/lib/accountSyncUi";
 import { getFreshSupabaseAccessContext } from "@/lib/supabaseAccess";
 import { useAuth } from "@/store/AuthStore";
+import { supabase } from "@/lib/supabase";
 import { isOwnSellerDataById, normalizeRole } from "@/lib/permissions";
 import { calcularPotencialCliente } from "@/utils/businessRules";
 import { normalizeClientesForPersistence } from "@/lib/clientNormalization";
@@ -114,6 +115,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const [syncError, setSyncError] = useState<string | null>(null);
   const [lastAutoSyncAt, setLastAutoSyncAt] = useState<string | null>(null);
   const [accountSyncStatus, setAccountSyncStatus] = useState<AccountSyncStatus | null>(null);
+  const [hierarchySellerIds, setHierarchySellerIds] = useState<Set<string>>(() => new Set());
   const [accountSyncHistory, setAccountSyncHistory] = useState<AccountSyncHistoryEvent[]>(() => {
     try {
       return JSON.parse(localStorage.getItem("accountSyncHistory") || "[]") as AccountSyncHistoryEvent[];
@@ -612,17 +614,45 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
 
   const normalizedRole = normalizeRole(role);
   const isSellerScope = normalizedRole === "vendedor";
+  const isManagerScope = normalizedRole === "gestor";
+
+  useEffect(() => {
+    if (!supabase || !session?.user?.id || !isManagerScope) {
+      setHierarchySellerIds(new Set());
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const { data, error } = await supabase
+        .from("user_profiles")
+        .select("user_id")
+        .eq("status", "ativo")
+        .eq("papel", "vendedor")
+        .eq("superior_user_id", session.user.id);
+      if (error) {
+        console.warn("Não foi possível carregar vendedores subordinados:", error.message);
+        return;
+      }
+      if (!cancelled) setHierarchySellerIds(new Set((data ?? []).map((profile) => profile.user_id).filter(Boolean) as string[]));
+    })();
+    return () => { cancelled = true; };
+  }, [isManagerScope, session?.user?.id]);
   const sellerNameById = useMemo(() => new Map(vendedores.map((vendedor) => [vendedor.id, vendedor.nome])), [vendedores]);
   const linkedSellerName = vendedorId ? sellerNameById.get(vendedorId) || vendedorNome : vendedorNome;
   const selectedFilterSellerName = filters.vendedor ? sellerNameById.get(filters.vendedor) || filters.vendedor : filters.vendedor;
-  const scopedClientes = useMemo(() => isSellerScope ? clientes.filter((cliente) => isOwnSellerDataById(vendedorId, linkedSellerName, cliente.vendedorId, cliente.vendedor)) : clientes, [clientes, isSellerScope, vendedorId, linkedSellerName]);
+  const isVisibleSellerData = useCallback((id?: string, name?: string) => {
+    if (isSellerScope) return isOwnSellerDataById(vendedorId, linkedSellerName, id, name);
+    if (isManagerScope) return Boolean(id && hierarchySellerIds.has(id));
+    return true;
+  }, [hierarchySellerIds, isManagerScope, isSellerScope, linkedSellerName, vendedorId]);
+  const scopedClientes = useMemo(() => (isSellerScope || isManagerScope) ? clientes.filter((cliente) => isVisibleSellerData(cliente.vendedorId, cliente.vendedor)) : clientes, [clientes, isSellerScope, isManagerScope, isVisibleSellerData]);
   const scopedClienteIds = useMemo(() => new Set(scopedClientes.map((cliente) => cliente.id)), [scopedClientes]);
-  const scopedLancamentos = useMemo(() => isSellerScope ? lancamentos.filter((lancamento) => scopedClienteIds.has(lancamento.clienteId) || isOwnSellerDataById(vendedorId, linkedSellerName, lancamento.vendedorId, lancamento.vendedor)) : lancamentos, [isSellerScope, lancamentos, scopedClienteIds, vendedorId, linkedSellerName]);
-  const scopedNegocios = useMemo(() => isSellerScope ? negocios.filter((negocio) => scopedClienteIds.has(negocio.clienteId) || isOwnSellerDataById(vendedorId, linkedSellerName, negocio.vendedorId, negocio.vendedor)) : negocios, [isSellerScope, negocios, scopedClienteIds, vendedorId, linkedSellerName]);
-  const scopedOportunidades = useMemo(() => isSellerScope ? oportunidades.filter((oportunidade) => scopedClienteIds.has(oportunidade.clienteId) || isOwnSellerDataById(vendedorId, linkedSellerName, oportunidade.responsavelId || oportunidade.vendedorId, oportunidade.responsavel || oportunidade.vendedor)) : oportunidades, [isSellerScope, oportunidades, scopedClienteIds, vendedorId, linkedSellerName]);
-  const scopedOrcamentos = useMemo(() => isSellerScope ? orcamentos.filter((orcamento) => scopedClienteIds.has(orcamento.clienteId) || isOwnSellerDataById(vendedorId, linkedSellerName, orcamento.responsavelId || orcamento.vendedorId, orcamento.responsavel || orcamento.vendedor)) : orcamentos, [isSellerScope, orcamentos, scopedClienteIds, vendedorId, linkedSellerName]);
-  const scopedProximasAcoes = useMemo(() => isSellerScope ? proximasAcoes.filter((acao) => (acao.clienteId && scopedClienteIds.has(acao.clienteId)) || isOwnSellerDataById(vendedorId, linkedSellerName, acao.responsavelId, acao.responsavel)) : proximasAcoes, [isSellerScope, proximasAcoes, scopedClienteIds, vendedorId, linkedSellerName]);
-  const scopedRelatoriosVisita = useMemo(() => isSellerScope ? relatoriosVisita.filter((relatorio) => scopedClienteIds.has(relatorio.clienteId) || isOwnSellerDataById(vendedorId, linkedSellerName, relatorio.vendedorId, relatorio.vendedor)) : relatoriosVisita, [isSellerScope, relatoriosVisita, scopedClienteIds, vendedorId, linkedSellerName]);
+  const scopedLancamentos = useMemo(() => (isSellerScope || isManagerScope) ? lancamentos.filter((lancamento) => scopedClienteIds.has(lancamento.clienteId) || isVisibleSellerData(lancamento.vendedorId, lancamento.vendedor)) : lancamentos, [isSellerScope, isManagerScope, lancamentos, scopedClienteIds, isVisibleSellerData]);
+  const scopedNegocios = useMemo(() => (isSellerScope || isManagerScope) ? negocios.filter((negocio) => scopedClienteIds.has(negocio.clienteId) || isVisibleSellerData(negocio.vendedorId, negocio.vendedor)) : negocios, [isSellerScope, isManagerScope, negocios, scopedClienteIds, isVisibleSellerData]);
+  const scopedOportunidades = useMemo(() => (isSellerScope || isManagerScope) ? oportunidades.filter((oportunidade) => scopedClienteIds.has(oportunidade.clienteId) || isVisibleSellerData(oportunidade.responsavelId || oportunidade.vendedorId, oportunidade.responsavel || oportunidade.vendedor)) : oportunidades, [isSellerScope, isManagerScope, oportunidades, scopedClienteIds, isVisibleSellerData]);
+  const scopedOrcamentos = useMemo(() => (isSellerScope || isManagerScope) ? orcamentos.filter((orcamento) => scopedClienteIds.has(orcamento.clienteId) || isVisibleSellerData(orcamento.responsavelId || orcamento.vendedorId, orcamento.responsavel || orcamento.vendedor)) : orcamentos, [isSellerScope, isManagerScope, orcamentos, scopedClienteIds, isVisibleSellerData]);
+  const scopedProximasAcoes = useMemo(() => (isSellerScope || isManagerScope) ? proximasAcoes.filter((acao) => (acao.clienteId && scopedClienteIds.has(acao.clienteId)) || isVisibleSellerData(acao.responsavelId, acao.responsavel)) : proximasAcoes, [isSellerScope, isManagerScope, proximasAcoes, scopedClienteIds, isVisibleSellerData]);
+  const scopedRelatoriosVisita = useMemo(() => (isSellerScope || isManagerScope) ? relatoriosVisita.filter((relatorio) => scopedClienteIds.has(relatorio.clienteId) || isVisibleSellerData(relatorio.vendedorId, relatorio.vendedor)) : relatoriosVisita, [isSellerScope, isManagerScope, relatoriosVisita, scopedClienteIds, isVisibleSellerData]);
 
   const cMap = useMemo(() => new Map(scopedClientes.map(c => [c.id, c])), [scopedClientes]);
   const pMap = useMemo(() => new Map(produtos.map(p => [p.id, p])), [produtos]);

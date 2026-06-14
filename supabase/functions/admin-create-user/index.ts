@@ -13,6 +13,9 @@ type AdminCreateUserPayload = {
   vendedor_nome?: string | null;
   empresa_id?: string | null;
   status?: StatusPerfil;
+  superior_user_id?: string | null;
+  superior_nome?: string | null;
+  superior_papel?: Papel | null;
 };
 
 const papeis = new Set<Papel>(["administrador", "gestor", "vendedor", "visualizador"]);
@@ -36,6 +39,8 @@ function assertValidPayload(payload: AdminCreateUserPayload) {
   if (!papel || !papeis.has(papel)) throw new Error("Papel inválido.");
   if (!statuses.has(status)) throw new Error("Status de acesso inválido.");
   if (email === BRUNO_ADMIN_EMAIL) throw new Error("Bruno é um administrador protegido e não pode ser alterado por este fluxo.");
+  if (papel === "gestor" && !payload.superior_user_id) throw new Error("Gestor exige administrador responsável.");
+  if (papel === "vendedor" && !payload.superior_user_id) throw new Error("Vendedor exige gestor responsável.");
 
   return { email, password, nome, papel, status };
 }
@@ -111,6 +116,9 @@ async function handle(req: Request): Promise<Response> {
     vendedor_nome: vendedorNome,
     empresa_id: empresaId,
     status,
+    superior_user_id: papel === "administrador" ? null : payload.superior_user_id ?? null,
+    superior_nome: papel === "administrador" ? null : payload.superior_nome ?? null,
+    superior_papel: papel === "administrador" ? null : payload.superior_papel ?? null,
     aprovado_por: requesterData.user.id,
     aprovado_em: new Date().toISOString(),
   };
@@ -118,7 +126,7 @@ async function handle(req: Request): Promise<Response> {
   const { data: profile, error: profileError } = await service
     .from("user_profiles")
     .upsert(profilePayload, { onConflict: "email" })
-    .select("id,user_id,nome,email,papel,vendedor_id,vendedor_nome,empresa_id,status,created_at,aprovado_em")
+    .select("id,user_id,nome,email,papel,vendedor_id,vendedor_nome,empresa_id,status,created_at,aprovado_em,superior_user_id,superior_nome,superior_papel")
     .single();
   if (profileError) throw profileError;
 
