@@ -41,13 +41,15 @@ export function calcularQuantidadeComercial(unidadeProduto: Produto["unidade"], 
 export function recalcularItem(base: OrcamentoItem, produto: Produto): OrcamentoItem {
   const calc = calcularQuantidadeComercial(produto.unidade, base.dosePorHa, base.unidadeDose, base.areaHa);
   const precoUnitario = base.precoUnitario || 0;
-  const valorTotalItem = round(calc.quantidadeComercial * precoUnitario, 2);
+  const desconto = base.desconto || 0;
+  const precoLiquido = Math.max(0, precoUnitario - desconto);
+  const valorTotalItem = round(calc.quantidadeComercial * precoLiquido, 2);
   const doseBaseHa = calc.unidadeBase === "L"
     ? (base.unidadeDose === "mL/ha" ? base.dosePorHa / 1000 : base.unidadeDose === "L/ha" ? base.dosePorHa : 0)
     : calc.unidadeBase === "kg"
       ? (base.unidadeDose === "g/ha" ? base.dosePorHa / 1000 : base.unidadeDose === "kg/ha" ? base.dosePorHa : base.unidadeDose === "ton/ha" ? base.dosePorHa * 1000 : 0)
       : base.dosePorHa;
-  const precoBase = calc.precoBaseDivisor > 0 ? precoUnitario / calc.precoBaseDivisor : precoUnitario;
+  const precoBase = calc.precoBaseDivisor > 0 ? precoLiquido / calc.precoBaseDivisor : precoLiquido;
   const custoPorHaItem = round(precoBase * doseBaseHa, 2);
 
   return {
@@ -56,6 +58,11 @@ export function recalcularItem(base: OrcamentoItem, produto: Produto): Orcamento
     categoria: produto.categoria,
     unidadeProduto: produto.unidade,
     quantidadeTotal: calc.quantidadeComercial,
+    precoMinimo: produto.precoMinimo || 0,
+    controlaEstoque: !!produto.controlaEstoque,
+    representacaoComissionado: !!produto.representacaoComissionado || !produto.controlaEstoque,
+    estoqueDisponivel: Math.max(0, (produto.estoqueAtual || 0) - (produto.estoqueReservado || 0)),
+    abaixoPrecoMinimo: precoLiquido < (produto.precoMinimo || 0),
     valorTotalItem,
     custoPorHaItem,
     observacoes: `Resumo: ${calc.resumo}`,

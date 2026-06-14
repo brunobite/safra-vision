@@ -57,6 +57,7 @@ export default function Relatorios() {
   const isVisitReport = filters.reportType === "visitas";
   const negocios = useMemo(() => store.negocios.filter(n => inRange(n.ultimaAtualizacao || n.dataCriacao, filters.dataInicial, filters.dataFinal) && byMonth(n.ultimaAtualizacao || n.dataCriacao, filters.mes) && (!filters.vendedor || n.vendedor === filters.vendedor) && (!filters.status || n.status === filters.status) && (!filters.categoria || n.categoria === filters.categoria) && (!filters.clienteId || n.clienteId === filters.clienteId) && (!filters.rota || store.clienteById(n.clienteId)?.rota === filters.rota)), [store, filters]);
   const lancs = useMemo(() => store.lancamentos.filter(l => inRange(l.data, filters.dataInicial, filters.dataFinal) && byMonth(l.data, filters.mes) && (!filters.vendedor || l.vendedor === filters.vendedor) && (!filters.status || l.status === filters.status) && (!filters.clienteId || l.clienteId === filters.clienteId) && (!filters.rota || store.clienteById(l.clienteId)?.rota === filters.rota)), [store, filters]);
+  const orcs = useMemo(() => store.orcamentos.filter(o => inRange(o.data, filters.dataInicial, filters.dataFinal) && byMonth(o.data, filters.mes) && (!filters.vendedor || [o.vendedor, o.responsavel].includes(filters.vendedor)) && (!filters.status || o.status === filters.status) && (!filters.categoria || o.itens.some((it) => it.categoria === filters.categoria)) && (!filters.clienteId || o.clienteId === filters.clienteId) && (!filters.rota || store.clienteById(o.clienteId)?.rota === filters.rota)), [store, filters]);
 
   const enrichedVisits = useMemo(() => enrichVisitReports({ relatoriosVisita: store.relatoriosVisita, clientes: store.clientes, proximasAcoes: store.proximasAcoes, lancamentos: store.lancamentos, oportunidades: store.oportunidades, negocios: store.negocios }), [store.relatoriosVisita, store.clientes, store.proximasAcoes, store.lancamentos, store.oportunidades, store.negocios]);
   const filteredVisits = useMemo(() => filterVisitReports(enrichedVisits, visitFilters), [enrichedVisits, visitFilters]);
@@ -67,6 +68,10 @@ export default function Relatorios() {
   const metaTotal = store.metasEmpresa.reduce((s, m) => s + m.metaTotal, 0);
   const pctMeta = metaTotal ? realized / metaTotal : 0;
   const pipeline = negocios.filter(n => !["Fechado ganho", "Fechado perdido"].includes(n.status)).reduce((s, n) => s + n.valorPotencial, 0);
+  const totalOrcado = orcs.reduce((s, o) => s + (o.valorTotal || 0), 0);
+  const totalAprovado = orcs.filter((o) => ["Aprovado", "Convertido"].includes(o.status)).reduce((s, o) => s + (o.valorTotal || 0), 0);
+  const totalRecusado = orcs.filter((o) => ["Recusado", "Perdido", "Reprovado"].includes(o.status)).reduce((s, o) => s + (o.valorTotal || 0), 0);
+  const taxaConversaoOrcamento = orcs.length ? orcs.filter((o) => ["Aprovado", "Convertido"].includes(o.status)).length / orcs.length : 0;
 
   const summary = isVisitReport ? [
     { label: "Total de visitas", value: String(visitSummary.totalVisitas) },
@@ -79,6 +84,8 @@ export default function Relatorios() {
     { label: "% empresa", value: fmtPct(pctMeta) },
     { label: "Gap empresa", value: fmtBRL(Math.max(metaTotal - realized, 0)) },
     { label: "Pipeline aberto", value: fmtBRL(pipeline) },
+    { label: "Total orçado", value: fmtBRL(totalOrcado) },
+    { label: "Taxa conversão orç.", value: fmtPct(taxaConversaoOrcamento) },
   ];
 
   const currentClient = store.clienteById(filters.clienteId);
@@ -168,6 +175,10 @@ export default function Relatorios() {
           <TableRow><TableCell>Negócios ganhos</TableCell><TableCell>{negocios.filter(n => n.status === "Fechado ganho").length}</TableCell></TableRow>
           <TableRow><TableCell>Negócios perdidos</TableCell><TableCell>{negocios.filter(n => n.status === "Fechado perdido").length}</TableCell></TableRow>
           <TableRow><TableCell>Propostas enviadas</TableCell><TableCell>{lancs.filter(l => l.tipo === "Proposta").length}</TableCell></TableRow>
+          <TableRow><TableCell>Total orçado no período</TableCell><TableCell>{fmtBRL(totalOrcado)}</TableCell></TableRow>
+          <TableRow><TableCell>Total aprovado</TableCell><TableCell>{fmtBRL(totalAprovado)}</TableCell></TableRow>
+          <TableRow><TableCell>Total recusado</TableCell><TableCell>{fmtBRL(totalRecusado)}</TableCell></TableRow>
+          <TableRow><TableCell>Taxa de conversão de orçamento</TableCell><TableCell>{fmtPct(taxaConversaoOrcamento)}</TableCell></TableRow>
           <TableRow><TableCell>Pendências</TableCell><TableCell>{lancs.filter(l => l.status === "Aberto" || l.status === "Atrasado").length}</TableCell></TableRow>
         </TableBody></Table>}
       </ReportSection>}
@@ -192,6 +203,12 @@ export default function Relatorios() {
         </TableBody></Table>}
 
         {filters.reportType === "produtos-estoque" && <Table><TableHeader><TableRow><TableHead>Produto</TableHead><TableHead>Controle</TableHead><TableHead>Disponível</TableHead><TableHead>Preço lista</TableHead></TableRow></TableHeader><TableBody>{store.produtos.map((p) => <TableRow key={p.id}><TableCell>{p.nome}</TableCell><TableCell>{controlaEstoqueProduto(p) ? "Com controle" : "Representação"}</TableCell><TableCell>{controlaEstoqueProduto(p) ? estoqueDisponivelProduto(p) : "Não aplicável"}</TableCell><TableCell>{fmtBRL(p.precoLista)}</TableCell></TableRow>)}</TableBody></Table>}
+
+        {["geral", "semanal", "mensal"].includes(filters.reportType) && <div className="grid gap-3 md:grid-cols-3">
+          <div className="rounded-md border p-3"><h3 className="font-medium">Orçamento por vendedor</h3><ul className="mt-2 space-y-1 text-sm">{Object.entries(orcs.reduce<Record<string, number>>((acc, o) => { const k = o.vendedor || o.responsavel || "Sem vendedor"; acc[k] = (acc[k] || 0) + (o.valorTotal || 0); return acc; }, {})).map(([k, v]) => <li key={k} className="flex justify-between gap-2"><span>{k}</span><strong>{fmtBRL(v)}</strong></li>)}</ul></div>
+          <div className="rounded-md border p-3"><h3 className="font-medium">Orçamento por cliente</h3><ul className="mt-2 space-y-1 text-sm">{Object.entries(orcs.reduce<Record<string, number>>((acc, o) => { const k = store.clienteById(o.clienteId)?.nome || "Sem cliente"; acc[k] = (acc[k] || 0) + (o.valorTotal || 0); return acc; }, {})).map(([k, v]) => <li key={k} className="flex justify-between gap-2"><span>{k}</span><strong>{fmtBRL(v)}</strong></li>)}</ul></div>
+          <div className="rounded-md border p-3"><h3 className="font-medium">Orçamento por categoria</h3><ul className="mt-2 space-y-1 text-sm">{Object.entries(orcs.flatMap((o) => o.itens).reduce<Record<string, number>>((acc, it) => { const k = it.categoria || "Sem categoria"; acc[k] = (acc[k] || 0) + (it.valorTotalItem || 0); return acc; }, {})).map(([k, v]) => <li key={k} className="flex justify-between gap-2"><span>{k}</span><strong>{fmtBRL(v)}</strong></li>)}</ul></div>
+        </div>}
 
         {["geral", "semanal", "mensal"].includes(filters.reportType) && <p className="text-sm">Visitas realizadas: {lancs.filter(l => l.tipo === "Visita").length} • Lançamentos: {lancs.length} • Eventos lançados: {store.eventos.length}</p>}
       </ReportSection>}
