@@ -90,7 +90,7 @@ export const normalizeResource = (resourceOrRoute: string): PermissionResource =
 function resolvePermission(resource: string, contextOrRole?: PermissionContext | UserRole | string | null): UserPermission {
   const ctx: PermissionContext = typeof contextOrRole === "object" && contextOrRole !== null ? contextOrRole : { role: contextOrRole };
   const normalizedResource = normalizeResource(resource);
-  if (isProtectedBruno(ctx.email)) return fullPermission(normalizedResource);
+  if (isProtectedBruno(ctx.email) || isAdminRole(ctx.role)) return fullPermission(normalizedResource);
   if (normalizeAccessStatus(ctx.accessStatus ?? "ativo") !== "active") return emptyPermission(normalizedResource);
   const specific = ctx.permissions?.find((permission) => permission.resource === normalizedResource);
   if (specific) return specific;

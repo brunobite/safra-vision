@@ -14,9 +14,12 @@ import { ROTAS_NOMES } from "@/data/mockData";
 import { Cliente, ABC } from "@/types";
 import { fmtBRL, fmtNum } from "@/utils/calculations";
 import { computeClienteStatus, formatDateBR, isClienteAtrasado, sugestaoRetornoDias } from "@/lib/clientesUtils";
-import { normalizeClienteForPersistence } from "@/lib/clientNormalization";
+import { normalizeClienteForPersistence, normalizeClientesForPersistence } from "@/lib/clientNormalization";
+import { saveOperationalEntity, type OperationalPersistenceStatus } from "@/lib/operationalPersistence";
+import { fetchRemoteSnapshot } from "@/lib/supabaseSync";
 import { useAuth } from "@/store/AuthStore";
 import { canCreate, canDelete, canEdit, canManage, canView, isAdminRole, normalizeRole } from "@/lib/permissions";
+import { normalizeAccessStatus } from "@/lib/accessStatus";
 import { supabase } from "@/lib/supabase";
 import { recordAuditLog } from "@/lib/audit";
 import { calcularPotencialCliente, calcularValorMedioHaSegmentosAtivos } from "@/utils/businessRules";
@@ -34,8 +37,8 @@ const empty: Omit<Cliente, "id"> = {
 };
 
 export default function Clientes() {
-  const { clientes, setClientes, lancamentos, negocios, ticketsMedios, orcamentos, proximasAcoes } = useAppStore();
-  const { role, accessStatus, user, vendedorNome, vendedorId, permissions } = useAuth();
+  const { clientes, setClientes, lancamentos, negocios, ticketsMedios, orcamentos, proximasAcoes, refreshPendingSyncCount, runManualUploadSync } = useAppStore();
+  const { role, accessStatus, user, vendedorNome, vendedorId, permissions, session } = useAuth();
   const permissionContext = { role, accessStatus, email: user?.email, vendedorNome, vendedorId, permissions };
   const canViewClientes = canView("clientes", permissionContext);
   const canCreateClientes = canCreate("clientes", permissionContext);
@@ -57,6 +60,8 @@ export default function Clientes() {
   const [view, setView] = useState<Cliente | null>(null);
   const nav = useNavigate();
   const [params, setParams] = useSearchParams();
+  const [operationStatus, setOperationStatus] = useState<OperationalPersistenceStatus | null>(null);
+  const [lastCloudRefreshAt, setLastCloudRefreshAt] = useState<string | null>(null);
 
 
   useEffect(() => {
@@ -100,6 +105,43 @@ export default function Clientes() {
     return canViewClientes && (candidateIds.includes(ownId) || sameText(vendedorNome, candidateName));
   }, [canViewClientes, isAdmin, isGestor, isVendedor, selectableAgents, teamSellerIds, user?.id, vendedorId, vendedorNome]);
   const canMutateCliente = (cliente: Cliente, action: "edit" | "delete") => (action === "edit" ? (canEditClientes || canManageClientes) : (canDeleteClientes || canManageClientes)) && canSeeCliente(cliente);
+
+  const triggerFastSync = useCallback(() => {
+    void refreshPendingSyncCount();
+    if (typeof navigator !== "undefined" && !navigator.onLine) return;
+    window.setTimeout(() => { void runManualUploadSync(); }, 1_000);
+  }, [refreshPendingSyncCount, runManualUploadSync]);
+
+  const refreshClientesFromCloud = useCallback(async () => {
+    if (!session?.user || normalizeAccessStatus(accessStatus) !== "active" || (typeof navigator !== "undefined" && !navigator.onLine)) return;
+    try {
+      const snapshot = await fetchRemoteSnapshot({ session, accessStatus: "active" });
+      const remoteClientes = normalizeClientesForPersistence((snapshot.clientes ?? []) as Record<string, unknown>[]) as Cliente[];
+      if (remoteClientes.length === 0) {
+        setLastCloudRefreshAt(new Date().toISOString());
+        return;
+      }
+      setClientes((current) => {
+        const byId = new Map(current.map((cliente) => [cliente.id, cliente]));
+        remoteClientes.forEach((cliente) => byId.set(cliente.id, cliente));
+        return Array.from(byId.values());
+      });
+      setLastCloudRefreshAt(new Date().toISOString());
+    } catch (error) {
+      console.warn("Não foi possível atualizar clientes da nuvem:", error);
+    }
+  }, [accessStatus, session, setClientes]);
+
+  useEffect(() => {
+    void refreshClientesFromCloud();
+    const onFocus = () => void refreshClientesFromCloud();
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onFocus);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onFocus);
+    };
+  }, [refreshClientesFromCloud]);
 
   const clientesVisiveis = useMemo(() => clientes.filter(canSeeCliente), [clientes, canSeeCliente]);
   const cidades = useMemo(() => Array.from(new Set(clientesVisiveis.map(c => c.cidade))), [clientesVisiveis]);
@@ -159,7 +201,7 @@ export default function Clientes() {
     return days <= 90 ? "Visita" : "Prospectar";
   };
   
-  const save = () => {
+  const save = async () => {
     if (edit && !canMutateCliente(edit, "edit")) return toast.error("Você não tem permissão para editar este cliente.");
     if (!edit && !canCreateClientes) return toast.error("Você não tem permissão para criar clientes.");
     if (!form.nome) return toast.error("Nome obrigatório.");
@@ -173,18 +215,45 @@ export default function Clientes() {
     const potencialCalculado = calcularPotencialCliente(assignedForm as Cliente, ticketsMedios);
     const base = normalizeClienteForPersistence({ ...assignedForm, potencialTotal: potencialCalculado, potencialCalculado: valorMedioSegmentosAtivos > 0 ? potencialCalculado : assignedForm.potencialTotal, frequenciaRetorno: assignedForm.frequenciaRetorno || `${sugestaoRetornoDias(assignedForm as Cliente, computeClienteStatus(assignedForm as Cliente, lancamentos, negocios, orcamentos), negocios)} dias`, statusAtual: computeClienteStatus({ ...assignedForm, id: edit?.id || "novo" } as Cliente, lancamentos, negocios, orcamentos), createdByUserId: edit?.createdByUserId || user?.id, updatedByUserId: user?.id } as Cliente, ticketsMedios);
     const saved = edit ? { ...base, id: edit.id } as Cliente : { ...base, id: `c${Date.now()}` } as Cliente;
+    const action = edit ? "editar_cliente" : "criar_cliente";
+    const result = await saveOperationalEntity("clientes", saved, "upsert", {
+      session,
+      accessStatus,
+      onStatusChange: setOperationStatus,
+      onRemoteSuccess: async () => {
+        await recordAuditLog({ action: "sincronizar_cliente_imediato", resource: "clientes", entityId: saved.id, entityLabel: saved.nome, afterData: saved, metadata: { operation: "upsert" } });
+      },
+      onRemoteError: async (error) => {
+        await recordAuditLog({ action: "erro_sync_cliente", resource: "clientes", entityId: saved.id, entityLabel: saved.nome, afterData: saved, metadata: { operation: "upsert", error: error.message } });
+      },
+    });
     if (edit) setClientes(prev => prev.map(c => c.id === edit.id ? saved : c));
     else setClientes(prev => [...prev, saved]);
-    void recordAuditLog({ action: edit ? "editar_cliente" : "criar_cliente", resource: "clientes", entityId: saved.id, entityLabel: saved.nome, beforeData: edit, afterData: saved });
+    void recordAuditLog({ action, resource: "clientes", entityId: saved.id, entityLabel: saved.nome, beforeData: edit, afterData: saved });
     if (edit && beforeResponsavelId !== getClienteResponsavelId(saved)) void recordAuditLog({ action: "alterar_responsavel_cliente", resource: "clientes", entityId: saved.id, entityLabel: saved.nome, beforeData: { responsavelUserId: beforeResponsavelId, responsavelNome: getClienteResponsavelNome(edit) }, afterData: { responsavelUserId: getClienteResponsavelId(saved), responsavelNome: getClienteResponsavelNome(saved) }, metadata: { responsavelAnterior: getClienteResponsavelNome(edit), responsavelNovo: getClienteResponsavelNome(saved) } });
-    setOpen(false); toast.success("Cliente salvo.");
+    await refreshPendingSyncCount();
+    if (result.status === "pending-offline") triggerFastSync();
+    setOpen(false); toast.success(result.status === "synced" ? "Cliente salvo e sincronizado." : "Cliente salvo com pendência offline.");
   };
 
-  const deleteCliente = (cliente: Cliente) => {
+  const deleteCliente = async (cliente: Cliente) => {
     if (!canMutateCliente(cliente, "delete")) return toast.error("Você não tem permissão para excluir este cliente.");
+    const result = await saveOperationalEntity("clientes", cliente, "delete", {
+      session,
+      accessStatus,
+      onStatusChange: setOperationStatus,
+      onRemoteSuccess: async () => {
+        await recordAuditLog({ action: "sincronizar_cliente_imediato", resource: "clientes", entityId: cliente.id, entityLabel: cliente.nome, beforeData: cliente, metadata: { operation: "delete" } });
+      },
+      onRemoteError: async (error) => {
+        await recordAuditLog({ action: "erro_sync_cliente", resource: "clientes", entityId: cliente.id, entityLabel: cliente.nome, beforeData: cliente, metadata: { operation: "delete", error: error.message } });
+      },
+    });
     setClientes(prev => prev.filter(x => x.id !== cliente.id));
     void recordAuditLog({ action: "excluir_cliente", resource: "clientes", entityId: cliente.id, entityLabel: cliente.nome, beforeData: cliente });
-    toast.success("Cliente excluído.");
+    await refreshPendingSyncCount();
+    if (result.status === "pending-offline") triggerFastSync();
+    toast.success(result.status === "synced" ? "Cliente excluído e sincronizado." : "Cliente excluído com pendência offline.");
   };
 
   if (!canViewClientes) return <Card className="p-6"><p className="font-medium">Acesso bloqueado</p><p className="text-sm text-muted-foreground">Você não tem permissão para visualizar clientes.</p></Card>;
@@ -207,6 +276,7 @@ export default function Clientes() {
           <Badge variant="outline">Potencial: {fmtBRL(totais.potencial)}</Badge>
         </div>
         <p className="mt-1 text-[11px] text-muted-foreground">Cidades disponíveis: {cidades.join(", ")}</p>
+        <p className="mt-1 text-[11px] text-muted-foreground">Última atualização da nuvem: {lastCloudRefreshAt ? new Date(lastCloudRefreshAt).toLocaleString("pt-BR") : "ainda não consultada"} • Status operacional: {operationStatus === "sending" ? "Enviando..." : operationStatus === "synced" ? "Sincronizado" : operationStatus === "pending-offline" ? "Pendente offline" : "Pronto"}</p>
         <div className="mt-3 grid gap-2 text-xs md:grid-cols-3">
           <Badge variant="secondary">Base: {qualidadeBase.totalClientes} clientes • {fmtNum(qualidadeBase.areaTotal)} ha</Badge>
           <Badge variant="destructive">Sem responsável: {qualidadeBase.semVendedor}</Badge><Badge variant="destructive">Sem rota: {qualidadeBase.semRota}</Badge>
@@ -234,6 +304,13 @@ export default function Clientes() {
             <div className="mt-3 flex justify-end gap-1">
               <Button size="icon" variant="ghost" onClick={() => nav(`/clientes/${c.id}`)}><Eye className="h-3.5 w-3.5" /></Button>
               {canMutateCliente(c, "edit") && <Button size="icon" variant="ghost" onClick={() => openEdit(c)}><Pencil className="h-3.5 w-3.5" /></Button>}
+              {canMutateCliente(c, "delete") && <AlertDialog>
+                <AlertDialogTrigger asChild><Button size="icon" variant="ghost"><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button></AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader><AlertDialogTitle>Excluir cliente?</AlertDialogTitle><AlertDialogDescription>Esta ação não pode ser desfeita.</AlertDialogDescription></AlertDialogHeader>
+                  <AlertDialogFooter><AlertDialogCancel>Cancelar</AlertDialogCancel><AlertDialogAction onClick={() => void deleteCliente(c)}>Excluir</AlertDialogAction></AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>}
             </div>
           </Card>
         ))}
@@ -260,13 +337,13 @@ export default function Clientes() {
                   <div className="flex justify-end gap-1">
                     <Button size="icon" variant="ghost" onClick={() => nav(`/clientes/${c.id}`)}><Eye className="h-3.5 w-3.5" /></Button>
                     {canMutateCliente(c, "edit") && <Button size="icon" variant="ghost" onClick={() => openEdit(c)}><Pencil className="h-3.5 w-3.5" /></Button>}
-                    <AlertDialog>
-                      <AlertDialogTrigger asChild><Button size="icon" variant="ghost" disabled={!canMutateCliente(c, "delete")}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button></AlertDialogTrigger>
+                    {canMutateCliente(c, "delete") && <AlertDialog>
+                      <AlertDialogTrigger asChild><Button size="icon" variant="ghost"><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button></AlertDialogTrigger>
                       <AlertDialogContent>
                         <AlertDialogHeader><AlertDialogTitle>Excluir cliente?</AlertDialogTitle><AlertDialogDescription>Esta ação não pode ser desfeita.</AlertDialogDescription></AlertDialogHeader>
-                        <AlertDialogFooter><AlertDialogCancel>Cancelar</AlertDialogCancel><AlertDialogAction onClick={() => deleteCliente(c)}>Excluir</AlertDialogAction></AlertDialogFooter>
+                        <AlertDialogFooter><AlertDialogCancel>Cancelar</AlertDialogCancel><AlertDialogAction onClick={() => void deleteCliente(c)}>Excluir</AlertDialogAction></AlertDialogFooter>
                       </AlertDialogContent>
-                    </AlertDialog>
+                    </AlertDialog>}
                   </div>
                 </TableCell>
               </TableRow>
@@ -325,7 +402,7 @@ export default function Clientes() {
             <div><Label>Coordenadas</Label><Input value={form.coordenadas || ""} onChange={e => setForm({ ...form, coordenadas: e.target.value })} /></div>
             <div><Label>Link do mapa</Label><Input value={form.linkMapa || ""} onChange={e => setForm({ ...form, linkMapa: e.target.value })} /></div>
           </div>
-          <DialogFooter><Button onClick={save}>Salvar</Button></DialogFooter>
+          <DialogFooter><Button onClick={() => void save()}>Salvar</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 
