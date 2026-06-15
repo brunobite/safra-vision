@@ -112,7 +112,7 @@ export function AuthStoreProvider({ children }: { children: React.ReactNode }) {
         Promise.resolve(
           supabase
             .from("user_profiles")
-            .select("id, status, papel, vendedor_id, vendedor_nome, empresa_id, nome, email")
+            .select("id, user_id, status, papel, vendedor_id, vendedor_nome, empresa_id, nome, email")
             .eq("user_id", currentUser.id)
             .maybeSingle(),
         ),

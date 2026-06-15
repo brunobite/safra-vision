@@ -80,7 +80,7 @@ const defaultFilters: Filters = {
 };
 
 export function AppStoreProvider({ children }: { children: ReactNode }) {
-  const { session, accessStatus, loading: authLoading, role, vendedorNome, vendedorId } = useAuth();
+  const { session, accessStatus, loading: authLoading, role, vendedorNome, vendedorId, user } = useAuth();
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [lancamentos, setLancamentos] = useState<Lancamento[]>([]);
   const [metasEmpresa, setMetasEmpresa] = useState<MetaEmpresa[]>([]);
@@ -640,19 +640,23 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const sellerNameById = useMemo(() => new Map(vendedores.map((vendedor) => [vendedor.id, vendedor.nome])), [vendedores]);
   const linkedSellerName = vendedorId ? sellerNameById.get(vendedorId) || vendedorNome : vendedorNome;
   const selectedFilterSellerName = filters.vendedor ? sellerNameById.get(filters.vendedor) || filters.vendedor : filters.vendedor;
-  const isVisibleSellerData = useCallback((id?: string, name?: string) => {
-    if (isSellerScope) return isOwnSellerDataById(vendedorId, linkedSellerName, id, name);
-    if (isManagerScope) return Boolean(id && hierarchySellerIds.has(id));
+  const currentUserId = user?.id || vendedorId || null;
+  const isVisibleSellerData = useCallback((id?: string, name?: string, createdByUserId?: string) => {
+    if (isSellerScope) {
+      if (currentUserId && (id === currentUserId || createdByUserId === currentUserId)) return true;
+      return isOwnSellerDataById(vendedorId, linkedSellerName, id, name);
+    }
+    if (isManagerScope) return Boolean(id && (hierarchySellerIds.has(id) || id === currentUserId));
     return true;
-  }, [hierarchySellerIds, isManagerScope, isSellerScope, linkedSellerName, vendedorId]);
-  const scopedClientes = useMemo(() => (isSellerScope || isManagerScope) ? clientes.filter((cliente) => isVisibleSellerData(cliente.vendedorId, cliente.vendedor)) : clientes, [clientes, isSellerScope, isManagerScope, isVisibleSellerData]);
+  }, [currentUserId, hierarchySellerIds, isManagerScope, isSellerScope, linkedSellerName, vendedorId]);
+  const scopedClientes = useMemo(() => (isSellerScope || isManagerScope) ? clientes.filter((cliente) => isVisibleSellerData(cliente.responsavelUserId || cliente.vendedorUserId || cliente.vendedorId, cliente.responsavelNome || cliente.vendedorNome || cliente.vendedor, cliente.createdByUserId)) : clientes, [clientes, isSellerScope, isManagerScope, isVisibleSellerData]);
   const scopedClienteIds = useMemo(() => new Set(scopedClientes.map((cliente) => cliente.id)), [scopedClientes]);
-  const scopedLancamentos = useMemo(() => (isSellerScope || isManagerScope) ? lancamentos.filter((lancamento) => scopedClienteIds.has(lancamento.clienteId) || isVisibleSellerData(lancamento.vendedorId, lancamento.vendedor)) : lancamentos, [isSellerScope, isManagerScope, lancamentos, scopedClienteIds, isVisibleSellerData]);
-  const scopedNegocios = useMemo(() => (isSellerScope || isManagerScope) ? negocios.filter((negocio) => scopedClienteIds.has(negocio.clienteId) || isVisibleSellerData(negocio.vendedorId, negocio.vendedor)) : negocios, [isSellerScope, isManagerScope, negocios, scopedClienteIds, isVisibleSellerData]);
-  const scopedOportunidades = useMemo(() => (isSellerScope || isManagerScope) ? oportunidades.filter((oportunidade) => scopedClienteIds.has(oportunidade.clienteId) || isVisibleSellerData(oportunidade.responsavelId || oportunidade.vendedorId, oportunidade.responsavel || oportunidade.vendedor)) : oportunidades, [isSellerScope, isManagerScope, oportunidades, scopedClienteIds, isVisibleSellerData]);
-  const scopedOrcamentos = useMemo(() => (isSellerScope || isManagerScope) ? orcamentos.filter((orcamento) => scopedClienteIds.has(orcamento.clienteId) || isVisibleSellerData(orcamento.responsavelId || orcamento.vendedorId, orcamento.responsavel || orcamento.vendedor)) : orcamentos, [isSellerScope, isManagerScope, orcamentos, scopedClienteIds, isVisibleSellerData]);
-  const scopedProximasAcoes = useMemo(() => (isSellerScope || isManagerScope) ? proximasAcoes.filter((acao) => (acao.clienteId && scopedClienteIds.has(acao.clienteId)) || isVisibleSellerData(acao.responsavelId, acao.responsavel)) : proximasAcoes, [isSellerScope, isManagerScope, proximasAcoes, scopedClienteIds, isVisibleSellerData]);
-  const scopedRelatoriosVisita = useMemo(() => (isSellerScope || isManagerScope) ? relatoriosVisita.filter((relatorio) => scopedClienteIds.has(relatorio.clienteId) || isVisibleSellerData(relatorio.vendedorId, relatorio.vendedor)) : relatoriosVisita, [isSellerScope, isManagerScope, relatoriosVisita, scopedClienteIds, isVisibleSellerData]);
+  const scopedLancamentos = useMemo(() => (isSellerScope || isManagerScope) ? lancamentos.filter((lancamento) => scopedClienteIds.has(lancamento.clienteId) || isVisibleSellerData(lancamento.responsavelUserId || lancamento.vendedorUserId || lancamento.vendedorId, lancamento.responsavelNome || lancamento.vendedorNome || lancamento.vendedor, lancamento.createdByUserId)) : lancamentos, [isSellerScope, isManagerScope, lancamentos, scopedClienteIds, isVisibleSellerData]);
+  const scopedNegocios = useMemo(() => (isSellerScope || isManagerScope) ? negocios.filter((negocio) => scopedClienteIds.has(negocio.clienteId) || isVisibleSellerData(negocio.responsavelUserId || negocio.vendedorUserId || negocio.vendedorId, negocio.responsavelNome || negocio.vendedorNome || negocio.vendedor, negocio.createdByUserId)) : negocios, [isSellerScope, isManagerScope, negocios, scopedClienteIds, isVisibleSellerData]);
+  const scopedOportunidades = useMemo(() => (isSellerScope || isManagerScope) ? oportunidades.filter((oportunidade) => scopedClienteIds.has(oportunidade.clienteId) || isVisibleSellerData(oportunidade.responsavelUserId || oportunidade.vendedorUserId || oportunidade.responsavelId || oportunidade.vendedorId, oportunidade.responsavelNome || oportunidade.vendedorNome || oportunidade.responsavel || oportunidade.vendedor, oportunidade.createdByUserId)) : oportunidades, [isSellerScope, isManagerScope, oportunidades, scopedClienteIds, isVisibleSellerData]);
+  const scopedOrcamentos = useMemo(() => (isSellerScope || isManagerScope) ? orcamentos.filter((orcamento) => scopedClienteIds.has(orcamento.clienteId) || isVisibleSellerData(orcamento.responsavelUserId || orcamento.vendedorUserId || orcamento.responsavelId || orcamento.vendedorId, orcamento.responsavelNome || orcamento.vendedorNome || orcamento.responsavel || orcamento.vendedor, orcamento.createdByUserId)) : orcamentos, [isSellerScope, isManagerScope, orcamentos, scopedClienteIds, isVisibleSellerData]);
+  const scopedProximasAcoes = useMemo(() => (isSellerScope || isManagerScope) ? proximasAcoes.filter((acao) => (acao.clienteId && scopedClienteIds.has(acao.clienteId)) || isVisibleSellerData(acao.responsavelUserId || acao.vendedorUserId || acao.responsavelId, acao.responsavelNome || acao.vendedorNome || acao.responsavel, acao.createdByUserId)) : proximasAcoes, [isSellerScope, isManagerScope, proximasAcoes, scopedClienteIds, isVisibleSellerData]);
+  const scopedRelatoriosVisita = useMemo(() => (isSellerScope || isManagerScope) ? relatoriosVisita.filter((relatorio) => scopedClienteIds.has(relatorio.clienteId) || isVisibleSellerData(relatorio.responsavelUserId || relatorio.vendedorUserId || relatorio.vendedorId, relatorio.responsavelNome || relatorio.vendedorNome || relatorio.vendedor, relatorio.createdByUserId)) : relatoriosVisita, [isSellerScope, isManagerScope, relatoriosVisita, scopedClienteIds, isVisibleSellerData]);
 
   const cMap = useMemo(() => new Map(scopedClientes.map(c => [c.id, c])), [scopedClientes]);
   const pMap = useMemo(() => new Map(produtos.map(p => [p.id, p])), [produtos]);

@@ -117,6 +117,8 @@ export interface Cliente {
   responsavelNome?: string;
   vendedorUserId?: string;
   vendedorNome?: string;
+  createdByUserId?: string;
+  updatedByUserId?: string;
   produtosInteresse?: string[];
   documento?: string;
   inscricaoEstadual?: string;
