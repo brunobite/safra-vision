@@ -15,11 +15,17 @@ import { Cliente, ABC } from "@/types";
 import { fmtBRL, fmtNum } from "@/utils/calculations";
 import { computeClienteStatus, formatDateBR, isClienteAtrasado, sugestaoRetornoDias } from "@/lib/clientesUtils";
 import { normalizeClienteForPersistence } from "@/lib/clientNormalization";
+import { useAuth } from "@/store/AuthStore";
+import { canCreate, canDelete, canEdit, canManage, canView, isAdminRole, normalizeRole } from "@/lib/permissions";
+import { supabase } from "@/lib/supabase";
+import { recordAuditLog } from "@/lib/audit";
 import { calcularPotencialCliente, calcularValorMedioHaSegmentosAtivos } from "@/utils/businessRules";
 import { Plus, Pencil, Trash2, Eye, Search, Filter, X, MapPin } from "lucide-react";
 import { toast } from "sonner";
 
 const ALL = "__all__";
+type CommercialAgent = { user_id: string; nome: string; papel: "vendedor" | "gestor" | "administrador" | "visualizador"; status: string; superior_user_id?: string | null };
+const sameText = (a?: string | null, b?: string | null) => Boolean(a && b && a.trim().toLowerCase() === b.trim().toLowerCase());
 const empty: Omit<Cliente, "id"> = {
   nome: "", abc: "A", prioridade: "P2", rota: "Rota Norte", cidade: "", localidade: "", culturas: "",
   areaHa: 0, potencialTotal: 0, statusAtual: "Prospectar", frequenciaRetorno: "30 dias", retorno: "30 dias", vendedor: "", potencialCalculado: 0, inativoManual: false,
@@ -28,7 +34,19 @@ const empty: Omit<Cliente, "id"> = {
 };
 
 export default function Clientes() {
-  const { clientes, setClientes, lancamentos, negocios, ticketsMedios, orcamentos, proximasAcoes, vendedores } = useAppStore();
+  const { clientes, setClientes, lancamentos, negocios, ticketsMedios, orcamentos, proximasAcoes } = useAppStore();
+  const { role, accessStatus, user, vendedorNome, vendedorId, permissions } = useAuth();
+  const permissionContext = { role, accessStatus, email: user?.email, vendedorNome, vendedorId, permissions };
+  const canViewClientes = canView("clientes", permissionContext);
+  const canCreateClientes = canCreate("clientes", permissionContext);
+  const canEditClientes = canEdit("clientes", permissionContext);
+  const canDeleteClientes = canDelete("clientes", permissionContext);
+  const canManageClientes = canManage("clientes", permissionContext);
+  const normalizedRole = normalizeRole(role);
+  const isAdmin = isAdminRole(role);
+  const isGestor = normalizedRole === "gestor";
+  const isVendedor = normalizedRole === "vendedor";
+  const [commercialAgents, setCommercialAgents] = useState<CommercialAgent[]>([]);
   const [busca, setBusca] = useState("");
   const [fAbc, setFAbc] = useState(""); const [fPri, setFPri] = useState(""); const [fRota, setFRota] = useState(""); const [fStatus, setFStatus] = useState(""); const [fCidade, setFCidade] = useState(""); const [fAtrasado, setFAtrasado] = useState("");
   const [fVendedor, setFVendedor] = useState(""); const [fGeo, setFGeo] = useState(""); const [fProximaAcao, setFProximaAcao] = useState(""); const [fIncompletos, setFIncompletos] = useState("");
@@ -40,8 +58,52 @@ export default function Clientes() {
   const nav = useNavigate();
   const [params, setParams] = useSearchParams();
 
-  const cidades = useMemo(() => Array.from(new Set(clientes.map(c => c.cidade))), [clientes]);
-  const statuses = useMemo(() => Array.from(new Set(clientes.map(c => c.statusAtual))), [clientes]);
+
+  useEffect(() => {
+    if (!supabase) {
+      const localName = vendedorNome || user?.user_metadata?.nome || user?.email || "Administrador local";
+      setCommercialAgents([{ user_id: user?.id || vendedorId || "local-admin", nome: localName, papel: normalizedRole as CommercialAgent["papel"], status: "ativo" }]);
+      return;
+    }
+    if (!user) { setCommercialAgents([]); return; }
+    void (async () => {
+      const { data, error } = await supabase.from("user_profiles").select("user_id,nome,email,papel,status,superior_user_id").eq("status", "ativo").in("papel", ["vendedor", "gestor", "administrador"]);
+      if (error) toast.error(error.message);
+      setCommercialAgents((data ?? []).filter((profile) => profile.user_id).map((profile) => ({ user_id: profile.user_id!, nome: profile.nome || profile.email || profile.user_id!, papel: normalizeRole(profile.papel) as CommercialAgent["papel"], status: profile.status || "ativo", superior_user_id: profile.superior_user_id })));
+    })();
+  }, [normalizedRole, user, vendedorId, vendedorNome]);
+
+  const teamSellerIds = useMemo(() => new Set(commercialAgents.filter((agent) => agent.papel === "vendedor" && agent.superior_user_id === user?.id).map((agent) => agent.user_id)), [commercialAgents, user?.id]);
+  const selectableAgents = useMemo(() => {
+    if (isAdmin) return commercialAgents;
+    if (isGestor) return commercialAgents.filter((agent) => agent.user_id === user?.id || teamSellerIds.has(agent.user_id));
+    return commercialAgents.filter((agent) => agent.user_id === user?.id);
+  }, [commercialAgents, isAdmin, isGestor, teamSellerIds, user?.id]);
+  const currentUserAgent = (): CommercialAgent => ({ user_id: user?.id || vendedorId || "", nome: vendedorNome || user?.user_metadata?.nome || user?.email || "", papel: normalizedRole as CommercialAgent["papel"], status: "ativo" });
+  const applyAgentToCliente = (cliente: Omit<Cliente, "id">, agent: CommercialAgent): Omit<Cliente, "id"> => ({ ...cliente, responsavelUserId: agent.user_id, responsavelNome: agent.nome, vendedorUserId: agent.user_id, vendedorNome: agent.nome, vendedor: agent.nome });
+  const getClienteResponsavelId = (cliente: Cliente | Omit<Cliente, "id">) => cliente.responsavelUserId || cliente.vendedorUserId || cliente.vendedorId;
+  const getClienteResponsavelNome = (cliente: Cliente | Omit<Cliente, "id">) => cliente.responsavelNome || cliente.vendedorNome || cliente.vendedor;
+  const canSeeCliente = useCallback((cliente: Cliente) => {
+    if (isAdmin) return true;
+    const ownId = user?.id || vendedorId || undefined;
+    const candidateIds = [cliente.responsavelUserId, cliente.vendedorUserId, cliente.createdByUserId].filter(Boolean);
+    const candidateName = getClienteResponsavelNome(cliente);
+    if (isGestor) {
+      if (candidateIds.some((id) => id === ownId || teamSellerIds.has(id!))) return true;
+      if (!cliente.responsavelUserId && !cliente.vendedorUserId) return selectableAgents.some((agent) => sameText(agent.nome, candidateName));
+      return false;
+    }
+    if (isVendedor) {
+      if (candidateIds.some((id) => id === ownId)) return true;
+      return sameText(vendedorNome, candidateName);
+    }
+    return canViewClientes && (candidateIds.includes(ownId) || sameText(vendedorNome, candidateName));
+  }, [canViewClientes, isAdmin, isGestor, isVendedor, selectableAgents, teamSellerIds, user?.id, vendedorId, vendedorNome]);
+  const canMutateCliente = (cliente: Cliente, action: "edit" | "delete") => (action === "edit" ? (canEditClientes || canManageClientes) : (canDeleteClientes || canManageClientes)) && canSeeCliente(cliente);
+
+  const clientesVisiveis = useMemo(() => clientes.filter(canSeeCliente), [clientes, canSeeCliente]);
+  const cidades = useMemo(() => Array.from(new Set(clientesVisiveis.map(c => c.cidade))), [clientesVisiveis]);
+  const statuses = useMemo(() => Array.from(new Set(clientesVisiveis.map(c => c.statusAtual))), [clientesVisiveis]);
 
   const visitasCliente = (id: string) => lancamentos.filter(l => l.clienteId === id && l.tipo === "Visita");
   const totalVisitas = (id: string) => visitasCliente(id).length;
@@ -49,18 +111,18 @@ export default function Clientes() {
   const proximaAcaoPendente = (id: string) => proximasAcoes.find(a => a.clienteId === id && a.status === "Pendente");
   const totalProximasAcoesAbertas = (id: string) => proximasAcoes.filter(a => a.clienteId === id && a.status === "Pendente").length;
   const atrasado = useCallback((c: Cliente) => isClienteAtrasado(c, proximasAcoes), [proximasAcoes]);
-  const lista = useMemo(() => clientes.filter(c =>
+  const lista = useMemo(() => clientesVisiveis.filter(c =>
     (!busca || c.nome.toLowerCase().includes(busca.toLowerCase())) &&
     (!fAbc || c.abc === fAbc) &&
     (!fPri || c.prioridade === fPri) &&
     (!fRota || c.rota === fRota) && (!fStatus || c.statusAtual === fStatus) &&
     (!fCidade || c.cidade === fCidade) &&
     (!fAtrasado || (fAtrasado === "sim" ? atrasado(c) : !atrasado(c))) &&
-    (!fVendedor || (c.vendedor || "") === fVendedor) &&
+    (!fVendedor || getClienteResponsavelId(c) === fVendedor || sameText(getClienteResponsavelNome(c), fVendedor)) &&
     (!fGeo || (fGeo === "com" ? (!!c.latitude && !!c.longitude) : (!c.latitude || !c.longitude))) &&
     (!fProximaAcao || (fProximaAcao === "com" ? !!proximaAcaoPendente(c.id) : !proximaAcaoPendente(c.id))) &&
-    (!fIncompletos || (fIncompletos === "sim" ? (!c.vendedor || !c.rota || !c.telefone || !c.documento || !c.latitude || !c.longitude || !c.abc || !c.prioridade || !proximaAcaoPendente(c.id)) : !!c.vendedor && !!c.rota && !!c.telefone && !!c.documento && !!c.latitude && !!c.longitude && !!c.abc && !!c.prioridade && !!proximaAcaoPendente(c.id)))
-  ), [clientes, busca, fAbc, fPri, fRota, fStatus, fCidade, fAtrasado, fVendedor, fGeo, fProximaAcao, fIncompletos, atrasado, proximaAcaoPendente]);
+    (!fIncompletos || (fIncompletos === "sim" ? (!getClienteResponsavelNome(c) || !c.rota || !c.telefone || !c.documento || !c.latitude || !c.longitude || !c.abc || !c.prioridade || !proximaAcaoPendente(c.id)) : !!getClienteResponsavelNome(c) && !!c.rota && !!c.telefone && !!c.documento && !!c.latitude && !!c.longitude && !!c.abc && !!c.prioridade && !!proximaAcaoPendente(c.id)))
+  ), [clientesVisiveis, busca, fAbc, fPri, fRota, fStatus, fCidade, fAtrasado, fVendedor, fGeo, fProximaAcao, fIncompletos, atrasado, proximaAcaoPendente]);
 
   const totais = useMemo(() => ({
     potencial: lista.reduce((s, c) => s + c.potencialTotal, 0),
@@ -68,24 +130,24 @@ export default function Clientes() {
   }), [lista]);
   const valorMedioSegmentosAtivos = useMemo(() => calcularValorMedioHaSegmentosAtivos(ticketsMedios), [ticketsMedios]);
   const qualidadeBase = useMemo(() => ({
-    totalClientes: clientes.length,
-    areaTotal: clientes.reduce((s, c) => s + (c.areaHa || 0), 0),
-    semVendedor: clientes.filter((c) => !c.vendedor).length,
-    semRota: clientes.filter((c) => !c.rota).length,
-    semTelefone: clientes.filter((c) => !c.telefone).length,
-    semDocumento: clientes.filter((c) => !c.documento).length,
-    semGeo: clientes.filter((c) => !c.latitude || !c.longitude).length,
-    semPrioridadeAbc: clientes.filter((c) => !c.prioridade || !c.abc).length,
-    semProximaAcao: clientes.filter((c) => !proximaAcaoPendente(c.id)).length,
-    porVendedor: Object.entries(clientes.reduce((m, c) => { const k = c.vendedor || "Sem vendedor"; m[k] = (m[k] || 0) + 1; return m; }, {} as Record<string, number>)),
-    porRota: Object.entries(clientes.reduce((m, c) => { const k = c.rota || "Sem rota"; m[k] = (m[k] || 0) + 1; return m; }, {} as Record<string, number>)),
-    porCidade: Object.entries(clientes.reduce((m, c) => { const k = c.cidade || "Sem cidade"; m[k] = (m[k] || 0) + 1; return m; }, {} as Record<string, number>)),
-  }), [clientes, proximaAcaoPendente]);
+    totalClientes: clientesVisiveis.length,
+    areaTotal: clientesVisiveis.reduce((s, c) => s + (c.areaHa || 0), 0),
+    semVendedor: clientesVisiveis.filter((c) => !getClienteResponsavelNome(c)).length,
+    semRota: clientesVisiveis.filter((c) => !c.rota).length,
+    semTelefone: clientesVisiveis.filter((c) => !c.telefone).length,
+    semDocumento: clientesVisiveis.filter((c) => !c.documento).length,
+    semGeo: clientesVisiveis.filter((c) => !c.latitude || !c.longitude).length,
+    semPrioridadeAbc: clientesVisiveis.filter((c) => !c.prioridade || !c.abc).length,
+    semProximaAcao: clientesVisiveis.filter((c) => !proximaAcaoPendente(c.id)).length,
+    porVendedor: Object.entries(clientesVisiveis.reduce((m, c) => { const k = getClienteResponsavelNome(c) || "Sem responsável"; m[k] = (m[k] || 0) + 1; return m; }, {} as Record<string, number>)),
+    porRota: Object.entries(clientesVisiveis.reduce((m, c) => { const k = c.rota || "Sem rota"; m[k] = (m[k] || 0) + 1; return m; }, {} as Record<string, number>)),
+    porCidade: Object.entries(clientesVisiveis.reduce((m, c) => { const k = c.cidade || "Sem cidade"; m[k] = (m[k] || 0) + 1; return m; }, {} as Record<string, number>)),
+  }), [clientesVisiveis, proximaAcaoPendente]);
 
 
-  const openNew = () => { setEdit(null); setForm(empty); setOpen(true); };
+  const openNew = () => { if (!canCreateClientes) return toast.error("Você não tem permissão para criar clientes."); setEdit(null); setForm(isVendedor ? applyAgentToCliente(empty, currentUserAgent()) : empty); setOpen(true); };
   useEffect(() => { if (params.get("new")) { openNew(); setParams({}); } }, [params, setParams]);
-  const openEdit = (c: Cliente) => { setEdit(c); const { id, ...rest } = c; void id; setForm(rest); setOpen(true); };
+  const openEdit = (c: Cliente) => { if (!canMutateCliente(c, "edit")) return toast.error("Você não tem permissão para editar este cliente."); setEdit(c); const { id, ...rest } = c; void id; setForm(rest); setOpen(true); };
   const calcStatus = (clienteId: string, inativoManual?: boolean) => {
     if (inativoManual) return "Inativo";
     const now = new Date();
@@ -98,13 +160,34 @@ export default function Clientes() {
   };
   
   const save = () => {
+    if (edit && !canMutateCliente(edit, "edit")) return toast.error("Você não tem permissão para editar este cliente.");
+    if (!edit && !canCreateClientes) return toast.error("Você não tem permissão para criar clientes.");
     if (!form.nome) return toast.error("Nome obrigatório.");
-    const potencialCalculado = calcularPotencialCliente(form as Cliente, ticketsMedios);
-    const base = normalizeClienteForPersistence({ ...form, potencialTotal: potencialCalculado, potencialCalculado: valorMedioSegmentosAtivos > 0 ? potencialCalculado : form.potencialTotal, frequenciaRetorno: form.frequenciaRetorno || `${sugestaoRetornoDias(form as Cliente, computeClienteStatus(form as Cliente, lancamentos, negocios, orcamentos), negocios)} dias`, statusAtual: computeClienteStatus({ ...form, id: edit?.id || "novo" } as Cliente, lancamentos, negocios, orcamentos) }, ticketsMedios);
-    if (edit) setClientes(prev => prev.map(c => c.id === edit.id ? { ...base, id: edit.id } : c));
-    else setClientes(prev => [...prev, { ...base, id: `c${Date.now()}` }]);
+    let assignedForm = form;
+    if (isVendedor) assignedForm = applyAgentToCliente(form, currentUserAgent());
+    const selectedAgentId = getClienteResponsavelId(assignedForm);
+    const selectedAgent = selectableAgents.find((agent) => agent.user_id === selectedAgentId) || (isVendedor ? currentUserAgent() : undefined);
+    if (!selectedAgent) return toast.error("Selecione um responsável comercial válido.");
+    assignedForm = applyAgentToCliente(assignedForm, selectedAgent);
+    const beforeResponsavelId = edit ? getClienteResponsavelId(edit) : undefined;
+    const potencialCalculado = calcularPotencialCliente(assignedForm as Cliente, ticketsMedios);
+    const base = normalizeClienteForPersistence({ ...assignedForm, potencialTotal: potencialCalculado, potencialCalculado: valorMedioSegmentosAtivos > 0 ? potencialCalculado : assignedForm.potencialTotal, frequenciaRetorno: assignedForm.frequenciaRetorno || `${sugestaoRetornoDias(assignedForm as Cliente, computeClienteStatus(assignedForm as Cliente, lancamentos, negocios, orcamentos), negocios)} dias`, statusAtual: computeClienteStatus({ ...assignedForm, id: edit?.id || "novo" } as Cliente, lancamentos, negocios, orcamentos), createdByUserId: edit?.createdByUserId || user?.id, updatedByUserId: user?.id } as Cliente, ticketsMedios);
+    const saved = edit ? { ...base, id: edit.id } as Cliente : { ...base, id: `c${Date.now()}` } as Cliente;
+    if (edit) setClientes(prev => prev.map(c => c.id === edit.id ? saved : c));
+    else setClientes(prev => [...prev, saved]);
+    void recordAuditLog({ action: edit ? "editar_cliente" : "criar_cliente", resource: "clientes", entityId: saved.id, entityLabel: saved.nome, beforeData: edit, afterData: saved });
+    if (edit && beforeResponsavelId !== getClienteResponsavelId(saved)) void recordAuditLog({ action: "alterar_responsavel_cliente", resource: "clientes", entityId: saved.id, entityLabel: saved.nome, beforeData: { responsavelUserId: beforeResponsavelId, responsavelNome: getClienteResponsavelNome(edit) }, afterData: { responsavelUserId: getClienteResponsavelId(saved), responsavelNome: getClienteResponsavelNome(saved) }, metadata: { responsavelAnterior: getClienteResponsavelNome(edit), responsavelNovo: getClienteResponsavelNome(saved) } });
     setOpen(false); toast.success("Cliente salvo.");
   };
+
+  const deleteCliente = (cliente: Cliente) => {
+    if (!canMutateCliente(cliente, "delete")) return toast.error("Você não tem permissão para excluir este cliente.");
+    setClientes(prev => prev.filter(x => x.id !== cliente.id));
+    void recordAuditLog({ action: "excluir_cliente", resource: "clientes", entityId: cliente.id, entityLabel: cliente.nome, beforeData: cliente });
+    toast.success("Cliente excluído.");
+  };
+
+  if (!canViewClientes) return <Card className="p-6"><p className="font-medium">Acesso bloqueado</p><p className="text-sm text-muted-foreground">Você não tem permissão para visualizar clientes.</p></Card>;
 
   return (
     <div className="space-y-4">
@@ -116,7 +199,7 @@ export default function Clientes() {
             <Input className="pl-7" placeholder="Nome do cliente..." value={busca} onChange={e => setBusca(e.target.value)} />
           </div>
           <Button variant="outline" onClick={() => setFiltrosOpen(true)}><Filter className="mr-2 h-4 w-4" />Filtros</Button>
-          <Button onClick={openNew}><Plus className="mr-1 h-4 w-4" /> Novo cliente</Button>
+          {canCreateClientes && <Button onClick={openNew}><Plus className="mr-1 h-4 w-4" /> Novo cliente</Button>}
         </div>
         <div className="mt-3 flex gap-4 text-sm">
           <Badge variant="outline">Clientes: {lista.length}</Badge>
@@ -126,13 +209,13 @@ export default function Clientes() {
         <p className="mt-1 text-[11px] text-muted-foreground">Cidades disponíveis: {cidades.join(", ")}</p>
         <div className="mt-3 grid gap-2 text-xs md:grid-cols-3">
           <Badge variant="secondary">Base: {qualidadeBase.totalClientes} clientes • {fmtNum(qualidadeBase.areaTotal)} ha</Badge>
-          <Badge variant="destructive">Sem vendedor: {qualidadeBase.semVendedor}</Badge><Badge variant="destructive">Sem rota: {qualidadeBase.semRota}</Badge>
+          <Badge variant="destructive">Sem responsável: {qualidadeBase.semVendedor}</Badge><Badge variant="destructive">Sem rota: {qualidadeBase.semRota}</Badge>
           <Badge variant="destructive">Sem telefone: {qualidadeBase.semTelefone}</Badge><Badge variant="destructive">Sem CPF/CNPJ: {qualidadeBase.semDocumento}</Badge>
           <Badge variant="destructive">Sem geo: {qualidadeBase.semGeo}</Badge><Badge variant="destructive">Sem prioridade/ABC: {qualidadeBase.semPrioridadeAbc}</Badge>
           <Badge variant="destructive">Sem próxima ação: {qualidadeBase.semProximaAcao}</Badge>
         </div>
         <div className="mt-2 grid gap-3 text-xs text-muted-foreground md:grid-cols-3">
-          <div><b className="text-foreground">Clientes por vendedor:</b> {qualidadeBase.porVendedor.map(([k,v]) => `${k} (${v})`).join(", ")}</div>
+          <div><b className="text-foreground">Clientes por responsável:</b> {qualidadeBase.porVendedor.map(([k,v]) => `${k} (${v})`).join(", ")}</div>
           <div><b className="text-foreground">Clientes por rota:</b> {qualidadeBase.porRota.map(([k,v]) => `${k} (${v})`).join(", ")}</div>
           <div><b className="text-foreground">Clientes por cidade:</b> {qualidadeBase.porCidade.map(([k,v]) => `${k} (${v})`).join(", ")}</div>
         </div>
@@ -143,14 +226,14 @@ export default function Clientes() {
           <Card key={c.id} className="p-3">
             <div className="mb-2 flex items-start justify-between gap-2"><div><p className="font-semibold">{c.nome}</p><p className="text-xs text-muted-foreground">{c.localidade || c.endereco || "Localidade não informada"}</p></div><Badge variant="outline">{c.statusAtual}</Badge></div>
             <div className="grid grid-cols-2 gap-1 text-xs">
-              <span><b>Cidade:</b> {c.cidade || "—"}</span><span><b>Vendedor:</b> {c.vendedor || "—"}</span>
+              <span><b>Cidade:</b> {c.cidade || "—"}</span><span><b>Responsável:</b> {getClienteResponsavelNome(c) || "—"}</span>
               <span><b>Rota:</b> {c.rota || "—"}</span><span><b>ABC/Pri:</b> {c.abc}/{c.prioridade}</span>
               <span><b>Área:</b> {fmtNum(c.areaHa)} ha</span><span><b>Próx. ação:</b> {proximaAcaoPendente(c.id) ? "Sim" : "Não"}</span>
               <span className="col-span-2"><b>Geo:</b> {c.latitude && c.longitude ? <span className="inline-flex items-center gap-1"><MapPin className="h-3 w-3" />Com geolocalização</span> : "Sem geolocalização"}</span>
             </div>
             <div className="mt-3 flex justify-end gap-1">
               <Button size="icon" variant="ghost" onClick={() => nav(`/clientes/${c.id}`)}><Eye className="h-3.5 w-3.5" /></Button>
-              <Button size="icon" variant="ghost" onClick={() => openEdit(c)}><Pencil className="h-3.5 w-3.5" /></Button>
+              {canMutateCliente(c, "edit") && <Button size="icon" variant="ghost" onClick={() => openEdit(c)}><Pencil className="h-3.5 w-3.5" /></Button>}
             </div>
           </Card>
         ))}
@@ -176,12 +259,12 @@ export default function Clientes() {
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-1">
                     <Button size="icon" variant="ghost" onClick={() => nav(`/clientes/${c.id}`)}><Eye className="h-3.5 w-3.5" /></Button>
-                    <Button size="icon" variant="ghost" onClick={() => openEdit(c)}><Pencil className="h-3.5 w-3.5" /></Button>
+                    {canMutateCliente(c, "edit") && <Button size="icon" variant="ghost" onClick={() => openEdit(c)}><Pencil className="h-3.5 w-3.5" /></Button>}
                     <AlertDialog>
-                      <AlertDialogTrigger asChild><Button size="icon" variant="ghost"><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button></AlertDialogTrigger>
+                      <AlertDialogTrigger asChild><Button size="icon" variant="ghost" disabled={!canMutateCliente(c, "delete")}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button></AlertDialogTrigger>
                       <AlertDialogContent>
                         <AlertDialogHeader><AlertDialogTitle>Excluir cliente?</AlertDialogTitle><AlertDialogDescription>Esta ação não pode ser desfeita.</AlertDialogDescription></AlertDialogHeader>
-                        <AlertDialogFooter><AlertDialogCancel>Cancelar</AlertDialogCancel><AlertDialogAction onClick={() => { setClientes(prev => prev.filter(x => x.id !== c.id)); toast.success("Cliente excluído."); }}>Excluir</AlertDialogAction></AlertDialogFooter>
+                        <AlertDialogFooter><AlertDialogCancel>Cancelar</AlertDialogCancel><AlertDialogAction onClick={() => deleteCliente(c)}>Excluir</AlertDialogAction></AlertDialogFooter>
                       </AlertDialogContent>
                     </AlertDialog>
                   </div>
@@ -201,7 +284,7 @@ export default function Clientes() {
             <div><Label className="text-xs">Rota</Label><Select value={fRota || ALL} onValueChange={v => setFRota(v === ALL ? "" : v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todas</SelectItem>{ROTAS_NOMES.map(v => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent></Select></div>
             <div><Label className="text-xs">Cidade</Label><Select value={fCidade || ALL} onValueChange={v => setFCidade(v === ALL ? "" : v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todas</SelectItem>{cidades.map(v => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent></Select></div>
             <div><Label className="text-xs">Status</Label><Select value={fStatus || ALL} onValueChange={v => setFStatus(v === ALL ? "" : v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todos</SelectItem>{statuses.map(v => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent></Select></div>
-            <div><Label className="text-xs">Vendedor</Label><Select value={fVendedor || ALL} onValueChange={v => setFVendedor(v === ALL ? "" : v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todos</SelectItem>{vendedores.filter(v=>v.ativo).map(v => <SelectItem key={v.id} value={v.nome}>{v.nome}</SelectItem>)}</SelectContent></Select></div>
+            {!isVendedor && <div><Label className="text-xs">Responsável comercial</Label><Select value={fVendedor || ALL} onValueChange={v => setFVendedor(v === ALL ? "" : v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todos</SelectItem>{selectableAgents.map(agent => <SelectItem key={agent.user_id} value={agent.user_id}>{agent.nome}</SelectItem>)}</SelectContent></Select></div>}
             <div><Label className="text-xs">Com/Sem geolocalização</Label><Select value={fGeo || ALL} onValueChange={v => setFGeo(v === ALL ? "" : v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todos</SelectItem><SelectItem value="com">Com geo</SelectItem><SelectItem value="sem">Sem geo</SelectItem></SelectContent></Select></div>
             <div><Label className="text-xs">Com/Sem próxima ação</Label><Select value={fProximaAcao || ALL} onValueChange={v => setFProximaAcao(v === ALL ? "" : v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todos</SelectItem><SelectItem value="com">Com ação</SelectItem><SelectItem value="sem">Sem ação</SelectItem></SelectContent></Select></div>
             <div><Label className="text-xs">Dados incompletos</Label><Select value={fIncompletos || ALL} onValueChange={v => setFIncompletos(v === ALL ? "" : v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todos</SelectItem><SelectItem value="sim">Incompletos</SelectItem><SelectItem value="nao">Completos</SelectItem></SelectContent></Select></div>
@@ -222,7 +305,7 @@ export default function Clientes() {
             <div><Label>ABC</Label><Select value={form.abc} onValueChange={(v: ABC) => setForm({ ...form, abc: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{["A","B","C"].map(v => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent></Select></div>
             <div><Label>Prioridade</Label><Select value={form.prioridade} onValueChange={v => setForm({ ...form, prioridade: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{["P1","P2","P3"].map(v => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent></Select></div>
             <div><Label>Rota</Label><Select value={form.rota} onValueChange={v => setForm({ ...form, rota: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{ROTAS_NOMES.map(v => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent></Select></div>
-            <div><Label>Vendedor</Label><Select value={form.vendedor || ALL} onValueChange={v => setForm({ ...form, vendedor: v === ALL ? "" : v })}><SelectTrigger><SelectValue placeholder="Não definido" /></SelectTrigger><SelectContent><SelectItem value={ALL}>Não definido</SelectItem>{vendedores.filter(v=>v.ativo).map(v => <SelectItem key={v.id} value={v.nome}>{v.nome}</SelectItem>)}</SelectContent></Select></div>
+            {isVendedor ? <div><Label>Responsável comercial</Label><p className="rounded-md border px-3 py-2 text-sm">Responsável comercial: {getClienteResponsavelNome(form) || currentUserAgent().nome || "usuário atual"}</p></div> : <div><Label>Responsável comercial</Label><Select value={getClienteResponsavelId(form) || ALL} onValueChange={v => { const agent = selectableAgents.find(a => a.user_id === v); setForm(agent ? applyAgentToCliente(form, agent) : { ...form, responsavelUserId: undefined, responsavelNome: undefined, vendedorUserId: undefined, vendedorNome: undefined, vendedor: "" }); }} disabled={isVendedor}><SelectTrigger><SelectValue placeholder="Selecione o responsável" /></SelectTrigger><SelectContent><SelectItem value={ALL}>Não definido</SelectItem>{selectableAgents.map(agent => <SelectItem key={agent.user_id} value={agent.user_id}>{agent.nome} · {agent.papel}</SelectItem>)}</SelectContent></Select></div>}
             <div><Label>Cidade</Label><Input value={form.cidade} onChange={e => setForm({ ...form, cidade: e.target.value })} /></div>
             <div><Label>Área (ha)</Label><Input type="number" step="0.01" value={form.areaHa} onChange={e => setForm({ ...form, areaHa: Number(e.target.value || 0) })} /></div>
             <div><Label>Potencial total</Label><Input type="number" step="0.01" value={valorMedioSegmentosAtivos > 0 ? form.areaHa * valorMedioSegmentosAtivos : 0} disabled /></div>
@@ -259,7 +342,7 @@ export default function Clientes() {
               <div><span className="text-muted-foreground">IE:</span> {view.inscricaoEstadual || "—"}</div>
               <div><span className="text-muted-foreground">Telefone:</span> {view.telefone || "—"}</div>
               <div><span className="text-muted-foreground">Endereço:</span> {view.endereco || "—"}</div>
-              <div><span className="text-muted-foreground">Vendedor:</span> {view.vendedor || "—"}</div>
+              <div><span className="text-muted-foreground">Responsável comercial:</span> {getClienteResponsavelNome(view) || "—"}</div>
               <div><span className="text-muted-foreground">Localização:</span> {view.latitude && view.longitude ? `${view.latitude}, ${view.longitude}` : (view.coordenadas || "—")}</div>
                             <div><span className="text-muted-foreground">Área:</span> {fmtNum(view.areaHa)} ha</div>
               <div><span className="text-muted-foreground">Potencial:</span> {fmtBRL(view.potencialTotal)}</div>
