@@ -24,6 +24,7 @@ export type AutoSyncContext = {
   session: Session | null;
   accessStatus: AutoSyncAccessStatus;
   firstUploadConfirmed: boolean;
+  accountOwnerUserId?: string | null;
 };
 
 const AUTO_SYNC_COOLDOWN_MS = 30_000;
@@ -73,7 +74,7 @@ export async function runControlledUploadSync(
   lastAutoSyncAttemptAt = now;
 
   try {
-    const { summary, meta } = await syncPendingQueue({ session: context.session, accessStatus: "active" });
+    const { summary, meta } = await syncPendingQueue({ session: context.session, accessStatus: "active", accountOwnerUserId: context.accountOwnerUserId });
     return { ok: true, skipped: false, summary, meta };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Erro desconhecido ao sincronizar pendências.";

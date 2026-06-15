@@ -14,9 +14,10 @@ import { normalizeAccessStatus } from "@/lib/accessStatus";
 
 type AccessStatus = "pending" | "active" | "blocked" | "inactive";
 
-type SyncContext = {
+export type SyncContext = {
   session: Session | null;
   accessStatus: AccessStatus;
+  accountOwnerUserId?: string | null;
 };
 
 export type SyncableStore =
@@ -175,12 +176,18 @@ const isSyncableStore = (store: string): store is SyncableStore => store in LOCA
 
 const nowIso = () => new Date().toISOString();
 
+function getAccountOwnerUserId(context: SyncContext) {
+  return context.accountOwnerUserId || context.session?.user.id || null;
+}
+
 function ensureCanSync(context: SyncContext) {
   if (!isSupabaseConfigured || !supabase) throw new Error("Supabase não configurado.");
   if (!context.session?.user) throw new Error("Usuário não autenticado.");
   if (normalizeAccessStatus(context.accessStatus) !== "active") throw new Error("Usuário ainda não aprovado para sincronização.");
   if (typeof navigator !== "undefined" && !navigator.onLine) throw new Error("Sem conexão com a internet.");
-  return { client: supabase, userId: context.session.user.id };
+  const accountOwnerUserId = getAccountOwnerUserId(context);
+  if (!accountOwnerUserId) throw new Error("Conta comercial não identificada para sincronização.");
+  return { client: supabase, userId: context.session.user.id, accountOwnerUserId };
 }
 
 function friendlySupabaseError(message: string) {
@@ -218,7 +225,7 @@ function mergeSyncSummaries(...summaries: SyncSummary[]): SyncSummary {
 }
 
 async function uploadQueueItem(item: SyncQueueItem, context: SyncContext) {
-  const { client, userId } = ensureCanSync(context);
+  const { client, accountOwnerUserId } = ensureCanSync(context);
   if (!isSyncableStore(item.store)) throw new Error(`Store sem mapeamento para Supabase: ${item.store}.`);
 
   const table = LOCAL_TO_REMOTE_TABLE[item.store];
@@ -228,7 +235,7 @@ async function uploadQueueItem(item: SyncQueueItem, context: SyncContext) {
     if (!item.payload || typeof item.payload !== "object") throw new Error("Payload inválido: item sem objeto para upsert.");
     const { error } = await client.from(table).upsert({
       id: item.entityId,
-      user_id: userId,
+      user_id: accountOwnerUserId,
       payload: item.store === "clientes" ? normalizeClienteForPersistence(item.payload as Record<string, unknown>) : item.payload,
       updated_at: timestamp,
       deleted_at: null,
@@ -239,12 +246,12 @@ async function uploadQueueItem(item: SyncQueueItem, context: SyncContext) {
 
   const { error } = await client
     .from(table)
-    .upsert({ id: item.entityId, user_id: userId, payload: item.payload ?? {}, updated_at: timestamp, deleted_at: timestamp }, { onConflict: "user_id,id" });
+    .upsert({ id: item.entityId, user_id: accountOwnerUserId, payload: item.payload ?? {}, updated_at: timestamp, deleted_at: timestamp }, { onConflict: "user_id,id" });
   if (error) throw new Error(friendlySupabaseError(error.message));
 }
 
 async function persistRemoteSyncMeta(context: SyncContext, summary: SyncSummary) {
-  const { client, userId } = ensureCanSync(context);
+  const { client, accountOwnerUserId } = ensureCanSync(context);
   const payload: SyncMetaPayload = {
     lastUploadAt: nowIso(),
     lastDownloadAt: null,
@@ -254,7 +261,7 @@ async function persistRemoteSyncMeta(context: SyncContext, summary: SyncSummary)
 
   const { error } = await client.from("sync_meta").upsert({
     id: "main",
-    user_id: userId,
+    user_id: accountOwnerUserId,
     payload,
     updated_at: payload.lastUploadAt,
     deleted_at: null,
@@ -265,11 +272,11 @@ async function persistRemoteSyncMeta(context: SyncContext, summary: SyncSummary)
 }
 
 export async function getRemoteSyncMeta(context: SyncContext): Promise<SyncMetaPayload | null> {
-  const { client, userId } = ensureCanSync(context);
+  const { client, accountOwnerUserId } = ensureCanSync(context);
   const { data, error } = await client
     .from("sync_meta")
     .select("payload")
-    .eq("user_id", userId)
+    .eq("user_id", accountOwnerUserId)
     .eq("id", "main")
     .is("deleted_at", null)
     .maybeSingle();
@@ -355,7 +362,7 @@ async function tombstoneRemoteRowsMissingLocally(
   context: SyncContext,
   remoteOnlyRowsByStore: Array<{ store: SyncableStore; rows: RemoteRow[] }>,
 ): Promise<SyncSummary> {
-  const { client, userId } = ensureCanSync(context);
+  const { client, accountOwnerUserId } = ensureCanSync(context);
   const summary = emptySummary();
 
   for (const { store, rows } of remoteOnlyRowsByStore) {
@@ -367,7 +374,7 @@ async function tombstoneRemoteRowsMissingLocally(
 
       const { error } = await client.from(table).upsert({
         id: row.id,
-        user_id: userId,
+        user_id: accountOwnerUserId,
         payload: row.payload ?? {},
         updated_at: timestamp,
         deleted_at: timestamp,
@@ -423,8 +430,8 @@ export async function publishLocalSnapshotAsOfficial(context: SyncContext): Prom
 }
 
 async function fetchRows(table: RemoteTable, context: SyncContext, includeDeleted: boolean) {
-  const { client } = ensureCanSync(context);
-  let query = client.from(table).select("id,user_id,payload,created_at,updated_at,deleted_at");
+  const { client, accountOwnerUserId } = ensureCanSync(context);
+  let query = client.from(table).select("id,user_id,payload,created_at,updated_at,deleted_at").eq("user_id", accountOwnerUserId);
   if (!includeDeleted) query = query.is("deleted_at", null);
   const { data, error } = await query;
   if (error) throw new Error(friendlySupabaseError(error.message));

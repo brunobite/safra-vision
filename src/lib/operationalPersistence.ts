@@ -10,6 +10,7 @@ export type OperationalPersistenceStatus = "sending" | "synced" | "pending-offli
 export type SaveOperationalEntityOptions = {
   session: Session | null;
   accessStatus: string | null;
+  accountOwnerUserId?: string | null;
   onStatusChange?: (status: OperationalPersistenceStatus) => void;
   onRemoteSuccess?: () => Promise<void> | void;
   onRemoteError?: (error: Error) => Promise<void> | void;
@@ -17,8 +18,12 @@ export type SaveOperationalEntityOptions = {
 
 const nowIso = () => new Date().toISOString();
 
+function getRemoteUserId(options: SaveOperationalEntityOptions) {
+  return options.accountOwnerUserId || options.session?.user.id || null;
+}
+
 function canAttemptRemote(options: SaveOperationalEntityOptions) {
-  return Boolean(isSupabaseConfigured && supabase && options.session?.user && normalizeAccessStatus(options.accessStatus) === "active" && (typeof navigator === "undefined" || navigator.onLine));
+  return Boolean(isSupabaseConfigured && supabase && options.session?.user && normalizeAccessStatus(options.accessStatus) === "active" && getRemoteUserId(options) && (typeof navigator === "undefined" || navigator.onLine));
 }
 
 function formatRemoteError(error: unknown) {
@@ -45,8 +50,8 @@ export async function saveOperationalEntity<T extends { id: string }>(
     const table = LOCAL_TO_REMOTE_TABLE[store];
     const timestamp = nowIso();
     const row = operation === "delete"
-      ? { id: record.id, user_id: options.session!.user.id, payload, updated_at: timestamp, deleted_at: timestamp }
-      : { id: record.id, user_id: options.session!.user.id, payload, updated_at: timestamp, deleted_at: null };
+      ? { id: record.id, user_id: getRemoteUserId(options)!, payload, updated_at: timestamp, deleted_at: timestamp }
+      : { id: record.id, user_id: getRemoteUserId(options)!, payload, updated_at: timestamp, deleted_at: null };
     const { error } = await supabase!.from(table).upsert(row, { onConflict: "user_id,id" });
     if (error) throw new Error(error.message);
 
