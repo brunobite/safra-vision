@@ -1,4 +1,5 @@
 import type { AccountSyncStatus } from "@/lib/accountSyncOrchestrator";
+import { normalizeAccessStatus } from "@/lib/accessStatus";
 
 export const ACCOUNT_SYNC_MESSAGES = {
   updated: "Este dispositivo está atualizado.",
@@ -46,14 +47,15 @@ export function getAccountSyncUserMessage(params: {
   hasConflict?: boolean;
 }) {
   if (!params.isOnline) return ACCOUNT_SYNC_MESSAGES.offline;
-  if (params.cloudSessionExists && params.cloudAccessStatus === "active") {
+  const normalizedAccessStatus = normalizeAccessStatus(params.cloudAccessStatus);
+  if (params.cloudSessionExists && normalizedAccessStatus === "active") {
     if (params.hasConflict) return ACCOUNT_SYNC_MESSAGES.conflict;
     if (params.pendingSyncCount > 0) return ACCOUNT_SYNC_MESSAGES.pendingLocal;
     if (params.hasRemoteOnly) return ACCOUNT_SYNC_MESSAGES.remoteAvailable;
     if (params.accountSyncStatus?.message) return sanitizeUserSyncMessage(params.accountSyncStatus.message);
     return ACCOUNT_SYNC_MESSAGES.active;
   }
-  if (params.cloudSessionExists && params.cloudAccessStatus !== "active") return ACCOUNT_SYNC_MESSAGES.inactive;
+  if (params.cloudSessionExists && normalizedAccessStatus !== "active") return ACCOUNT_SYNC_MESSAGES.inactive;
   if (params.accountSyncStatus?.message) return sanitizeUserSyncMessage(params.accountSyncStatus.message);
   return ACCOUNT_SYNC_MESSAGES.updated;
 }
@@ -69,7 +71,7 @@ export function getAccountSyncVisualState(params: {
 }): AccountSyncVisualState {
   if (!params.isOnline) return "Offline";
   if (params.isSyncing) return "Sincronizando";
-  if (!params.cloudSessionExists || params.cloudAccessStatus !== "active") return "Bloqueado";
+  if (!params.cloudSessionExists || normalizeAccessStatus(params.cloudAccessStatus) !== "active") return "Bloqueado";
   if (params.hasConflict) return "Atenção";
   if (params.pendingSyncCount > 0) return "Pendente";
   if (params.hasAttention) return "Atenção";

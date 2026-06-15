@@ -1,3 +1,6 @@
+import { normalizeAccessStatus } from "@/lib/accessStatus";
+export { normalizeAccessStatus } from "@/lib/accessStatus";
+
 export type AccessStatus = "pendente" | "ativo" | "inativo" | "bloqueado" | "pending" | "active" | "inactive" | "blocked";
 export type UserRole = "administrador" | "gestor" | "vendedor" | "visualizador" | "admin" | "operacional" | "consulta" | "user";
 
@@ -59,15 +62,6 @@ export const normalizeRole = (role: UserRole | string | null | undefined): UserR
   return "visualizador";
 };
 
-export const normalizeAccessStatus = (status: AccessStatus | string | null | undefined): AccessStatus => {
-  if (status === "active") return "ativo";
-  if (status === "pending") return "pendente";
-  if (status === "inactive") return "inativo";
-  if (status === "blocked") return "bloqueado";
-  if (status === "ativo" || status === "pendente" || status === "inativo" || status === "bloqueado") return status;
-  return "pendente";
-};
-
 export const isProtectedBruno = (email?: string | null) => (email ?? "").trim().toLowerCase() === BRUNO_ADMIN_EMAIL;
 export const isAdminRole = (role: UserRole | string | null | undefined) => ADMIN_ROLES.has(role as UserRole) || normalizeRole(role) === "administrador";
 export const isReadOnlyRole = (role: UserRole | string | null | undefined) => READ_ONLY_ROLES.has(role as UserRole) || normalizeRole(role) === "visualizador";
@@ -97,7 +91,7 @@ function resolvePermission(resource: string, contextOrRole?: PermissionContext |
   const ctx: PermissionContext = typeof contextOrRole === "object" && contextOrRole !== null ? contextOrRole : { role: contextOrRole };
   const normalizedResource = normalizeResource(resource);
   if (isProtectedBruno(ctx.email)) return fullPermission(normalizedResource);
-  if (normalizeAccessStatus(ctx.accessStatus ?? "ativo") !== "ativo") return emptyPermission(normalizedResource);
+  if (normalizeAccessStatus(ctx.accessStatus ?? "ativo") !== "active") return emptyPermission(normalizedResource);
   const specific = ctx.permissions?.find((permission) => permission.resource === normalizedResource);
   if (specific) return specific;
   return roleTemplate(ctx.role).find((permission) => permission.resource === normalizedResource) ?? emptyPermission(normalizedResource);

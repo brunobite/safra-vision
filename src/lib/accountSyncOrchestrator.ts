@@ -2,6 +2,7 @@ import type { Session } from "@supabase/supabase-js";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import { fetchAccountSnapshot, type AccountSnapshot } from "@/lib/cloudRestore";
 import { compareLocalAndRemote, type LocalRemoteComparison, type SyncMetaPayload, type SyncSummary } from "@/lib/supabaseSync";
+import { normalizeAccessStatus } from "@/lib/accessStatus";
 
 export type AccountSyncAccessStatus = "pending" | "active" | "blocked" | "inactive" | string | null;
 
@@ -112,7 +113,7 @@ function activeContext(fresh: AccountSyncFreshContext): { session: Session; acce
   if (!fresh.session?.user) {
     return buildAccountSyncStatus({ code: "skipped", reason: "missing-session" });
   }
-  if (!["active", "ativo"].includes(fresh.accessStatus ?? "")) {
+  if (normalizeAccessStatus(fresh.accessStatus) !== "active") {
     return buildAccountSyncStatus({ code: "skipped", reason: "inactive-profile" });
   }
   return { session: fresh.session, accessStatus: "active" };
@@ -125,7 +126,7 @@ export function shouldUploadPendingFirst(params: { pendingSyncCount: number }) {
 export function shouldAutoRestoreAccount(params: AccountSyncDecisionParams): AccountSyncDecision {
   if (!params.supabaseConfigured) return { allowed: false, reason: "supabase-unconfigured", message: "Sincronização da conta indisponível neste ambiente." };
   if (!params.sessionExists) return { allowed: false, reason: "missing-session", message: "Faça login para sincronizar os dados da conta." };
-  if (!["active", "ativo"].includes(params.accessStatus ?? "")) return { allowed: false, reason: "inactive-profile", message: "Usuário ainda não aprovado para sincronização." };
+  if (normalizeAccessStatus(params.accessStatus) !== "active") return { allowed: false, reason: "inactive-profile", message: "Usuário ainda não aprovado para sincronização." };
   if (!params.isOnline) return { allowed: false, reason: "offline", message: "Sem conexão. Os dados locais continuam disponíveis." };
   if (params.pendingSyncCount > 0) return { allowed: false, reason: "pending-sync", message: "Há dados locais aguardando envio." };
   if (params.remoteCount <= 0) return { allowed: false, reason: "no-cloud-data", message: "Este dispositivo está atualizado." };

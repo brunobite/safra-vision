@@ -13,6 +13,7 @@ import { getFreshSupabaseAccessContext } from "@/lib/supabaseAccess";
 import { useAuth } from "@/store/AuthStore";
 import { supabase } from "@/lib/supabase";
 import { isOwnSellerDataById, normalizeRole } from "@/lib/permissions";
+import { normalizeAccessStatus } from "@/lib/accessStatus";
 import { calcularPotencialCliente } from "@/utils/businessRules";
 import { normalizeClientesForPersistence } from "@/lib/clientNormalization";
 
@@ -455,7 +456,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       return { result: { ok: false, skipped: false, message: fresh.error } };
     }
 
-    if (!["active", "ativo"].includes(fresh.accessStatus ?? "")) {
+    if (normalizeAccessStatus(fresh.accessStatus) !== "active") {
       return {
         result: {
           ok: true,

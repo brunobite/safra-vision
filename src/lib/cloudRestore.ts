@@ -3,6 +3,7 @@ import { openAppDb, promisifyRequest, type StoreName } from "@/lib/db";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 import { getPendingSyncItems } from "@/lib/syncQueue";
 import { normalizeClientesForPersistence } from "@/lib/clientNormalization";
+import { normalizeAccessStatus } from "@/lib/accessStatus";
 import {
   calculateStoreComparison,
   LOCAL_TO_REMOTE_TABLE,
@@ -90,7 +91,7 @@ const nowIso = () => new Date().toISOString();
 function ensureCanRestore(context: CloudRestoreContext) {
   if (!isSupabaseConfigured || !supabase) throw new Error("Supabase não configurado.");
   if (!context.session?.user) throw new Error("Usuário não autenticado.");
-  if (context.accessStatus !== "active") throw new Error("Usuário ainda não aprovado para sincronização.");
+  if (normalizeAccessStatus(context.accessStatus) !== "active") throw new Error("Usuário ainda não aprovado para sincronização.");
   if (typeof navigator !== "undefined" && !navigator.onLine) throw new Error("Sem conexão com a internet.");
   return { client: supabase, userId: context.session.user.id };
 }
@@ -125,13 +126,12 @@ export function buildAccountSnapshotFromRemoteRows(rowsByStore: Partial<Record<S
 }
 
 export async function fetchAccountSnapshot(context: CloudRestoreContext): Promise<AccountSnapshot> {
-  const { client, userId } = ensureCanRestore(context);
+  const { client } = ensureCanRestore(context);
   const rowsByStore = Object.fromEntries(
     await Promise.all(SYNCABLE_CLOUD_STORES.map(async (store) => {
       const { data, error } = await client
         .from(LOCAL_TO_REMOTE_TABLE[store])
         .select("id,user_id,payload,created_at,updated_at,deleted_at")
-        .eq("user_id", userId)
         .is("deleted_at", null);
 
       if (error) throw new Error(friendlySupabaseError(error.message));
@@ -174,7 +174,7 @@ export async function compareLocalWithAccountSnapshot(context: CloudRestoreConte
 export function shouldRestoreFromCloud(params: CloudRestoreDecisionParams): CloudRestoreDecision {
   if (!params.supabaseConfigured) return { allowed: false, reason: "supabase-unconfigured", message: "Supabase não configurado." };
   if (!params.sessionExists) return { allowed: false, reason: "missing-session", message: "Usuário não autenticado." };
-  if (params.accessStatus !== "active") return { allowed: false, reason: "inactive-profile", message: "Usuário ainda não aprovado para sincronização." };
+  if (normalizeAccessStatus(params.accessStatus) !== "active") return { allowed: false, reason: "inactive-profile", message: "Usuário ainda não aprovado para sincronização." };
   if (!params.isOnline) return { allowed: false, reason: "offline", message: "Sem conexão com a internet." };
   if (params.pendingSyncCount > 0) return { allowed: false, reason: "pending-sync", message: CONFLICT_MESSAGE };
   if (params.remoteCount <= 0) return { allowed: false, reason: "no-cloud-data", message: "Não há dados ativos da conta na nuvem para carregar." };
