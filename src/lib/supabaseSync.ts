@@ -10,6 +10,7 @@ import {
   type SyncQueueItem,
 } from "@/lib/syncQueue";
 import { normalizeClienteForPersistence, normalizeClientesForPersistence } from "@/lib/clientNormalization";
+import { normalizeAccessStatus } from "@/lib/accessStatus";
 
 type AccessStatus = "pending" | "active" | "blocked" | "inactive";
 
@@ -177,7 +178,7 @@ const nowIso = () => new Date().toISOString();
 function ensureCanSync(context: SyncContext) {
   if (!isSupabaseConfigured || !supabase) throw new Error("Supabase não configurado.");
   if (!context.session?.user) throw new Error("Usuário não autenticado.");
-  if (context.accessStatus !== "active") throw new Error("Usuário ainda não aprovado para sincronização.");
+  if (normalizeAccessStatus(context.accessStatus) !== "active") throw new Error("Usuário ainda não aprovado para sincronização.");
   if (typeof navigator !== "undefined" && !navigator.onLine) throw new Error("Sem conexão com a internet.");
   return { client: supabase, userId: context.session.user.id };
 }
@@ -422,8 +423,8 @@ export async function publishLocalSnapshotAsOfficial(context: SyncContext): Prom
 }
 
 async function fetchRows(table: RemoteTable, context: SyncContext, includeDeleted: boolean) {
-  const { client, userId } = ensureCanSync(context);
-  let query = client.from(table).select("id,user_id,payload,created_at,updated_at,deleted_at").eq("user_id", userId);
+  const { client } = ensureCanSync(context);
+  let query = client.from(table).select("id,user_id,payload,created_at,updated_at,deleted_at");
   if (!includeDeleted) query = query.is("deleted_at", null);
   const { data, error } = await query;
   if (error) throw new Error(friendlySupabaseError(error.message));

@@ -2,6 +2,7 @@ import type { Session } from "@supabase/supabase-js";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import { getPendingSyncItems } from "@/lib/syncQueue";
 import { enqueueFullLocalSnapshotForSync, syncPendingQueue, type SyncMetaPayload, type SyncSummary } from "@/lib/supabaseSync";
+import { normalizeAccessStatus } from "@/lib/accessStatus";
 
 export type AutoSyncAccessStatus = "pendente" | "ativo" | "bloqueado" | "inativo" | "pending" | "active" | "blocked" | "inactive" | null;
 export type AutoSyncMode = "auto" | "manual";
@@ -53,7 +54,7 @@ export async function runControlledUploadSync(
 
   if (!isSupabaseConfigured) return skip("supabase-not-configured", "Supabase não configurado.");
   if (!context.session?.user) return skip("missing-session", "Usuário não autenticado.");
-  if (!["active", "ativo"].includes(context.accessStatus ?? "")) return skip("inactive-profile", "Usuário ainda não aprovado para sincronização.");
+  if (normalizeAccessStatus(context.accessStatus) !== "active") return skip("inactive-profile", "Usuário ainda não aprovado para sincronização.");
   if (typeof navigator !== "undefined" && !navigator.onLine) return skip("offline", "Sem conexão com a internet.");
 
   let pendingItems;

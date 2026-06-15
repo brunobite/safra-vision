@@ -36,6 +36,7 @@ import { useAuth } from "@/store/AuthStore";
 import { UserAccessPanel } from "@/components/users/UserAccessPanel";
 import { AuditLogPanel } from "@/components/users/AuditLogPanel";
 import { getAccountSyncUserMessage, getAccountSyncVisualState, SYNC_HOMOLOGATION_CHECKLIST } from "@/lib/accountSyncUi";
+import { normalizeAccessStatus } from "@/lib/accessStatus";
 import { calcularMetaCarteira, calcularPotencialCarteira, calcularPotencialCliente, distribuirMetaPorPotencial, limitarPercentualAcerto, normalizarValorNaoNegativo, resolverVendedorCanonico } from "@/utils/businessRules";
 import { fmtBRL } from "@/utils/calculations";
 import { chaveCategoriaComercial, getCategoriasComerciais, normalizarCategoriaComercial } from "@/utils/commercialCategories";
@@ -230,14 +231,16 @@ export default function Configuracoes() {
   const [cloudLastRefreshAt, setCloudLastRefreshAt] = useState<string>("");
   const [cloudAuthError, setCloudAuthError] = useState<string | null>(null);
   const lastSyncAt = appConfig.syncMeta?.lastUploadAt || appConfig.syncMeta?.lastDownloadAt || "";
-  const shouldWarnAboutStaleAccess = Boolean(cloudSessionExists && !["active", "ativo"].includes(cloudAccessStatus ?? ""));
+  const normalizedCloudAccessStatus = normalizeAccessStatus(cloudAccessStatus);
+  const isCloudAccessActive = normalizedCloudAccessStatus === "active";
+  const shouldWarnAboutStaleAccess = Boolean(cloudSessionExists && !isCloudAccessActive);
   const canCompareCloud = Boolean(
     cloudSessionExists
-      && ["active", "ativo"].includes(cloudAccessStatus ?? "")
+      && isCloudAccessActive
       && Boolean(cloudRole)
       && ["administrador", "admin", "gestor", "vendedor", "visualizador", "operacional", "consulta", "user"].includes(cloudRole!),
   );
-  const canViewAudit = Boolean(cloudSessionExists && ["active", "ativo"].includes(cloudAccessStatus ?? ""));
+  const canViewAudit = Boolean(cloudSessionExists && isCloudAccessActive);
   const canCleanTests = Boolean(canViewAudit && ["administrador", "admin"].includes(cloudRole ?? ""));
   const selectedTestCandidates = testCandidates.filter((candidate) => selectedTestKeys.includes(candidate.key));
   const selectedRemoteOnlyCandidates = remoteOnlyCandidates.filter((candidate) => selectedRemoteOnlyIds.includes(candidate.id));
@@ -304,8 +307,8 @@ export default function Configuracoes() {
       throw new Error("Sessão Supabase indisponível. Atualize o status ou faça login novamente.");
     }
     if (freshAccessContext.error) throw new Error(freshAccessContext.error);
-    if (freshAccessContext.accessStatus !== "active") throw new Error("Usuário ainda não aprovado para sincronização.");
-    return { session: freshAccessContext.session, accessStatus: freshAccessContext.accessStatus, role: freshAccessContext.role };
+    if (normalizeAccessStatus(freshAccessContext.accessStatus) !== "active") throw new Error("Usuário ainda não aprovado para sincronização.");
+    return { session: freshAccessContext.session, accessStatus: "active" as const, role: freshAccessContext.role };
   };
 
   const refreshCloudSyncMeta = async (context: { session: FreshSupabaseAccessContext["session"]; accessStatus: "active" }) => {
@@ -329,7 +332,7 @@ export default function Configuracoes() {
         "Tempo excedido ao atualizar pendências locais.",
       );
       if (freshAccessContext.error) throw new Error(freshAccessContext.error);
-      if (freshAccessContext.accessStatus === "active") await refreshCloudSyncMeta({ session: freshAccessContext.session, accessStatus: freshAccessContext.accessStatus });
+      if (normalizeAccessStatus(freshAccessContext.accessStatus) === "active") await refreshCloudSyncMeta({ session: freshAccessContext.session, accessStatus: "active" });
       setSyncQueryStatus("sucesso");
       toast.success("Status e pendências atualizados.");
     } catch (error) {
@@ -568,10 +571,10 @@ export default function Configuracoes() {
       await refreshAuditAndComparison({ compareCloud: canCompareCloud });
       if (typeof navigator !== "undefined" && navigator.onLine) {
         const freshAccessContext = await getFreshSyncContext();
-        if (freshAccessContext.session?.user && !freshAccessContext.error && freshAccessContext.accessStatus === "active") {
+        if (freshAccessContext.session?.user && !freshAccessContext.error && normalizeAccessStatus(freshAccessContext.accessStatus) === "active") {
           const result = await runManualUploadSync({
             session: freshAccessContext.session,
-            accessStatus: freshAccessContext.accessStatus,
+            accessStatus: "active",
           });
           if (!result.ok) {
             setSyncError(result.message);
@@ -1419,7 +1422,7 @@ export default function Configuracoes() {
               <Button onClick={() => void handleAccountSyncNow()} disabled={isAccountSyncing || isSyncing || isComparingSync || isRefreshingSyncStatus || isRestoringCloud || isPublishingOfficial}>{isAccountSyncing ? "Sincronizando..." : "Sincronizar agora"}</Button>
             </div>
             <div className="grid gap-3 md:grid-cols-3">
-              <div className="rounded-md border bg-background/60 p-3 text-sm"><div className="text-muted-foreground">Status da conta</div><div className="font-medium">{cloudSessionExists ? (cloudAccessStatus === "active" ? "A conta está ativa." : "Aguardando aprovação") : "Não autenticado"}</div></div>
+              <div className="rounded-md border bg-background/60 p-3 text-sm"><div className="text-muted-foreground">Status da conta</div><div className="font-medium">{cloudSessionExists ? (isCloudAccessActive ? "Ativa" : "Aguardando aprovação") : "Não autenticado"}</div></div>
               <div className="rounded-md border bg-background/60 p-3 text-sm"><div className="text-muted-foreground">Última sincronização</div><div className="font-medium">{lastSyncAt ? new Date(lastSyncAt).toLocaleString("pt-BR") : "não registrado"}</div></div>
               <div className="rounded-md border bg-background/60 p-3 text-sm"><div className="text-muted-foreground">Pendências</div><div className="font-medium">{pendingSyncCount}</div></div>
             </div>

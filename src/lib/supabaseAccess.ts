@@ -1,5 +1,6 @@
 import type { Session, User } from "@supabase/supabase-js";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase";
+import { normalizeAccessStatus } from "@/lib/accessStatus";
 
 export type SupabaseAccessStatus = "pendente" | "ativo" | "bloqueado" | "inativo" | "pending" | "active" | "blocked" | "inactive";
 export type SupabaseUserRole = "administrador" | "admin" | "gestor" | "vendedor" | "visualizador" | "operacional" | "consulta" | "user";
@@ -79,13 +80,13 @@ export async function getFreshSupabaseAccessContext(): Promise<FreshSupabaseAcce
     }
 
     if (!profile) {
-      return { ...baseContext, role: user.email?.toLowerCase() === "bitencourttec@gmail.com" ? "administrador" : null, accessStatus: user.email?.toLowerCase() === "bitencourttec@gmail.com" ? "ativo" : null, error: "Perfil de acesso não encontrado." };
+      return { ...baseContext, role: user.email?.toLowerCase() === "bitencourttec@gmail.com" ? "administrador" : null, accessStatus: user.email?.toLowerCase() === "bitencourttec@gmail.com" ? "active" : null, error: "Perfil de acesso não encontrado." };
     }
 
     return {
       ...baseContext,
       role: (profile.papel as SupabaseUserRole | null) ?? null,
-      accessStatus: (profile.status as SupabaseAccessStatus | null) ?? null,
+      accessStatus: normalizeAccessStatus(profile.status) as SupabaseAccessStatus | null,
       error: null,
     };
   } catch (error) {

@@ -1,6 +1,7 @@
 import type { Session } from "@supabase/supabase-js";
 import { openAppDb, promisifyRequest } from "@/lib/db";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase";
+import { normalizeAccessStatus } from "@/lib/accessStatus";
 import { detectTestRecordReasons } from "@/lib/syncAudit";
 import type { RemoteRow } from "@/lib/supabaseSync";
 
@@ -38,7 +39,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(v
 function ensureCanUseRemoteCleanup(context: RemoteCleanupContext, options: { requireAdmin?: boolean } = {}) {
   if (!isSupabaseConfigured || !supabase) throw new Error("Supabase não configurado.");
   if (!context.session?.user) throw new Error("Usuário não autenticado.");
-  if (context.accessStatus !== "active") throw new Error("Usuário ainda não aprovado para sincronização.");
+  if (normalizeAccessStatus(context.accessStatus) !== "active") throw new Error("Usuário ainda não aprovado para sincronização.");
   if (options.requireAdmin && context.role !== "admin") throw new Error("Somente administradores podem limpar testes somente na nuvem.");
   if (typeof navigator !== "undefined" && !navigator.onLine) throw new Error("Sem conexão com a internet.");
   return { client: supabase, userId: context.session.user.id };
