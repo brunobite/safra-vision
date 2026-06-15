@@ -12,6 +12,9 @@ export type FreshSupabaseAccessContext = {
   userId: string | null;
   role: SupabaseUserRole | null;
   accessStatus: SupabaseAccessStatus | null;
+  nome: string | null;
+  superiorUserId: string | null;
+  accountOwnerUserId: string | null;
   error: string | null;
 };
 
@@ -34,6 +37,9 @@ const emptyAccessContext = (error: string): FreshSupabaseAccessContext => ({
   userId: null,
   role: null,
   accessStatus: null,
+  nome: null,
+  superiorUserId: null,
+  accountOwnerUserId: null,
   error,
 });
 
@@ -61,13 +67,16 @@ export async function getFreshSupabaseAccessContext(): Promise<FreshSupabaseAcce
       userId: user.id,
       role: null,
       accessStatus: null,
+      nome: user.user_metadata?.nome ?? null,
+      superiorUserId: null,
+      accountOwnerUserId: user.id,
     } satisfies Omit<FreshSupabaseAccessContext, "error">;
 
     const { data: profile, error: profileError } = await withTimeout(
       Promise.resolve(
         supabase
           .from("user_profiles")
-          .select("status, papel")
+          .select("status, papel, nome, superior_user_id, account_owner_user_id, user_id")
           .eq("user_id", user.id)
           .maybeSingle(),
       ),
@@ -87,6 +96,9 @@ export async function getFreshSupabaseAccessContext(): Promise<FreshSupabaseAcce
       ...baseContext,
       role: (profile.papel as SupabaseUserRole | null) ?? null,
       accessStatus: normalizeAccessStatus(profile.status) as SupabaseAccessStatus | null,
+      nome: profile.nome ?? null,
+      superiorUserId: profile.superior_user_id ?? null,
+      accountOwnerUserId: profile.account_owner_user_id ?? profile.user_id ?? user.id,
       error: null,
     };
   } catch (error) {

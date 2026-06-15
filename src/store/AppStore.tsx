@@ -26,6 +26,7 @@ interface Filters {
 type ManualUploadSyncOverrideContext = {
   session: AutoSyncContext["session"];
   accessStatus: AutoSyncAccessStatus;
+  accountOwnerUserId?: string | null;
 };
 
 interface AppStoreCtx {
@@ -81,7 +82,7 @@ const defaultFilters: Filters = {
 };
 
 export function AppStoreProvider({ children }: { children: ReactNode }) {
-  const { session, accessStatus, loading: authLoading, role, vendedorNome, vendedorId, user } = useAuth();
+  const { session, accessStatus, loading: authLoading, role, vendedorNome, vendedorId, user, accountOwnerUserId } = useAuth();
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [lancamentos, setLancamentos] = useState<Lancamento[]>([]);
   const [metasEmpresa, setMetasEmpresa] = useState<MetaEmpresa[]>([]);
@@ -377,12 +378,12 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     setSyncStatus("syncing");
     setSyncError(null);
     const result = await runControlledUploadSync(
-      { session: syncSession, accessStatus: syncAccessStatus === "ativo" ? "active" : syncAccessStatus, firstUploadConfirmed },
+      { session: syncSession, accessStatus: syncAccessStatus === "ativo" ? "active" : syncAccessStatus, firstUploadConfirmed, accountOwnerUserId: overrideContext?.accountOwnerUserId ?? accountOwnerUserId },
       { mode: "manual", bypassCooldown: true },
     );
     await applySyncResult(result, "manual");
     return result;
-  }, [accessStatus, applySyncResult, firstUploadConfirmed, session]);
+  }, [accessStatus, accountOwnerUserId, applySyncResult, firstUploadConfirmed, session]);
 
   const applyAccountSyncStatus = useCallback((status: AccountSyncStatus, source: "auto-check" | "sync-now" = "auto-check") => {
     setAccountSyncStatus(status);
@@ -414,7 +415,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const buildAccountSyncDependencies = useCallback(() => ({
     getFreshAccessContext: getFreshSupabaseAccessContext,
     refreshPendingSyncCount,
-    uploadPending: async (context: { session: NonNullable<typeof session>; accessStatus: "active" }) => runManualUploadSync(context),
+    uploadPending: async (context: { session: NonNullable<typeof session>; accessStatus: "active"; accountOwnerUserId?: string | null }) => runManualUploadSync(context),
     restoreAccountSnapshot,
   }), [refreshPendingSyncCount, restoreAccountSnapshot, runManualUploadSync, session]);
 
@@ -472,6 +473,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         session: fresh.session,
         accessStatus: "active",
         firstUploadConfirmed,
+        accountOwnerUserId: fresh.accountOwnerUserId,
       },
     };
   }, [firstUploadConfirmed]);

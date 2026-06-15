@@ -308,10 +308,10 @@ export default function Configuracoes() {
     }
     if (freshAccessContext.error) throw new Error(freshAccessContext.error);
     if (normalizeAccessStatus(freshAccessContext.accessStatus) !== "active") throw new Error("Usuário ainda não aprovado para sincronização.");
-    return { session: freshAccessContext.session, accessStatus: "active" as const, role: freshAccessContext.role };
+    return { session: freshAccessContext.session, accessStatus: "active" as const, role: freshAccessContext.role, accountOwnerUserId: freshAccessContext.accountOwnerUserId };
   };
 
-  const refreshCloudSyncMeta = async (context: { session: FreshSupabaseAccessContext["session"]; accessStatus: "active" }) => {
+  const refreshCloudSyncMeta = async (context: { session: FreshSupabaseAccessContext["session"]; accessStatus: "active"; accountOwnerUserId?: string | null }) => {
     const meta = await withTimeout(
       getRemoteSyncMeta(context),
       SYNC_PANEL_TIMEOUT_MS,
@@ -332,7 +332,7 @@ export default function Configuracoes() {
         "Tempo excedido ao atualizar pendências locais.",
       );
       if (freshAccessContext.error) throw new Error(freshAccessContext.error);
-      if (normalizeAccessStatus(freshAccessContext.accessStatus) === "active") await refreshCloudSyncMeta({ session: freshAccessContext.session, accessStatus: "active" });
+      if (normalizeAccessStatus(freshAccessContext.accessStatus) === "active") await refreshCloudSyncMeta({ session: freshAccessContext.session, accessStatus: "active", accountOwnerUserId: freshAccessContext.accountOwnerUserId });
       setSyncQueryStatus("sucesso");
       toast.success("Status e pendências atualizados.");
     } catch (error) {

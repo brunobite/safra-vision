@@ -38,7 +38,7 @@ const empty: Omit<Cliente, "id"> = {
 
 export default function Clientes() {
   const { clientes, setClientes, lancamentos, negocios, ticketsMedios, orcamentos, proximasAcoes, refreshPendingSyncCount, runManualUploadSync } = useAppStore();
-  const { role, accessStatus, user, vendedorNome, vendedorId, permissions, session } = useAuth();
+  const { role, accessStatus, user, vendedorNome, vendedorId, permissions, session, accountOwnerUserId } = useAuth();
   const permissionContext = { role, accessStatus, email: user?.email, vendedorNome, vendedorId, permissions };
   const canViewClientes = canView("clientes", permissionContext);
   const canCreateClientes = canCreate("clientes", permissionContext);
@@ -115,7 +115,7 @@ export default function Clientes() {
   const refreshClientesFromCloud = useCallback(async () => {
     if (!session?.user || normalizeAccessStatus(accessStatus) !== "active" || (typeof navigator !== "undefined" && !navigator.onLine)) return;
     try {
-      const snapshot = await fetchRemoteSnapshot({ session, accessStatus: "active" });
+      const snapshot = await fetchRemoteSnapshot({ session, accessStatus: "active", accountOwnerUserId });
       const remoteClientes = normalizeClientesForPersistence((snapshot.clientes ?? []) as Record<string, unknown>[]) as Cliente[];
       if (remoteClientes.length === 0) {
         setLastCloudRefreshAt(new Date().toISOString());
@@ -130,7 +130,7 @@ export default function Clientes() {
     } catch (error) {
       console.warn("Não foi possível atualizar clientes da nuvem:", error);
     }
-  }, [accessStatus, session, setClientes]);
+  }, [accessStatus, accountOwnerUserId, session, setClientes]);
 
   useEffect(() => {
     void refreshClientesFromCloud();
@@ -219,6 +219,7 @@ export default function Clientes() {
     const result = await saveOperationalEntity("clientes", saved, "upsert", {
       session,
       accessStatus,
+      accountOwnerUserId,
       onStatusChange: setOperationStatus,
       onRemoteSuccess: async () => {
         await recordAuditLog({ action: "sincronizar_cliente_imediato", resource: "clientes", entityId: saved.id, entityLabel: saved.nome, afterData: saved, metadata: { operation: "upsert" } });
@@ -241,6 +242,7 @@ export default function Clientes() {
     const result = await saveOperationalEntity("clientes", cliente, "delete", {
       session,
       accessStatus,
+      accountOwnerUserId,
       onStatusChange: setOperationStatus,
       onRemoteSuccess: async () => {
         await recordAuditLog({ action: "sincronizar_cliente_imediato", resource: "clientes", entityId: cliente.id, entityLabel: cliente.nome, beforeData: cliente, metadata: { operation: "delete" } });
