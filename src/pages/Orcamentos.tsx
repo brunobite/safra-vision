@@ -14,9 +14,10 @@ import { calcularQuantidadeComercial, DOSE_UNIDADES, isOrcamentoBloqueado, recal
 import { gerarPdfOrcamento } from "@/lib/orcamentoPdf";
 import { formatDateBR } from "@/utils/dateUtils";
 import { useAuth } from "@/store/AuthStore";
-import { canCreate, canEdit, canExport, canManage, canSaveBelowMinimumPrice, canView, isAdminRole, normalizeRole } from "@/lib/permissions";
+import { canCreate, canDelete, canEdit, canExport, canManage, canSaveBelowMinimumPrice, canView, isAdminRole, normalizeRole } from "@/lib/permissions";
 import { supabase } from "@/lib/supabase";
 import { recordAuditLog } from "@/lib/audit";
+import { deleteEntityCloudFirst, hydrateLocalCacheFromCloud, saveEntityCloudFirst } from "@/lib/operationalPersistence";
 
 const STATUS_OFICIAIS: OrcamentoStatus[] = ["Rascunho", "Enviado", "Em negociação", "Aprovado", "Recusado", "Cancelado", "Convertido"];
 const STATUS_LEGADO: OrcamentoStatus[] = ["Aberto", "Em negociação", "Recusado", "Vencido", "Reprovado"];
@@ -30,14 +31,16 @@ const novoItem = (idx: number, areaHa = 0): OrcamentoItem => ({ id: `i${Date.now
 
 export default function Orcamentos() {
   const { orcamentos, setOrcamentos, clientes, produtos, setProdutos, empresas, oportunidades, formasPagamento, prazosPagamento, proximasAcoes, setProximasAcoes, setOportunidades, setHistoricoFunil } = useAppStore();
-  const { role, accessStatus, user, vendedorNome, vendedorId, permissions } = useAuth();
+  const { role, accessStatus, user, session, vendedorNome, vendedorId, permissions, accountOwnerUserId } = useAuth();
   const permissionContext = { role, accessStatus, email: user?.email, vendedorNome, vendedorId, permissions };
   const canViewOrcamentos = canView("orcamentos", permissionContext);
   const canCreateOrcamentos = canCreate("orcamentos", permissionContext);
   const canEditOrcamentos = canEdit("orcamentos", permissionContext);
   const canExportOrcamentos = canExport("orcamentos", permissionContext);
   const canManageOrcamentos = canManage("orcamentos", permissionContext);
+  const canDeleteOrcamentos = canDelete("orcamentos", permissionContext) || canManageOrcamentos;
   const canUseMinimumPriceException = canSaveBelowMinimumPrice(permissionContext);
+  const persistenceOptions = { session, accessStatus, accountOwnerUserId, actorUserId: user?.id, actorNome: vendedorNome || user?.user_metadata?.nome || user?.email, actorPapel: role };
   const [params] = useSearchParams();
   const normalizedRole = normalizeRole(role);
   const isAdmin = isAdminRole(role);
@@ -116,7 +119,34 @@ export default function Orcamentos() {
 
   const applyAgentToOrcamento = (orcamento: Orcamento, agent: CommercialAgent): Orcamento => ({ ...orcamento, vendedorId: agent.user_id, vendedorUserId: agent.user_id, vendedorNome: agent.nome, vendedor: agent.nome, responsavelId: agent.user_id, responsavelUserId: agent.user_id, responsavelNome: agent.nome, responsavel: agent.nome });
 
+  const getSuggestedAgentForCliente = (clienteId: string) => {
+    const cliente = clientes.find((c) => c.id === clienteId);
+    const agentId = cliente?.responsavelUserId || cliente?.vendedorUserId || cliente?.vendedorId;
+    if (agentId) return selectableAgents.find((agent) => agent.user_id === agentId);
+    const agentName = cliente?.responsavelNome || cliente?.vendedorNome || cliente?.vendedor;
+    if (agentName) return selectableAgents.find((agent) => sameText(agent.nome, agentName));
+    return undefined;
+  };
+
+  const canDeleteOrcamento = (orcamento: Orcamento) => canDeleteOrcamentos && canSeeOrcamento(orcamento);
+
   const currentUserAgent = (): CommercialAgent => ({ user_id: user?.id || vendedorId || "", nome: vendedorNome || user?.user_metadata?.nome || user?.email || "", papel: normalizedRole as CommercialAgent["papel"], status: "ativo" });
+
+  useEffect(() => {
+    if (!canViewOrcamentos || !session?.user || !accountOwnerUserId || (typeof navigator !== "undefined" && !navigator.onLine)) return;
+    let cancelled = false;
+    void hydrateLocalCacheFromCloud<Orcamento>("orcamentos", persistenceOptions)
+      .then((result) => {
+        if (cancelled) return;
+        setOrcamentos(result.active);
+      })
+      .catch((error) => {
+        console.warn("Não foi possível atualizar orçamentos da nuvem:", error);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [accountOwnerUserId, canViewOrcamentos, session?.user?.id]);
 
   const novoOrcamento = () => {
     const current = new Date().toISOString();
@@ -138,13 +168,15 @@ export default function Orcamentos() {
     setOpen(true);
   };
 
-  const save = () => {
+  const save = async () => {
     if (orcamentoBloqueado) return toast.error("Orçamento bloqueado: oportunidade já fechada. Para nova negociação, crie uma nova oportunidade.");
     const selectedAgent = isVendedor ? currentUserAgent() : selectableAgents.find((agent) => agent.user_id === (form.responsavelUserId || form.vendedorUserId || form.responsavelId || form.vendedorId));
     if ((isAdmin || isGestor) && !selectedAgent) return toast.error("Selecione o responsável comercial.");
     if (isGestor && selectedAgent && selectedAgent.user_id !== user?.id && !teamSellerIds.has(selectedAgent.user_id)) return toast.error("Gestor só pode criar orçamento para si ou para vendedores da própria equipe.");
     const ownerApplied = selectedAgent ? applyAgentToOrcamento(form, selectedAgent) : form;
-    const payload = recalc({ ...ownerApplied, createdByUserId: form.createdByUserId || user?.id, updatedByUserId: user?.id || form.updatedByUserId, motivoRevisao: motivoRevisao || form.motivoRevisao, updatedAt: new Date().toISOString() });
+    const idNovo = ownerApplied.id || `orc${Date.now()}`;
+    const createdAt = ownerApplied.createdAt || new Date().toISOString();
+    const payload = recalc({ ...ownerApplied, id: idNovo, orcamentoOrigemId: ownerApplied.orcamentoOrigemId || idNovo, createdAt, createdByUserId: ownerApplied.createdByUserId || user?.id, updatedByUserId: user?.id || ownerApplied.updatedByUserId, motivoRevisao: motivoRevisao || ownerApplied.motivoRevisao, updatedAt: new Date().toISOString() });
     if (!payload.clienteId) return toast.error("Cliente obrigatório");
     const excecoesPreco = payload.itens.filter((it) => it.abaixoPrecoMinimo);
     if (excecoesPreco.length && !canUseMinimumPriceException) return toast.error("Preço abaixo do mínimo exige a permissão específica excecao_preco_minimo.");
@@ -152,11 +184,16 @@ export default function Orcamentos() {
     if (estouroEstoque.length) toast.warning("Há itens acima do estoque disponível; produtos representados não bloqueiam por estoque.");
     if (payload.status === "Enviado" && (!payload.canalEnvio || !payload.dataEnvio)) return toast.error("Informe canal e data de envio");
 
-    const idNovo = payload.id || `orc${Date.now()}`;
     if (edit && (!canEditOrcamentos || !canSeeOrcamento(edit))) return toast.error("Você não tem permissão para editar este orçamento.");
     if (!edit && !canCreateOrcamentos) return toast.error("Você não tem permissão para criar orçamentos.");
-    setOrcamentos((prev) => edit ? prev.map((o) => (o.id === edit.id ? payload : o)) : [{ ...payload, id: idNovo, createdAt: new Date().toISOString(), orcamentoOrigemId: payload.orcamentoOrigemId || idNovo }, ...prev]);
-    void recordAuditLog({ action: edit ? "editar_orcamento" : "criar_orcamento", resource: "orcamentos", entityId: idNovo, entityLabel: payload.codigo, beforeData: edit || null, afterData: payload });
+    let result: Awaited<ReturnType<typeof saveEntityCloudFirst<Orcamento>>>;
+    try {
+      result = await saveEntityCloudFirst("orcamentos", payload, { ...persistenceOptions, auditAction: edit ? "editar_orcamento" : "criar_orcamento", resource: "orcamentos", beforeData: edit || null, afterData: payload });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Falha ao salvar orçamento.");
+      return;
+    }
+    setOrcamentos((prev) => edit ? prev.map((o) => (o.id === edit.id ? payload : o)) : [payload, ...prev.filter((o) => o.id !== idNovo)]);
     if (edit && (edit.responsavelUserId !== payload.responsavelUserId || edit.responsavelNome !== payload.responsavelNome)) void recordAuditLog({ action: "alterar_responsavel_orcamento", resource: "orcamentos", entityId: idNovo, entityLabel: payload.codigo, metadata: { de: edit.responsavelNome || edit.responsavel, para: payload.responsavelNome || payload.responsavel } });
     if (edit?.status !== payload.status) void recordAuditLog({ action: "alterar_status_orcamento", resource: "orcamentos", entityId: idNovo, entityLabel: payload.codigo, metadata: { de: edit?.status, para: payload.status } });
     if ((payload.descontoTotal || 0) > 0 || payload.itens.some((it) => (it.desconto || 0) > 0)) void recordAuditLog({ action: "aplicar_desconto_orcamento", resource: "orcamentos", entityId: idNovo, entityLabel: payload.codigo, metadata: { descontoTotal: payload.descontoTotal, itens: payload.itens.map((it) => ({ produtoId: it.produtoId, desconto: it.desconto || 0 })) } });
@@ -191,7 +228,7 @@ export default function Orcamentos() {
     if (payload.status === "Aprovado") toast.message("Orçamento aprovado. Feche a oportunidade como Ganha para criar negócio.");
     if (payload.status === "Perdido") toast.message("Orçamento perdido. Feche a oportunidade como Perdida e informe motivo.");
     setOpen(false);
-    toast.success("Orçamento salvo");
+    toast.success(result.status === "pending-offline" ? "Orçamento salvo localmente e pendente de sincronização" : "Orçamento salvo");
   };
 
   useEffect(() => {
@@ -233,6 +270,25 @@ export default function Orcamentos() {
     toast.success("Orçamento convertido em oportunidade.");
   };
 
+  const excluirOrcamento = async (orcamento: Orcamento) => {
+    if (!canDeleteOrcamento(orcamento)) return toast.error("Você não tem permissão para excluir este orçamento.");
+    if (!window.confirm(`Excluir o orçamento ${orcamento.codigo}? Esta ação não deve retornar após sincronização.`)) return;
+    try {
+      const result = await deleteEntityCloudFirst<Orcamento>("orcamentos", orcamento.id, {
+        ...persistenceOptions,
+        record: orcamento,
+        auditAction: "excluir_orcamento",
+        resource: "orcamentos",
+        beforeData: orcamento,
+        afterData: null,
+      });
+      setOrcamentos((prev) => prev.filter((item) => item.id !== orcamento.id));
+      toast.success(result.status === "pending-offline" ? "Orçamento excluído localmente e pendente de sincronização" : "Orçamento excluído");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Falha ao excluir orçamento.");
+    }
+  };
+
   if (!canViewOrcamentos) return <Card className="p-4">Você não tem permissão para visualizar orçamentos.</Card>;
 
   return <div className="space-y-3"><Button onClick={novoOrcamento} disabled={!canCreateOrcamentos}>Novo orçamento</Button>
@@ -247,6 +303,7 @@ export default function Orcamentos() {
           <Button size="sm" variant="outline" onClick={() => { if (!canExportOrcamentos) return toast.error("Você não tem permissão para exportar orçamentos."); void recordAuditLog({ action: "gerar_pdf_orcamento", resource: "orcamentos", entityId: o.id, entityLabel: o.codigo }); gerarPdfOrcamento(o, clientes.find((c) => c.id === o.clienteId), empresas.find((e) => e.id === o.empresaId), oportunidades.find((op) => op.id === o.oportunidadeId)); }}>PDF</Button>
           <Button size="sm" onClick={() => criarNovaVersao(o)} disabled={isOrcamentoBloqueado(o, oportunidades) || !canCreateOrcamentos}>Criar nova versão</Button>
           <Button size="sm" variant="secondary" onClick={() => converterEmOportunidade(o)} disabled={o.status !== "Aprovado" || !canManageOrcamentos}>Converter</Button>
+          <Button size="sm" variant="destructive" onClick={() => void excluirOrcamento(o)} disabled={!canDeleteOrcamento(o)}>Excluir</Button>
         </div>
       </div>
     </Card>)}
@@ -257,7 +314,7 @@ export default function Orcamentos() {
       <Card className="p-3 space-y-2"><h3 className="font-semibold">Dados da proposta</h3><div className="grid gap-2 md:grid-cols-5">
         <div><Label>Código</Label><Input value={form.codigo} onChange={(e) => setForm({ ...form, codigo: e.target.value })} disabled={orcamentoBloqueado} /></div>
         <div><Label>Versão</Label><Input value={form.versao || 1} disabled /></div>
-        <div><Label>Cliente</Label><Select value={form.clienteId} onValueChange={(v) => setForm({ ...form, clienteId: v, oportunidadeId: undefined })} disabled={orcamentoBloqueado}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{clientes.map((c) => <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>)}</SelectContent></Select></div>
+        <div><Label>Cliente</Label><Select value={form.clienteId} onValueChange={(v) => { const suggested = getSuggestedAgentForCliente(v); const next = { ...form, clienteId: v, oportunidadeId: undefined }; setForm(suggested && !isVendedor ? applyAgentToOrcamento(next, suggested) : next); }} disabled={orcamentoBloqueado}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{clientes.map((c) => <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>)}</SelectContent></Select></div>
         <div><Label>Fazenda/propriedade</Label><Input value={form.fazenda || ""} onChange={(e) => setForm({ ...form, fazenda: e.target.value })} /></div>
         <div><Label>Cidade</Label><Input value={form.cidade || clientes.find((c) => c.id === form.clienteId)?.cidade || ""} onChange={(e) => setForm({ ...form, cidade: e.target.value })} /></div>
         <div><Label>Oportunidade vinculada</Label><Select value={form.oportunidadeId || (isLegacy ? "legacy" : "")} onValueChange={(v) => setForm({ ...form, oportunidadeId: v === "legacy" ? undefined : v })} disabled={orcamentoBloqueado}><SelectTrigger><SelectValue placeholder="Obrigatório para novo orçamento" /></SelectTrigger><SelectContent>{isLegacy && <SelectItem value="legacy">Legado/sem vínculo</SelectItem>}{oportunidadesAbertasCliente.map((o) => <SelectItem key={o.id} value={o.id}>{o.etapa} · {o.necessidade || o.id}</SelectItem>)}</SelectContent></Select></div>
