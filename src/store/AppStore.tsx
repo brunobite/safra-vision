@@ -5,7 +5,7 @@ import {
 } from "@/types";
 import { bootstrapLocalDatabase, getStoreIds, saveStore } from "@/lib/localRepository";
 import { restoreAccountSnapshotToLocal, type AccountSnapshot, type CloudRestoreResult } from "@/lib/cloudRestore";
-import { enqueueSyncItem, getPendingSyncItems, shouldTrackSyncStore } from "@/lib/syncQueue";
+import { consumeSuppressedSyncQueueItem, enqueueSyncItem, getPendingSyncItems, shouldTrackSyncStore, suppressNextSyncQueueItem } from "@/lib/syncQueue";
 import { getAutoSyncCooldownRemaining, runControlledUploadSync, type AutoSyncAccessStatus, type AutoSyncContext, type AutoSyncResult } from "@/lib/autoSync";
 import { runAccountSyncCheck, runAccountSyncNow, type AccountSyncStatus } from "@/lib/accountSyncOrchestrator";
 import { addAccountSyncHistoryEvent, getHistoryStatusFromAccountSyncStatus, type AccountSyncHistoryEvent } from "@/lib/accountSyncUi";
@@ -16,6 +16,7 @@ import { isOwnSellerDataById, normalizeRole } from "@/lib/permissions";
 import { normalizeAccessStatus } from "@/lib/accessStatus";
 import { calcularPotencialCliente } from "@/utils/businessRules";
 import { normalizeClientesForPersistence } from "@/lib/clientNormalization";
+import { hydrateStoreFromCloud } from "@/lib/operationalPersistence";
 
 interface Filters {
   dataInicial: string; dataFinal: string; mes: string;
@@ -244,8 +245,12 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           const nextIds = new Set(dataToPersist.map((item) => item.id));
           const deletedIds = previousIds.filter((id) => !nextIds.has(id));
           await Promise.all([
-            ...dataToPersist.map((item) => enqueueSyncItem({ store, entityId: item.id, operation: "upsert", payload: item })),
-            ...deletedIds.map((entityId) => enqueueSyncItem({ store, entityId, operation: "delete" })),
+            ...dataToPersist
+              .filter((item) => !consumeSuppressedSyncQueueItem(store, item.id, "upsert"))
+              .map((item) => enqueueSyncItem({ store, entityId: item.id, operation: "upsert", payload: item })),
+            ...deletedIds
+              .filter((entityId) => !consumeSuppressedSyncQueueItem(store, entityId, "delete"))
+              .map((entityId) => enqueueSyncItem({ store, entityId, operation: "delete" })),
           ]);
         }
       }
@@ -377,11 +382,21 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
 
     setSyncStatus("syncing");
     setSyncError(null);
-    const result = await runControlledUploadSync(
-      { session: syncSession, accessStatus: syncAccessStatus === "ativo" ? "active" : syncAccessStatus, firstUploadConfirmed, accountOwnerUserId: overrideContext?.accountOwnerUserId ?? accountOwnerUserId },
-      { mode: "manual", bypassCooldown: true },
-    );
+    const context = { session: syncSession, accessStatus: syncAccessStatus === "ativo" ? "active" : syncAccessStatus, firstUploadConfirmed, accountOwnerUserId: overrideContext?.accountOwnerUserId ?? accountOwnerUserId };
+    const result = await runControlledUploadSync(context, { mode: "manual", bypassCooldown: true });
     await applySyncResult(result, "manual");
+    if (result.ok && !result.skipped && result.summary.error === 0 && context.session?.user && normalizeAccessStatus(context.accessStatus) === "active") {
+      const snapshot = await hydrateStoreFromCloud<Cliente>("clientes", { session: context.session, accessStatus: "active", accountOwnerUserId: context.accountOwnerUserId });
+      const tombstoneIds = new Set(snapshot.tombstones.map((row) => row.id));
+      snapshot.active.forEach((cliente) => suppressNextSyncQueueItem("clientes", cliente.id, "upsert"));
+      tombstoneIds.forEach((id) => suppressNextSyncQueueItem("clientes", id, "delete"));
+      setClientes((current) => {
+        const byId = new Map(current.filter((cliente) => !tombstoneIds.has(cliente.id)).map((cliente) => [cliente.id, cliente]));
+        snapshot.active.forEach((cliente) => byId.set(cliente.id, cliente));
+        return normalizeClientesForPersistence(Array.from(byId.values()) as never[]) as Cliente[];
+      });
+      recordAccountSyncHistory({ tipo: "restore", status: "sucesso", mensagem: "Clientes atualizados da nuvem após sincronização manual.", detalhes: `${snapshot.active.length} baixados, ${snapshot.tombstones.length} excluídos aplicados.` });
+    }
     return result;
   }, [accessStatus, accountOwnerUserId, applySyncResult, firstUploadConfirmed, session]);
 
