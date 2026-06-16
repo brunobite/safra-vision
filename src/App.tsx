@@ -23,6 +23,7 @@ const NotFound = lazy(() => import("./pages/NotFound"));
 const FunilVendas = lazy(() => import("./pages/FunilVendas"));
 const Produtos = lazy(() => import("./pages/Produtos"));
 const Orcamentos = lazy(() => import("./pages/Orcamentos"));
+const Negocios = lazy(() => import("./pages/Negocios"));
 const ProximasAcoes = lazy(() => import("./pages/ProximasAcoes"));
 const Agenda = lazy(() => import("./pages/Agenda"));
 const ClienteFicha360 = lazy(() => import("./pages/ClienteFicha360"));
@@ -72,6 +73,7 @@ const App = () => {
                 <Route path="/lancamentos" element={<ProtectedPage route="/lancamentos"><Lancamentos /></ProtectedPage>} />
                 <Route path="/funil" element={<ProtectedPage route="/funil"><FunilVendas /></ProtectedPage>} />
                 <Route path="/orcamentos" element={<ProtectedPage route="/orcamentos"><Orcamentos /></ProtectedPage>} />
+                <Route path="/negocios" element={<ProtectedPage route="/negocios"><Negocios /></ProtectedPage>} />
                 <Route path="/produtos" element={<ProtectedPage route="/produtos"><Produtos /></ProtectedPage>} />
                 <Route path="/precos-estoque" element={<Navigate to="/produtos" replace />} />
                 <Route path="/metas" element={<ProtectedPage route="/metas"><Metas /></ProtectedPage>} />

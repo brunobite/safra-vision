@@ -15,7 +15,7 @@ export const STATUS_FUNIL: StatusFunil[] = [
   "Aguardando cliente", "Aguardando parceiro", "Fechado ganho", "Fechado perdido",
 ];
 
-export type OrigemNegocio = "Visita" | "Ligação" | "WhatsApp" | "Evento" | "Indicação" | "Manual" | "Outro";
+export type OrigemNegocio = "Visita" | "Ligação" | "WhatsApp" | "Evento" | "Indicação" | "Manual" | "Orçamento" | "Outro";
 
 export type OrigemOportunidade = "Visita" | "WhatsApp" | "Ligação" | "Indicação" | "Manual" | "Relatório de visita" | "Orçamento" | "Outro";
 export type EtapaOportunidade = "Oportunidade identificada" | "Qualificação técnica/comercial" | "Orçamento solicitado" | "Orçamento enviado" | "Negociação" | "Fechamento encaminhado" | "Ganha" | "Perdida" | "Suspensa/Sem timing" | "Identificada" | "Qualificação" | "Necessidade definida" | "Orçamento em elaboração" | "Cancelada";
@@ -237,12 +237,18 @@ export interface Lancamento {
   dataHoraFim?: string;
 }
 
+export type NegocioStatus = "Fechado" | "Pendente de faturamento" | "Faturado" | "Entregue" | "Cancelado" | StatusFunil;
+
 export interface Negocio {
   oportunidadeId?: string;
   orcamentoId?: string;
   id: string;
+  codigo?: string;
   nome?: string;
   clienteId: string;
+  clienteNome?: string;
+  empresaId?: string;
+  empresaNome?: string;
   vendedor: string;
   vendedorId?: string;
   origem: OrigemNegocio;
@@ -250,8 +256,16 @@ export interface Negocio {
   categoria: CategoriaProduto;
   valorPotencial: number;
   valorFechado?: number;
-  status: StatusFunil;
+  valorTotal?: number;
+  subtotal?: number;
+  descontoTotal?: number;
+  margemBruta?: number;
+  margemPercentual?: number;
+  status: NegocioStatus;
   previsaoFechamento?: string;
+  dataFechamento?: string;
+  dataPrevistaFaturamento?: string;
+  dataPrevistaEntrega?: string;
   dataCriacao: string;
   ultimaAtualizacao: string;
   proximaAcao?: string;
@@ -260,6 +274,7 @@ export interface Negocio {
   formaPagamento?: string;
   prazoPagamento?: string;
   prazoEntrega?: string;
+  itens?: OrcamentoItem[];
   observacoes?: string;
   itensEstimados?: OportunidadeItemEstimado[];
   segmento?: string;
@@ -276,6 +291,10 @@ export interface Negocio {
   dataDecisao?: string;
   motivoPerda?: string;
   lancamentoId?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  estoqueReservado?: boolean;
+  estoqueBaixado?: boolean;
 }
 
 
@@ -574,6 +593,7 @@ export interface Orcamento {
   formaPagamento?: string;
   prazoPagamento?: string;
   prazoEntrega?: string;
+  itens?: OrcamentoItem[];
   observacoes?: string;
   itensEstimados?: OportunidadeItemEstimado[];
   segmento?: string;

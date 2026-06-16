@@ -7,7 +7,7 @@ export type UserRole = "administrador" | "gestor" | "vendedor" | "visualizador" 
 export const BRUNO_ADMIN_EMAIL = "bitencourttec@gmail.com";
 
 export const permissionResources = [
-  "dashboard", "clientes", "agenda", "proximas_acoes", "lancamentos", "funil", "orcamentos", "produtos", "metas", "rotas", "prioridades", "eventos", "relatorios", "configuracoes", "usuarios_acessos", "sincronizacao", "google_calendar", "importacoes", "empresas", "vendedores", "auditoria_operacional", "excecao_preco_minimo",
+  "dashboard", "clientes", "agenda", "proximas_acoes", "lancamentos", "funil", "orcamentos", "negocios", "produtos", "metas", "rotas", "prioridades", "eventos", "relatorios", "configuracoes", "usuarios_acessos", "sincronizacao", "google_calendar", "importacoes", "empresas", "vendedores", "auditoria_operacional", "excecao_preco_minimo",
 ] as const;
 
 export const permissionActions = ["can_view", "can_create", "can_edit", "can_delete", "can_import", "can_export", "can_manage"] as const;
@@ -43,11 +43,11 @@ const ADMIN_ROLES = new Set<UserRole>(["administrador", "admin"]);
 const READ_ONLY_ROLES = new Set<UserRole>(["visualizador", "consulta"]);
 
 export const resourceLabels: Record<PermissionResource, string> = {
-  dashboard: "Dashboard", clientes: "Clientes", agenda: "Agenda", proximas_acoes: "Próximas ações", lancamentos: "Lançamentos", funil: "Funil", orcamentos: "Orçamentos", produtos: "Produtos", metas: "Metas", rotas: "Rotas", prioridades: "Prioridades", eventos: "Eventos", relatorios: "Relatórios", configuracoes: "Configurações", usuarios_acessos: "Usuários e acessos", sincronizacao: "Sincronização", google_calendar: "Google Calendar", importacoes: "Importações", empresas: "Empresas", vendedores: "Vendedores", auditoria_operacional: "Auditoria operacional", excecao_preco_minimo: "Exceção preço mínimo",
+  dashboard: "Dashboard", clientes: "Clientes", agenda: "Agenda", proximas_acoes: "Próximas ações", lancamentos: "Lançamentos", funil: "Funil", orcamentos: "Orçamentos", negocios: "Negócios/Vendas", produtos: "Produtos", metas: "Metas", rotas: "Rotas", prioridades: "Prioridades", eventos: "Eventos", relatorios: "Relatórios", configuracoes: "Configurações", usuarios_acessos: "Usuários e acessos", sincronizacao: "Sincronização", google_calendar: "Google Calendar", importacoes: "Importações", empresas: "Empresas", vendedores: "Vendedores", auditoria_operacional: "Auditoria operacional", excecao_preco_minimo: "Exceção preço mínimo",
 };
 
 export const routeResourceMap: Record<string, PermissionResource> = {
-  "/": "dashboard", "/clientes": "clientes", "/agenda": "agenda", "/proximas-acoes": "proximas_acoes", "/lancamentos": "lancamentos", "/funil": "funil", "/orcamentos": "orcamentos", "/produtos": "produtos", "/metas": "metas", "/rotas": "rotas", "/prioridades": "prioridades", "/eventos": "eventos", "/relatorios": "relatorios", "/configuracoes": "configuracoes", "/meu-acesso": "dashboard",
+  "/": "dashboard", "/clientes": "clientes", "/agenda": "agenda", "/proximas-acoes": "proximas_acoes", "/lancamentos": "lancamentos", "/funil": "funil", "/orcamentos": "orcamentos", "/negocios": "negocios", "/produtos": "produtos", "/metas": "metas", "/rotas": "rotas", "/prioridades": "prioridades", "/eventos": "eventos", "/relatorios": "relatorios", "/configuracoes": "configuracoes", "/meu-acesso": "dashboard",
 };
 
 const emptyPermission = (resource: PermissionResource): UserPermission => ({ resource, can_view: false, can_create: false, can_edit: false, can_delete: false, can_import: false, can_export: false, can_manage: false });
@@ -71,8 +71,8 @@ export function roleTemplate(role: UserRole | string | null | undefined): UserPe
   if (normalized === "administrador") return permissionResources.map(fullPermission);
   if (normalized === "visualizador") return permissionResources.map(readPermission);
   const allowed = new Set<PermissionResource>(normalized === "gestor"
-    ? ["dashboard", "clientes", "agenda", "funil", "orcamentos", "metas", "relatorios"]
-    : ["dashboard", "clientes", "agenda", "proximas_acoes", "lancamentos", "funil", "orcamentos", "relatorios"]);
+    ? ["dashboard", "clientes", "agenda", "funil", "orcamentos", "negocios", "metas", "relatorios"]
+    : ["dashboard", "clientes", "agenda", "proximas_acoes", "lancamentos", "funil", "orcamentos", "negocios", "relatorios"]);
   return permissionResources.map((resource) => {
     if (!allowed.has(resource)) return emptyPermission(resource);
     return { ...readPermission(resource), can_create: resource !== "relatorios" && resource !== "dashboard", can_edit: resource !== "relatorios" && resource !== "dashboard", can_delete: normalized === "gestor" && !["dashboard", "relatorios"].includes(resource), can_export: resource === "relatorios", can_manage: false };
