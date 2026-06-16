@@ -41,11 +41,33 @@ const item = {
   horario: "09:30",
 };
 
+function createTestLocalStorage() {
+  const storage = new Map<string, string>();
+  return {
+    getItem: vi.fn((key: string) => storage.get(key) ?? null),
+    setItem: vi.fn((key: string, value: string) => { storage.set(key, value); }),
+    removeItem: vi.fn((key: string) => { storage.delete(key); }),
+    clear: vi.fn(() => { storage.clear(); }),
+  };
+}
+
+function buildTestWindow(overrides: Record<string, unknown> = {}) {
+  return {
+    ...globalThis.window,
+    setTimeout: globalThis.setTimeout.bind(globalThis),
+    clearTimeout: globalThis.clearTimeout.bind(globalThis),
+    localStorage: createTestLocalStorage(),
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
-  resetGoogleCalendarAuthForTests();
-  disconnectGoogleCalendar();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  vi.stubGlobal("window", buildTestWindow());
+  vi.stubGlobal("navigator", { onLine: true });
+  resetGoogleCalendarAuthForTests();
+  disconnectGoogleCalendar();
 });
 
 describe("payload do Google Calendar", () => {
@@ -295,7 +317,7 @@ async function authorizeGoogleCalendar(expiresIn = 3600) {
 function mockGoogleIdentity(response: { access_token?: string; expires_in?: number; error?: string; error_description?: string }) {
   const requestAccessToken = vi.fn(() => tokenCallback(response));
   let tokenCallback: (response: typeof response) => void = () => undefined;
-  vi.stubGlobal("window", {
+  vi.stubGlobal("window", buildTestWindow({
     google: {
       accounts: {
         oauth2: {
@@ -306,7 +328,7 @@ function mockGoogleIdentity(response: { access_token?: string; expires_in?: numb
         },
       },
     },
-  });
+  }));
   vi.stubGlobal("document", {
     querySelector: vi.fn(() => null),
     createElement: vi.fn(() => ({ set src(_value: string) {}, async: true, defer: true, onload: null as null | (() => void), onerror: null as null | (() => void) })),

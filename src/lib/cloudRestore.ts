@@ -21,6 +21,7 @@ export type AccessStatus = "pending" | "active" | "blocked" | "inactive";
 export type CloudRestoreContext = {
   session: Session | null;
   accessStatus: AccessStatus;
+  accountOwnerUserId?: string | null;
 };
 
 export type AccountSnapshot = Record<SyncableStore, Array<Record<string, unknown>>>;
@@ -93,7 +94,8 @@ function ensureCanRestore(context: CloudRestoreContext) {
   if (!context.session?.user) throw new Error("Usuário não autenticado.");
   if (normalizeAccessStatus(context.accessStatus) !== "active") throw new Error("Usuário ainda não aprovado para sincronização.");
   if (typeof navigator !== "undefined" && !navigator.onLine) throw new Error("Sem conexão com a internet.");
-  return { client: supabase, userId: context.session.user.id };
+  if (!context.accountOwnerUserId) throw new Error("Conta comercial (accountOwnerUserId) obrigatória ausente; restauração bloqueada.");
+  return { client: supabase, userId: context.session.user.id, accountOwnerUserId: context.accountOwnerUserId };
 }
 
 function friendlySupabaseError(message: string) {
@@ -126,12 +128,13 @@ export function buildAccountSnapshotFromRemoteRows(rowsByStore: Partial<Record<S
 }
 
 export async function fetchAccountSnapshot(context: CloudRestoreContext): Promise<AccountSnapshot> {
-  const { client } = ensureCanRestore(context);
+  const { client, accountOwnerUserId } = ensureCanRestore(context);
   const rowsByStore = Object.fromEntries(
     await Promise.all(SYNCABLE_CLOUD_STORES.map(async (store) => {
       const { data, error } = await client
         .from(LOCAL_TO_REMOTE_TABLE[store])
         .select("id,user_id,payload,created_at,updated_at,deleted_at")
+        .eq("user_id", accountOwnerUserId)
         .is("deleted_at", null);
 
       if (error) throw new Error(friendlySupabaseError(error.message));
@@ -159,7 +162,7 @@ export async function compareLocalWithAccountSnapshot(context: CloudRestoreConte
     const localRecords = await readLocalRecords(store);
     const remoteRows: RemoteRow[] = snapshot[store].map((payload) => ({
       id: String(payload.id),
-      user_id: context.session?.user.id ?? "",
+      user_id: context.accountOwnerUserId ?? "",
       payload,
       created_at: null,
       updated_at: null,

@@ -61,7 +61,7 @@ export async function runControlledUploadSync(
   let pendingItems;
   try {
     if (options.forceFullSnapshot || (options.mode === "manual" && !context.firstUploadConfirmed)) {
-      await enqueueFullLocalSnapshotForSync();
+      await enqueueFullLocalSnapshotForSync({ session: context.session, accessStatus: "active", accountOwnerUserId: context.accountOwnerUserId });
     }
     pendingItems = await getPendingSyncItems();
   } catch (error) {

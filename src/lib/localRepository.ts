@@ -102,11 +102,38 @@ async function seedInitialData(db: IDBDatabase) {
 }
 
 export async function getStoreIds(store: StoreName): Promise<string[]> {
+  const records = await getLocalStoreRecords<{ id?: string }>(store);
+  return records.map((record) => record.id).filter((id): id is string => Boolean(id));
+}
+
+export async function getLocalStoreRecords<T extends { id?: string }>(store: StoreName): Promise<T[]> {
   return withDb(async (db) => {
     const tx = db.transaction(store, "readonly");
-    const records = (await promisifyRequest(tx.objectStore(store).getAll())) as Array<{ id?: string }>;
-    return records.map((record) => record.id).filter((id): id is string => Boolean(id));
+    return (await promisifyRequest(tx.objectStore(store).getAll())) as T[];
   });
+}
+
+export async function putLocalEntity<T extends { id: string }>(store: StoreName, entity: T) {
+  const dataToSave = (store === "clientes" ? normalizeClientesForPersistence([entity] as never[])[0] : entity) as T;
+  return withDb(async (db) => {
+    const tx = db.transaction(store, "readwrite");
+    tx.objectStore(store).put(dataToSave);
+    await waitForTransaction(tx);
+    await writeDbMeta(db, {});
+  });
+}
+
+export async function deleteLocalEntity(store: StoreName, id: string) {
+  return withDb(async (db) => {
+    const tx = db.transaction(store, "readwrite");
+    tx.objectStore(store).delete(id);
+    await waitForTransaction(tx);
+    await writeDbMeta(db, {});
+  });
+}
+
+export async function replaceLocalStoreFromRemote<T extends { id: string }>(store: StoreName, snapshot: T[]) {
+  return saveStore(store, snapshot);
 }
 
 export async function saveStore<T extends { id: string }>(store: StoreName, list: T[]) {

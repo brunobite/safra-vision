@@ -125,7 +125,12 @@ D. Base oficial online
 - confirmar que a abertura online hidrata o cache local pela nuvem;
 - confirmar que pendências locais são enviadas antes da hidratação.
 
-E. Restauração
+E. Conflito
+- editar o mesmo cliente em dois dispositivos antes de sincronizar;
+- confirmar que o painel mostra Conflito e exige revisão manual;
+- confirmar que fila conflict não desaparece até resolução.
+
+F. Restauração
 - dispositivo novo/incompleto;
 - carregar dados da conta;
 - confirmar local = nuvem.`;

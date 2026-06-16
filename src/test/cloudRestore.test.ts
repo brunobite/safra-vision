@@ -49,6 +49,7 @@ vi.mock("@/lib/syncQueue", () => ({
   markSyncItemError: vi.fn(),
   markSyncItemProcessing: vi.fn(),
   markSyncItemSynced: vi.fn(),
+  markSyncItemConflict: vi.fn(),
 }));
 
 const activeRow = (id: string, payload: Record<string, unknown>): RemoteRow => ({
@@ -89,7 +90,8 @@ describe("cloudRestore", () => {
       formasPagamento: [activeRow("f1", { nome: "Pix" })],
     });
 
-    expect(snapshot.clientes).toEqual([{ id: "c1", nome: "Cliente real" }]);
+    expect(snapshot.clientes).toHaveLength(1);
+    expect(snapshot.clientes[0]).toMatchObject({ id: "c1", nome: "Cliente real", areaHa: 0, potencialTotal: 0 });
     expect(snapshot.proximasAcoes).toEqual([{ id: "a1", titulo: "Ação" }]);
     expect(snapshot.formasPagamento).toEqual([{ id: "f1", nome: "Pix" }]);
     expect(REMOTE_TO_LOCAL_STORE.proximas_acoes).toBe("proximasAcoes");
@@ -132,7 +134,8 @@ describe("cloudRestore", () => {
 
     const result = await restoreAccountSnapshotToLocal(snapshot);
 
-    expect(dbState.get("clientes")).toEqual([{ id: "c1", nome: "Nuvem" }]);
+    expect(dbState.get("clientes")).toHaveLength(1);
+    expect(dbState.get("clientes")?.[0]).toMatchObject({ id: "c1", nome: "Nuvem", areaHa: 0, potencialTotal: 0 });
     expect(dbState.get("produtos")).toEqual([{ id: "p1", nome: "Produto", precoLista: 100, custo: 60, estoqueAtual: 20, estoqueReservado: 3, controlaEstoque: true, localEstoque: "Depósito" }]);
     expect(dbState.get("clientes")).not.toContainEqual(expect.objectContaining({ id: "c2" }));
     expect(dbState.get("importLogs")).toEqual([{ id: "log-1", file: "clientes.csv" }]);
@@ -185,6 +188,7 @@ describe("cloudRestore", () => {
     const comparison = await restoredModule.compareLocalWithAccountSnapshot({
       session: { user: { id: "user-1" } } as never,
       accessStatus: "active",
+      accountOwnerUserId: "user-1",
     });
 
     expect(comparison.totals.localCount).toBe(4);
