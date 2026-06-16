@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useAppStore } from "@/store/AppStore";
-import { EtapaOportunidade, Orcamento, OrcamentoItem, OrcamentoStatus, UnidadeDose } from "@/types";
+import { EtapaOportunidade, Negocio, Orcamento, OrcamentoItem, OrcamentoStatus, Produto, UnidadeDose } from "@/types";
 import { fmtBRL } from "@/utils/calculations";
 import { toast } from "sonner";
 import { useSearchParams } from "react-router-dom";
@@ -30,7 +30,7 @@ const sameText = (a?: string | null, b?: string | null) => Boolean(a && b && a.t
 const novoItem = (idx: number, areaHa = 0): OrcamentoItem => ({ id: `i${Date.now()}-${idx}`, produtoId: "", produtoNome: "", categoria: "", unidadeProduto: "LT", dosePorHa: 0, unidadeDose: "L/ha", areaHa, quantidadeTotal: 0, precoUnitario: 0, precoMinimo: 0, desconto: 0, valorTotalItem: 0, custoPorHaItem: 0 });
 
 export default function Orcamentos() {
-  const { orcamentos, setOrcamentos, clientes, produtos, setProdutos, empresas, oportunidades, formasPagamento, prazosPagamento, proximasAcoes, setProximasAcoes, setOportunidades, setHistoricoFunil } = useAppStore();
+  const { orcamentos, setOrcamentos, negocios, setNegocios, clientes, produtos, setProdutos, empresas, oportunidades, formasPagamento, prazosPagamento, proximasAcoes, setProximasAcoes, setOportunidades, setHistoricoFunil } = useAppStore();
   const { role, accessStatus, user, session, vendedorNome, vendedorId, permissions, accountOwnerUserId } = useAuth();
   const permissionContext = { role, accessStatus, email: user?.email, vendedorNome, vendedorId, permissions };
   const canViewOrcamentos = canView("orcamentos", permissionContext);
@@ -39,6 +39,8 @@ export default function Orcamentos() {
   const canExportOrcamentos = canExport("orcamentos", permissionContext);
   const canManageOrcamentos = canManage("orcamentos", permissionContext);
   const canDeleteOrcamentos = canDelete("orcamentos", permissionContext) || canManageOrcamentos;
+  const canCreateNegocios = canCreate("negocios", permissionContext);
+  const canManageNegocios = canManage("negocios", permissionContext);
   const canUseMinimumPriceException = canSaveBelowMinimumPrice(permissionContext);
   const persistenceOptions = { session, accessStatus, accountOwnerUserId, actorUserId: user?.id, actorNome: vendedorNome || user?.user_metadata?.nome || user?.email, actorPapel: role };
   const [params] = useSearchParams();
@@ -58,6 +60,8 @@ export default function Orcamentos() {
   const now = new Date().toISOString();
 
   const [open, setOpen] = useState(false);
+  const [closeSaleTarget, setCloseSaleTarget] = useState<Orcamento | null>(null);
+  const [closingSale, setClosingSale] = useState(false);
   const [edit, setEdit] = useState<Orcamento | null>(null);
   const [motivoRevisao, setMotivoRevisao] = useState("");
   const [form, setForm] = useState<Orcamento>({ id: "", codigo: `ORC-${Date.now()}`, versao: 1, clienteId: "", empresaId: empresaPadrao, vendedor: "", data: now.slice(0, 10), validade: validade7(now.slice(0, 10)), status: "Rascunho", areaAplicacaoHa: 0, itens: [], subtotal: 0, descontoTotal: 0, valorTotal: 0, custoPorHectare: 0, createdAt: now, updatedAt: now, prazoPagamento: prazoPagamentoPadrao, formaPagamento: formaPagamentoPadrao });
@@ -200,7 +204,6 @@ export default function Orcamentos() {
     if (excecoesPreco.length) void recordAuditLog({ action: "preco_abaixo_minimo_autorizado", resource: "orcamentos", entityId: idNovo, entityLabel: payload.codigo, metadata: { itens: excecoesPreco.map((it) => ({ produtoId: it.produtoId, precoUnitario: it.precoUnitario, desconto: it.desconto, precoMinimo: it.precoMinimo })) } });
     if (payload.status === "Aprovado") {
       void recordAuditLog({ action: "aprovar_orcamento", resource: "orcamentos", entityId: idNovo, entityLabel: payload.codigo });
-      setProdutos((prev) => prev.map((p) => { const item = payload.itens.find((it) => it.produtoId === p.id && it.controlaEstoque && !it.representacaoComissionado); return item ? { ...p, estoqueReservado: (p.estoqueReservado || 0) + item.quantidadeTotal } : p; }));
     }
     if (payload.status === "Cancelado") void recordAuditLog({ action: "cancelar_orcamento", resource: "orcamentos", entityId: idNovo, entityLabel: payload.codigo });
 
@@ -270,6 +273,115 @@ export default function Orcamentos() {
     toast.success("Orçamento convertido em oportunidade.");
   };
 
+
+  const canConvertOrcamentoToSale = (orcamento: Orcamento) => {
+    if (!canCreateNegocios && !canManageNegocios) return false;
+    if (isAdmin) return true;
+    return canSeeOrcamento(orcamento);
+  };
+
+  const negocioVinculado = (orcamento: Orcamento) => negocios.find((negocio) => negocio.orcamentoId === orcamento.id || negocio.id === orcamento.negocioId);
+
+  const produtosComReserva = (orcamento: Orcamento) => orcamento.itens
+    .filter((item) => {
+      const produto = produtos.find((p) => p.id === item.produtoId);
+      return Boolean(item.produtoId && item.quantidadeTotal > 0 && (item.controlaEstoque || produto?.controlaEstoque) && !(item.representacaoComissionado || produto?.representacaoComissionado));
+    })
+    .map((item) => ({ item, produto: produtos.find((p) => p.id === item.produtoId)! }))
+    .filter((entry): entry is { item: OrcamentoItem; produto: Produto } => Boolean(entry.produto));
+
+  const confirmarFecharVenda = async () => {
+    const orcamento = closeSaleTarget;
+    if (!orcamento) return;
+    if (orcamento.status !== "Aprovado") return toast.error("Apenas orçamento aprovado pode ser fechado como venda.");
+    if (!canConvertOrcamentoToSale(orcamento)) return toast.error("Você não tem permissão para fechar esta venda.");
+    const existente = negocioVinculado(orcamento);
+    if (existente) return toast.error(`Venda já criada: ${existente.codigo || existente.id}.`);
+    setClosingSale(true);
+    const current = new Date().toISOString();
+    const cliente = clientes.find((c) => c.id === orcamento.clienteId);
+    const empresa = empresas.find((e) => e.id === orcamento.empresaId);
+    const margemBruta = orcamento.itens.reduce((sum, item) => sum + ((item.precoUnitario - (item.desconto || 0)) * item.quantidadeTotal - (item.custoPorHaItem || 0) * (item.areaHa || orcamento.areaAplicacaoHa || 0)), 0);
+    const negocio: Negocio = {
+      id: `neg-${orcamento.id}`,
+      codigo: `VEN-${orcamento.codigo.replace(/^ORC-?/, "")}`,
+      nome: `Venda do orçamento ${orcamento.codigo}`,
+      orcamentoId: orcamento.id,
+      oportunidadeId: orcamento.oportunidadeId,
+      clienteId: orcamento.clienteId,
+      clienteNome: cliente?.nome,
+      empresaId: orcamento.empresaId,
+      empresaNome: empresa?.nomeFantasia,
+      vendedor: orcamento.vendedor || orcamento.responsavel || "",
+      vendedorId: orcamento.vendedorId || orcamento.responsavelId,
+      vendedorUserId: orcamento.vendedorUserId || orcamento.responsavelUserId,
+      vendedorNome: orcamento.vendedorNome || orcamento.responsavelNome || orcamento.vendedor,
+      responsavel: orcamento.responsavel || orcamento.vendedor,
+      responsavelId: orcamento.responsavelId || orcamento.vendedorId,
+      responsavelUserId: orcamento.responsavelUserId || orcamento.vendedorUserId,
+      responsavelNome: orcamento.responsavelNome || orcamento.vendedorNome || orcamento.vendedor,
+      createdByUserId: user?.id,
+      updatedByUserId: user?.id,
+      origem: "Orçamento",
+      produtos: orcamento.itens.map((item) => item.produtoId).filter(Boolean),
+      categoria: (orcamento.itens[0]?.categoria || "Outros") as Negocio["categoria"],
+      valorPotencial: orcamento.valorTotal,
+      valorFechado: orcamento.valorTotal,
+      valorTotal: orcamento.valorTotal,
+      subtotal: orcamento.subtotal,
+      descontoTotal: orcamento.descontoTotal,
+      margemBruta,
+      margemPercentual: orcamento.valorTotal > 0 ? (margemBruta / orcamento.valorTotal) * 100 : 0,
+      formaPagamento: orcamento.formaPagamento,
+      prazoPagamento: orcamento.prazoPagamento,
+      prazoEntrega: orcamento.prazoEntrega,
+      itens: orcamento.itens,
+      itensEstimados: orcamento.itens,
+      observacoes: orcamento.observacoes,
+      status: "Pendente de faturamento",
+      dataFechamento: current.slice(0, 10),
+      dataPrevistaFaturamento: current.slice(0, 10),
+      dataPrevistaEntrega: orcamento.validade,
+      previsaoFechamento: current.slice(0, 10),
+      dataCriacao: current,
+      ultimaAtualizacao: current,
+      createdAt: current,
+      updatedAt: current,
+      estoqueReservado: true,
+      estoqueBaixado: false,
+    };
+    const orcamentoConvertido: Orcamento = { ...orcamento, status: "Convertido", negocioId: negocio.id, updatedAt: current, updatedByUserId: user?.id };
+    const oportunidadeAtual = orcamento.oportunidadeId ? oportunidades.find((o) => o.id === orcamento.oportunidadeId) : undefined;
+    const oportunidadeGanha = oportunidadeAtual ? { ...oportunidadeAtual, etapa: "Ganha" as EtapaOportunidade, negocioId: negocio.id, orcamentoId: orcamento.id, valorFinal: orcamento.valorTotal, dataFechamento: current.slice(0, 10), updatedAt: current, updatedByUserId: user?.id } : undefined;
+    const reservas = produtosComReserva(orcamento);
+    const produtosAtualizados = produtos.map((produto) => {
+      const reserva = reservas.find((entry) => entry.produto.id === produto.id);
+      return reserva ? { ...produto, estoqueReservado: (produto.estoqueReservado || 0) + reserva.item.quantidadeTotal, updatedAt: current, ultimaAtualizacao: current, updatedByUserId: user?.id } : produto;
+    });
+    try {
+      await saveEntityCloudFirst("negocios", negocio, { ...persistenceOptions, auditAction: "criar_negocio", resource: "negocios", afterData: negocio, auditMetadata: { action: "fechar_venda", orcamentoId: orcamento.id, oportunidadeId: orcamento.oportunidadeId, clienteId: orcamento.clienteId, valor: orcamento.valorTotal, produtosAfetados: reservas.map((r) => ({ produtoId: r.item.produtoId, quantidade: r.item.quantidadeTotal })) } });
+      await saveEntityCloudFirst("orcamentos", orcamentoConvertido, { ...persistenceOptions, auditAction: "converter_orcamento_negocio", resource: "orcamentos", beforeData: orcamento, afterData: orcamentoConvertido, auditMetadata: { negocioId: negocio.id, valor: negocio.valorTotal } });
+      if (oportunidadeGanha) await saveEntityCloudFirst("oportunidades", oportunidadeGanha, { ...persistenceOptions, auditAction: "oportunidade_ganha_por_orcamento", resource: "oportunidades", beforeData: oportunidadeAtual, afterData: oportunidadeGanha, auditMetadata: { orcamentoId: orcamento.id, negocioId: negocio.id } });
+      for (const reserva of reservas) {
+        const produtoAtualizado = produtosAtualizados.find((p) => p.id === reserva.produto.id)!;
+        await saveEntityCloudFirst("produtos", produtoAtualizado, { ...persistenceOptions, auditAction: "reservar_estoque_negocio", resource: "produtos", beforeData: reserva.produto, afterData: produtoAtualizado, auditMetadata: { negocioId: negocio.id, orcamentoId: orcamento.id, quantidadeReservada: reserva.item.quantidadeTotal } });
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Falha ao fechar venda.");
+      setClosingSale(false);
+      return;
+    }
+    setNegocios((prev) => [negocio, ...prev.filter((n) => n.id !== negocio.id && n.orcamentoId !== orcamento.id)]);
+    setOrcamentos((prev) => prev.map((o) => o.id === orcamento.id ? orcamentoConvertido : o));
+    if (oportunidadeGanha) setOportunidades((prev) => prev.map((o) => o.id === oportunidadeGanha.id ? oportunidadeGanha : o));
+    if (oportunidadeAtual) setHistoricoFunil((prev) => [{ id: `hf${Date.now()}-${negocio.id}`, oportunidadeId: oportunidadeAtual.id, clienteId: oportunidadeAtual.clienteId, etapaAnterior: oportunidadeAtual.etapa, etapaNova: "Ganha", dataMovimento: current, vendedor: negocio.vendedor, observacao: `Venda ${negocio.codigo} criada a partir do orçamento ${orcamento.codigo}.`, createdAt: current }, ...prev]);
+    setProdutos(produtosAtualizados);
+    void recordAuditLog({ action: "fechar_venda", resource: "negocios", entityId: negocio.id, entityLabel: negocio.codigo, metadata: { orcamentoId: orcamento.id, oportunidadeId: orcamento.oportunidadeId, clienteId: orcamento.clienteId, valor: negocio.valorTotal, produtosAfetados: reservas.map((r) => ({ produtoId: r.item.produtoId, quantidade: r.item.quantidadeTotal })) } });
+    setClosingSale(false);
+    setCloseSaleTarget(null);
+    toast.success("Venda criada e orçamento convertido.");
+  };
+
   const excluirOrcamento = async (orcamento: Orcamento) => {
     if (!canDeleteOrcamento(orcamento)) return toast.error("Você não tem permissão para excluir este orçamento.");
     if (!window.confirm(`Excluir o orçamento ${orcamento.codigo}? Esta ação não deve retornar após sincronização.`)) return;
@@ -302,11 +414,29 @@ export default function Orcamentos() {
           <Button size="sm" variant="outline" onClick={() => { setEdit(o); setForm(o); setMotivoRevisao(o.motivoRevisao || ""); setOpen(true); }}>{isOrcamentoBloqueado(o, oportunidades) ? "Ver orçamento" : "Abrir/Editar"}</Button>
           <Button size="sm" variant="outline" onClick={() => { if (!canExportOrcamentos) return toast.error("Você não tem permissão para exportar orçamentos."); void recordAuditLog({ action: "gerar_pdf_orcamento", resource: "orcamentos", entityId: o.id, entityLabel: o.codigo }); gerarPdfOrcamento(o, clientes.find((c) => c.id === o.clienteId), empresas.find((e) => e.id === o.empresaId), oportunidades.find((op) => op.id === o.oportunidadeId)); }}>PDF</Button>
           <Button size="sm" onClick={() => criarNovaVersao(o)} disabled={isOrcamentoBloqueado(o, oportunidades) || !canCreateOrcamentos}>Criar nova versão</Button>
-          <Button size="sm" variant="secondary" onClick={() => converterEmOportunidade(o)} disabled={o.status !== "Aprovado" || !canManageOrcamentos}>Converter</Button>
+          {negocioVinculado(o) ? <Button size="sm" variant="secondary" disabled>Venda já criada</Button> : <Button size="sm" variant="secondary" onClick={() => setCloseSaleTarget(o)} disabled={o.status !== "Aprovado" || !canConvertOrcamentoToSale(o)}>Fechar venda</Button>}
+          <Button size="sm" variant="outline" onClick={() => converterEmOportunidade(o)} disabled={o.status !== "Aprovado" || !canManageOrcamentos}>Converter oportunidade</Button>
           <Button size="sm" variant="destructive" onClick={() => void excluirOrcamento(o)} disabled={!canDeleteOrcamento(o)}>Excluir</Button>
         </div>
       </div>
     </Card>)}
+
+
+    <Dialog open={!!closeSaleTarget} onOpenChange={(v) => !v && setCloseSaleTarget(null)}><DialogContent className="max-w-3xl"><DialogHeader><DialogTitle>Fechar venda</DialogTitle></DialogHeader>
+      {closeSaleTarget && <div className="space-y-3 text-sm">
+        <Card className="p-3"><div className="grid gap-2 md:grid-cols-2">
+          <div><b>Cliente:</b> {clientes.find((c) => c.id === closeSaleTarget.clienteId)?.nome || closeSaleTarget.clienteId}</div>
+          <div><b>Responsável:</b> {closeSaleTarget.responsavelNome || closeSaleTarget.vendedorNome || closeSaleTarget.responsavel || closeSaleTarget.vendedor || "-"}</div>
+          <div><b>Valor total:</b> {fmtBRL(closeSaleTarget.valorTotal)}</div>
+          <div><b>Pagamento:</b> {closeSaleTarget.formaPagamento || "-"} · {closeSaleTarget.prazoPagamento || "-"}</div>
+          <div><b>Previsão faturamento:</b> {formatDateBR(new Date().toISOString().slice(0, 10))}</div>
+          <div><b>Previsão entrega:</b> {formatDateBR(closeSaleTarget.validade) || closeSaleTarget.prazoEntrega || "-"}</div>
+        </div></Card>
+        <Card className="p-3"><b>Produtos</b><div className="mt-2 space-y-1">{closeSaleTarget.itens.map((item) => <div key={item.id} className="flex justify-between gap-2"><span>{item.produtoNome || item.produtoId} · {item.quantidadeTotal.toLocaleString("pt-BR")} {item.unidadeProduto}</span><span>{fmtBRL(item.valorTotalItem)}</span></div>)}</div></Card>
+        {negocioVinculado(closeSaleTarget) && <Card className="border-amber-500 bg-amber-50 p-3 text-amber-900">Venda já criada para este orçamento.</Card>}
+      </div>}
+      <DialogFooter><Button variant="outline" onClick={() => setCloseSaleTarget(null)}>Cancelar</Button><Button onClick={() => void confirmarFecharVenda()} disabled={closingSale || !closeSaleTarget || Boolean(closeSaleTarget && negocioVinculado(closeSaleTarget))}>{closingSale ? "Fechando..." : "Confirmar fechamento"}</Button></DialogFooter>
+    </DialogContent></Dialog>
 
     <Dialog open={open} onOpenChange={setOpen}><DialogContent className="max-h-[90vh] overflow-y-auto max-w-6xl"><DialogHeader><DialogTitle>{edit ? "Editar" : "Novo"} orçamento</DialogTitle></DialogHeader>
       {orcamentoBloqueado && <Card className="border-amber-500 bg-amber-50 p-3 text-amber-900">Orçamento bloqueado: oportunidade já fechada. Para nova negociação, crie uma nova oportunidade.</Card>}

@@ -226,7 +226,13 @@ export default function Dashboard() {
       aprovados: orcamentosPorStatus.Aprovado || 0,
       perdidos: (orcamentosPorStatus.Perdido || 0) + (orcamentosPorStatus.Recusado || 0) + (orcamentosPorStatus.Vencido || 0) + (orcamentosPorStatus.Reprovado || 0) + (orcamentosPorStatus.Expirado || 0) + (orcamentosPorStatus.Cancelado || 0),
     };
-    const negociosGanhos = scoped.negociosFiltrados.filter((negocio) => negocio.status === "Fechado ganho");
+    const negociosGanhos = scoped.negociosFiltrados.filter((negocio) => negocio.status === "Fechado ganho" || negocio.status === "Fechado" || negocio.status === "Pendente de faturamento" || negocio.status === "Faturado" || negocio.status === "Entregue");
+    const negociosPendentesFaturamento = scoped.negociosFiltrados.filter((negocio) => negocio.status === "Pendente de faturamento" || negocio.status === "Fechado");
+    const negociosFaturados = scoped.negociosFiltrados.filter((negocio) => negocio.status === "Faturado" || negocio.status === "Entregue");
+    const valorVendido = negociosGanhos.reduce((sum, negocio) => sum + (negocio.valorTotal || negocio.valorFechado || negocio.valorPotencial || 0), 0);
+    const valorPendenteFaturamento = negociosPendentesFaturamento.reduce((sum, negocio) => sum + (negocio.valorTotal || negocio.valorFechado || negocio.valorPotencial || 0), 0);
+    const valorFaturado = negociosFaturados.reduce((sum, negocio) => sum + (negocio.valorTotal || negocio.valorFechado || negocio.valorPotencial || 0), 0);
+    const taxaConversaoOrcamentoVenda = (orcamentosPorStatus.Aprovado || 0) + (orcamentosPorStatus.Convertido || 0) > 0 ? (orcamentosPorStatus.Convertido || 0) / ((orcamentosPorStatus.Aprovado || 0) + (orcamentosPorStatus.Convertido || 0)) : 0;
     const oportunidadesGanhas = scoped.oportunidadesFiltradas.filter((oportunidade) => oportunidade.etapa === "Ganha");
     const oportunidadesPerdidas = scoped.oportunidadesFiltradas.filter((oportunidade) => oportunidade.etapa === "Perdida");
     const taxaConversao = oportunidadesGanhas.length + oportunidadesPerdidas.length
@@ -292,6 +298,10 @@ export default function Dashboard() {
       oportunidadesCriticas,
       orcamentoBuckets,
       negociosGanhos,
+      valorVendido,
+      valorPendenteFaturamento,
+      valorFaturado,
+      taxaConversaoOrcamentoVenda,
       taxaConversao,
       previsaoFechamento,
       rankingVendedor,
@@ -376,6 +386,10 @@ export default function Dashboard() {
         <KpiCard label="Orç. abertos/enviados" value={`${dashboard.orcamentoBuckets.abertos}/${dashboard.orcamentoBuckets.enviados}`} icon={FileText} />
         <KpiCard label="Orç. aprov./perd." value={`${dashboard.orcamentoBuckets.aprovados}/${dashboard.orcamentoBuckets.perdidos}`} icon={Award} />
         <KpiCard label="Negócios ganhos" value={fmtNum(dashboard.negociosGanhos.length)} icon={Award} tone="success" />
+        <KpiCard label="Valor vendido" value={fmtBRLCompact(dashboard.valorVendido)} hint={fmtBRL(dashboard.valorVendido)} icon={Award} tone="success" />
+        <KpiCard label="Pendente faturamento" value={fmtBRLCompact(dashboard.valorPendenteFaturamento)} hint={fmtBRL(dashboard.valorPendenteFaturamento)} icon={Clock} />
+        <KpiCard label="Valor faturado" value={fmtBRLCompact(dashboard.valorFaturado)} hint={fmtBRL(dashboard.valorFaturado)} icon={TrendingUp} tone="success" />
+        <KpiCard label="Conv. orçamento→venda" value={fmtPct(dashboard.taxaConversaoOrcamentoVenda)} icon={Percent} />
         <KpiCard label="Conversão estimada" value={fmtPct(dashboard.taxaConversao)} icon={Percent} />
       </div>
 
