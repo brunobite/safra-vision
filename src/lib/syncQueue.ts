@@ -114,11 +114,70 @@ export async function enqueueSyncItem(input: Omit<SyncQueueItem, "id" | "created
   });
 }
 
+export type SyncQueueCategory = "pending" | "conflict" | "orphaned" | "obsolete" | "network-session-error" | "synced" | "processing";
+
+const NETWORK_SESSION_ERROR_PATTERN = /(rede|network|fetch|sess[aã]o|session|autentic|internet|rls|aprovad|supabase|timeout|tempo excedido)/i;
+
+export function categorizeSyncQueueItem(item: SyncQueueItem): SyncQueueCategory {
+  if (item.status === "conflict") return "conflict";
+  if (item.status === "orphaned" || !item.accountOwnerUserId) return "orphaned";
+  if (item.status === "obsolete" || !TRACKED_STORES.has(item.store as StoreName)) return "obsolete";
+  if (item.status === "synced") return "synced";
+  if (item.status === "processing") return "processing";
+  if (item.status === "error" && NETWORK_SESSION_ERROR_PATTERN.test(item.lastError ?? "")) return "network-session-error";
+  return "pending";
+}
+
+export function isAutoRetryableSyncQueueItem(item: SyncQueueItem) {
+  const category = categorizeSyncQueueItem(item);
+  return category === "pending" || category === "network-session-error";
+}
+
+export function getSyncQueueDiagnostics(items: SyncQueueItem[]) {
+  const byCategory = items.reduce<Record<SyncQueueCategory, number>>((acc, item) => {
+    const category = categorizeSyncQueueItem(item);
+    acc[category] += 1;
+    return acc;
+  }, { pending: 0, conflict: 0, orphaned: 0, obsolete: 0, "network-session-error": 0, synced: 0, processing: 0 });
+
+  return {
+    total: items.length,
+    pendingUpload: byCategory.pending + byCategory["network-session-error"],
+    conflicts: byCategory.conflict,
+    orphaned: byCategory.orphaned,
+    obsolete: byCategory.obsolete,
+    networkSessionErrors: byCategory["network-session-error"],
+    processing: byCategory.processing,
+    synced: byCategory.synced,
+    byCategory,
+  };
+}
+
 export async function getPendingSyncItems() {
   return withDb(async (db) => {
     const tx = db.transaction(STORE_NAME, "readonly");
     const items = await promisifyRequest(tx.objectStore(STORE_NAME).getAll()) as SyncQueueItem[];
-    return items.filter((item) => ["pending", "pending-offline", "error", "conflict", "orphaned"].includes(item.status));
+    return items.filter(isAutoRetryableSyncQueueItem);
+  });
+}
+
+export async function exportSyncQueueDiagnostics() {
+  const items = await getAllSyncItems();
+  return { generatedAt: now(), diagnostics: getSyncQueueDiagnostics(items), items };
+}
+
+export async function clearOrphanedAndObsoleteSyncItems() {
+  return withDb(async (db) => {
+    const tx = db.transaction(STORE_NAME, "readwrite");
+    const os = tx.objectStore(STORE_NAME);
+    const items = await promisifyRequest(os.getAll()) as SyncQueueItem[];
+    const removable = items.filter((item) => ["orphaned", "obsolete"].includes(categorizeSyncQueueItem(item)));
+    removable.forEach((item) => os.delete(item.id));
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error ?? new Error("Erro ao limpar itens órfãos/legados da fila."));
+    });
+    return removable;
   });
 }
 

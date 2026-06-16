@@ -1,6 +1,6 @@
 import type { Session } from "@supabase/supabase-js";
 import { openAppDb, type StoreName } from "@/lib/db";
-import { compactSyncQueueItem, enqueueSyncItem, getAllSyncItems, markSyncItemConflict, removeSyncItemsForEntity, suppressNextSyncQueueItem, type SyncOperation } from "@/lib/syncQueue";
+import { categorizeSyncQueueItem, compactSyncQueueItem, enqueueSyncItem, getAllSyncItems, getSyncQueueDiagnostics, markSyncItemConflict, removeSyncItemsForEntity, suppressNextSyncQueueItem, type SyncOperation } from "@/lib/syncQueue";
 import { LOCAL_TO_REMOTE_TABLE, syncPendingQueue, type RemoteRow, type SyncableStore, type SyncSummary } from "@/lib/supabaseSync";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 import { normalizeAccessStatus } from "@/lib/accessStatus";
@@ -252,16 +252,17 @@ export async function diagnosePendingQueue(): Promise<QueueDiagnostics> {
   const items = await getAllSyncItems();
   const byEntity = new Map<string, typeof items>();
   items.forEach((item) => byEntity.set(queueKey(item.store, item.entityId), [...(byEntity.get(queueKey(item.store, item.entityId)) ?? []), item]));
+  const diagnostics = getSyncQueueDiagnostics(items);
   return {
     total: items.length,
-    validas: items.filter((i) => Boolean(i.accountOwnerUserId) && (i.status === "pending" || i.status === "pending-offline" || i.status === "error")).length,
-    filasOrfas: items.filter((i) => !i.accountOwnerUserId).length,
+    validas: diagnostics.pendingUpload,
+    filasOrfas: diagnostics.orphaned,
     dadosSemNamespace: items.filter((i) => !i.accountOwnerUserId).length,
-    obsoletasSchemaAntigo: items.filter((i) => !LOCAL_TO_REMOTE_TABLE[i.store as SyncableStore]).length,
+    obsoletasSchemaAntigo: diagnostics.obsolete,
     duplicadasNamespaceAntigo: Array.from(byEntity.values()).filter((group) => group.length > 1).length,
-    conflitantes: items.filter((i) => i.status === "conflict").length + Array.from(byEntity.values()).filter((group) => group.some((i) => i.operation === "delete") && group.some((i) => i.operation === "upsert")).length,
-    falhasRedeSessao: items.filter((i) => /sess|network|fetch|rede|internet/i.test(i.lastError ?? "")).length,
-    exportBackupRecommended: items.some((i) => !i.accountOwnerUserId || i.status === "conflict"),
+    conflitantes: diagnostics.conflicts + Array.from(byEntity.values()).filter((group) => group.some((i) => i.operation === "delete") && group.some((i) => i.operation === "upsert")).length,
+    falhasRedeSessao: diagnostics.networkSessionErrors,
+    exportBackupRecommended: items.some((i) => ["orphaned", "conflict"].includes(categorizeSyncQueueItem(i))),
   };
 }
 
