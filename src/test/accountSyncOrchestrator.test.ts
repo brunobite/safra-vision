@@ -31,7 +31,7 @@ const comparison = (totals: Partial<LocalRemoteComparison["totals"]>): LocalRemo
 
 function deps(overrides: Partial<AccountSyncDependencies> = {}): AccountSyncDependencies {
   return {
-    getFreshAccessContext: vi.fn(async () => ({ session, accessStatus: "active" })),
+    getFreshAccessContext: vi.fn(async () => ({ session, accessStatus: "active", accountOwnerUserId: "owner-1" })),
     refreshPendingSyncCount: vi.fn(async () => 0),
     uploadPending: vi.fn(async () => ({ ok: true, summary: emptySummary(), meta: null })),
     compareLocalAndRemote: vi.fn(async () => comparison({ localCount: 0, remoteCount: 0 })),

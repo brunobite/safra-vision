@@ -3,7 +3,7 @@ import {
   Cliente, Lancamento, MetaEmpresa, MetaPessoal, Evento, PrioridadeP1Item,
   Negocio, Produto, RegraComissao, Vendedor, MetaVendedor, MetaCategoria, TicketMedioRegra, Orcamento, Empresa, ProximaAcao, FormaPagamento, PrazoPagamento, AppConfig, OportunidadeComercial, RelatorioVisita, HistoricoFunil,
 } from "@/types";
-import { bootstrapLocalDatabase, getStoreIds, saveStore } from "@/lib/localRepository";
+import { bootstrapLocalDatabase, deleteLocalEntity, getLocalStoreRecords, putLocalEntity, saveStore } from "@/lib/localRepository";
 import { restoreAccountSnapshotToLocal, type AccountSnapshot, type CloudRestoreResult } from "@/lib/cloudRestore";
 import { consumeSuppressedSyncQueueItem, enqueueSyncItem, getPendingSyncItems, shouldTrackSyncStore, suppressNextSyncQueueItem } from "@/lib/syncQueue";
 import { getAutoSyncCooldownRemaining, runControlledUploadSync, type AutoSyncAccessStatus, type AutoSyncContext, type AutoSyncResult } from "@/lib/autoSync";
@@ -229,10 +229,21 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     setIsSaving(true);
     setSaveError(null);
     try {
-      const previousIds = shouldTrackSyncStore(store) ? await getStoreIds(store) : [];
       const dataToPersist = (store === "clientes" ? normalizeClientesForPersistence(data as never[]) : data) as T[];
-      await saveStore(store, dataToPersist);
-      if (shouldTrackSyncStore(store)) {
+      if (!shouldTrackSyncStore(store)) {
+        await saveStore(store, dataToPersist);
+      } else {
+        const previousRecords = await getLocalStoreRecords<T>(store);
+        const previousById = new Map(previousRecords.filter((item): item is T => Boolean(item.id)).map((item) => [item.id, item]));
+        const nextById = new Map(dataToPersist.map((item) => [item.id, item]));
+        const changedItems = dataToPersist.filter((item) => JSON.stringify(previousById.get(item.id) ?? null) !== JSON.stringify(item));
+        const deletedIds = Array.from(previousById.keys()).filter((id) => !nextById.has(id));
+
+        await Promise.all([
+          ...changedItems.map((item) => putLocalEntity(store, item)),
+          ...deletedIds.map((id) => deleteLocalEntity(store, id)),
+        ]);
+
         const isOnlySyncMetaChange = store === "appConfig" && (() => {
           const config = data[0] as AppConfig | undefined;
           if (!config) return false;
@@ -241,16 +252,14 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           lastPersistedAppConfigRef.current = syncRelevantPayload;
           return unchanged;
         })();
-        if (!isOnlySyncMetaChange) {
-          const nextIds = new Set(dataToPersist.map((item) => item.id));
-          const deletedIds = previousIds.filter((id) => !nextIds.has(id));
+        if (!isOnlySyncMetaChange && accountOwnerUserId) {
           await Promise.all([
-            ...dataToPersist
+            ...changedItems
               .filter((item) => !consumeSuppressedSyncQueueItem(store, item.id, "upsert"))
-              .map((item) => enqueueSyncItem({ store, entityId: item.id, operation: "upsert", payload: item })),
+              .map((item) => enqueueSyncItem({ accountOwnerUserId, actorUserId: session?.user.id ?? null, deviceId: typeof navigator === "undefined" ? "server" : navigator.userAgent, store, entityId: item.id, operation: "upsert", payload: item, status: "pending-offline" })),
             ...deletedIds
               .filter((entityId) => !consumeSuppressedSyncQueueItem(store, entityId, "delete"))
-              .map((entityId) => enqueueSyncItem({ store, entityId, operation: "delete" })),
+              .map((entityId) => enqueueSyncItem({ accountOwnerUserId, actorUserId: session?.user.id ?? null, deviceId: typeof navigator === "undefined" ? "server" : navigator.userAgent, store, entityId, operation: "delete", status: "pending-offline" })),
           ]);
         }
       }
@@ -265,7 +274,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsSaving(false);
     }
-  }, [dbError, isReady, refreshPendingSyncCount]);
+  }, [accountOwnerUserId, dbError, isReady, refreshPendingSyncCount, session?.user.id]);
 
   useEffect(() => { void persistStore("clientes", clientes); }, [clientes, persistStore]);
   useEffect(() => { void persistStore("lancamentos", lancamentos); }, [lancamentos, persistStore]);

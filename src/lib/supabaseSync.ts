@@ -8,6 +8,7 @@ import {
   markSyncItemError,
   markSyncItemProcessing,
   markSyncItemSynced,
+  markSyncItemConflict,
   type SyncQueueItem,
 } from "@/lib/syncQueue";
 import { normalizeClienteForPersistence, normalizeClientesForPersistence } from "@/lib/clientNormalization";
@@ -15,10 +16,21 @@ import { normalizeAccessStatus } from "@/lib/accessStatus";
 
 type AccessStatus = "pending" | "active" | "blocked" | "inactive";
 
+export type SyncRuntimeContext = {
+  session: Session;
+  userId: string;
+  accountOwnerUserId: string;
+  role: string | null;
+  accessStatus: "active";
+  deviceId: string;
+};
+
 export type SyncContext = {
   session: Session | null;
   accessStatus: AccessStatus;
   accountOwnerUserId?: string | null;
+  role?: string | null;
+  deviceId?: string | null;
 };
 
 export type SyncableStore =
@@ -177,18 +189,22 @@ const isSyncableStore = (store: string): store is SyncableStore => store in LOCA
 
 const nowIso = () => new Date().toISOString();
 
-function getAccountOwnerUserId(context: SyncContext) {
-  return context.accountOwnerUserId || context.session?.user.id || null;
+function getDeviceId(context: SyncContext) {
+  return context.deviceId || (typeof navigator === "undefined" ? "server" : navigator.userAgent);
 }
 
-function ensureCanSync(context: SyncContext) {
+export function ensureSyncRuntimeContext(context: SyncContext): SyncRuntimeContext {
   if (!isSupabaseConfigured || !supabase) throw new Error("Supabase não configurado.");
   if (!context.session?.user) throw new Error("Usuário não autenticado.");
   if (normalizeAccessStatus(context.accessStatus) !== "active") throw new Error("Usuário ainda não aprovado para sincronização.");
   if (typeof navigator !== "undefined" && !navigator.onLine) throw new Error("Sem conexão com a internet.");
-  const accountOwnerUserId = getAccountOwnerUserId(context);
-  if (!accountOwnerUserId) throw new Error("Conta comercial não identificada para sincronização.");
-  return { client: supabase, userId: context.session.user.id, accountOwnerUserId };
+  if (!context.accountOwnerUserId) throw new Error("Conta comercial (accountOwnerUserId) obrigatória ausente; sincronização bloqueada para evitar gravação na conta errada.");
+  return { session: context.session, userId: context.session.user.id, accountOwnerUserId: context.accountOwnerUserId, role: context.role ?? null, accessStatus: "active", deviceId: getDeviceId(context) };
+}
+
+function ensureCanSync(context: SyncContext) {
+  const runtime = ensureSyncRuntimeContext(context);
+  return { client: supabase!, ...runtime };
 }
 
 function friendlySupabaseError(message: string) {
@@ -242,9 +258,12 @@ async function uploadQueueItem(item: SyncQueueItem, context: SyncContext) {
       .maybeSingle();
     if (currentRemoteError) throw new Error(friendlySupabaseError(currentRemoteError.message));
     const remoteDeletedAt = (currentRemote as { deleted_at?: string | null } | null)?.deleted_at;
-    const remoteUpdatedAt = (currentRemote as { updated_at?: string | null } | null)?.updated_at;
-    if (remoteDeletedAt && (!remoteUpdatedAt || new Date(remoteUpdatedAt).getTime() >= new Date(item.updatedAt).getTime())) {
-      return;
+    const remoteUpdatedAt = (currentRemote as { updated_at?: string | null } | null)?.updated_at ?? null;
+    if (remoteUpdatedAt !== (item.baseRemoteUpdatedAt ?? null)) {
+      throw new Error(`Conflito de sincronização em ${item.store}/${item.entityId}: remoto atualizado desde a base local.`);
+    }
+    if (remoteDeletedAt) {
+      throw new Error(`Conflito de tombstone em ${item.store}/${item.entityId}: exclusão remota mais recente vence upsert local antigo.`);
     }
     const { error } = await client.from(table).upsert({
       id: item.entityId,
@@ -257,6 +276,17 @@ async function uploadQueueItem(item: SyncQueueItem, context: SyncContext) {
     return;
   }
 
+  const { data: currentRemote, error: currentRemoteError } = await client
+    .from(table)
+    .select("updated_at")
+    .eq("user_id", accountOwnerUserId)
+    .eq("id", item.entityId)
+    .maybeSingle();
+  if (currentRemoteError) throw new Error(friendlySupabaseError(currentRemoteError.message));
+  const remoteUpdatedAt = (currentRemote as { updated_at?: string | null } | null)?.updated_at ?? null;
+  if (remoteUpdatedAt !== (item.baseRemoteUpdatedAt ?? null)) {
+    throw new Error(`Conflito de sincronização em ${item.store}/${item.entityId}: remoto atualizado desde a base local.`);
+  }
   const { error } = await client
     .from(table)
     .upsert({ id: item.entityId, user_id: accountOwnerUserId, payload: item.payload ?? {}, updated_at: timestamp, deleted_at: timestamp }, { onConflict: "user_id,id" });
@@ -300,9 +330,10 @@ export async function getRemoteSyncMeta(context: SyncContext): Promise<SyncMetaP
 
 export async function syncPendingQueue(context: SyncContext): Promise<{ summary: SyncSummary; meta: SyncMetaPayload | null }> {
   ensureCanSync(context);
-  const initialItems = await getPendingSyncItems();
+  const runtime = ensureSyncRuntimeContext(context);
+  const initialItems = (await getPendingSyncItems()).filter((item) => item.accountOwnerUserId === runtime.accountOwnerUserId);
   await Promise.all(initialItems.map((item) => compactSyncQueueItem(item.store, item.entityId, "Compactado antes do envio para evitar recriação por pendência antiga.")));
-  const items = await getPendingSyncItems();
+  const items = (await getPendingSyncItems()).filter((item) => item.accountOwnerUserId === runtime.accountOwnerUserId);
   const summary = emptySummary();
 
   for (const item of items) {
@@ -311,7 +342,7 @@ export async function syncPendingQueue(context: SyncContext): Promise<{ summary:
 
     if (!isSyncableStore(item.store)) {
       const message = `Store sem mapeamento para Supabase: ${item.store}.`;
-      await markSyncItemError(item.id, message);
+      if (/Conflito|tombstone/i.test(message)) await markSyncItemConflict(item.id, message); else await markSyncItemError(item.id, message);
       summary.error += 1;
       summary.errors.push({ id: item.id, store: item.store, message });
       continue;
@@ -326,7 +357,7 @@ export async function syncPendingQueue(context: SyncContext): Promise<{ summary:
       incrementStore(summary, item.store, item.operation === "upsert" ? "sent" : "tombstoned");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Erro desconhecido ao sincronizar item.";
-      await markSyncItemError(item.id, message);
+      if (/Conflito|tombstone/i.test(message)) await markSyncItemConflict(item.id, message); else await markSyncItemError(item.id, message);
       summary.error += 1;
       incrementStore(summary, item.store, "error");
       summary.errors.push({ id: item.id, store: item.store, message });
@@ -337,7 +368,8 @@ export async function syncPendingQueue(context: SyncContext): Promise<{ summary:
   return { summary, meta };
 }
 
-export async function enqueueFullLocalSnapshotForSync() {
+export async function enqueueFullLocalSnapshotForSync(context: SyncContext) {
+  const runtime = ensureSyncRuntimeContext(context);
   const db = await openAppDb();
   try {
     const snapshot = await Promise.all(SYNCABLE_STORES.map(async (store) => {
@@ -347,7 +379,7 @@ export async function enqueueFullLocalSnapshotForSync() {
     }));
 
     await Promise.all(snapshot.flatMap(([store, records]) => (
-      records.map((record) => enqueueSyncItem({ store, entityId: record.id, operation: "upsert", payload: store === "clientes" ? normalizeClienteForPersistence(record as Record<string, unknown>) : record }))
+      records.map((record) => enqueueSyncItem({ accountOwnerUserId: runtime.accountOwnerUserId, actorUserId: runtime.userId, deviceId: runtime.deviceId, store, entityId: record.id, operation: "upsert", payload: store === "clientes" ? normalizeClienteForPersistence(record as Record<string, unknown>) : record }))
     )));
   } finally {
     db.close();
@@ -355,7 +387,7 @@ export async function enqueueFullLocalSnapshotForSync() {
 }
 
 export async function runFirstUploadSync(context: SyncContext) {
-  await enqueueFullLocalSnapshotForSync();
+  await enqueueFullLocalSnapshotForSync(context);
   return syncPendingQueue(context);
 }
 
@@ -430,7 +462,7 @@ export async function publishLocalSnapshotAsOfficial(context: SyncContext): Prom
     totals: summarizeComparison(publishPlan.map((item) => item.comparison)),
   };
 
-  await enqueueFullLocalSnapshotForSync();
+  await enqueueFullLocalSnapshotForSync(context);
   const uploadResult = await syncPendingQueue(context);
   const tombstoneSummary = await tombstoneRemoteRowsMissingLocally(
     context,

@@ -1,14 +1,19 @@
 import { openAppDb, promisifyRequest, StoreName } from "@/lib/db";
 
 export type SyncOperation = "upsert" | "delete";
-export type SyncStatus = "pending" | "processing" | "synced" | "error" | "obsolete";
+export type SyncStatus = "pending" | "pending-offline" | "processing" | "synced" | "error" | "obsolete" | "conflict" | "orphaned";
 
 export interface SyncQueueItem {
   id: string;
+  accountOwnerUserId: string | null;
+  actorUserId: string | null;
+  deviceId: string;
   store: string;
   entityId: string;
   operation: SyncOperation;
   payload?: unknown;
+  baseRemoteUpdatedAt: string | null;
+  clientMutationId: string;
   createdAt: string;
   updatedAt: string;
   status: SyncStatus;
@@ -43,15 +48,17 @@ const TRACKED_STORES = new Set<StoreName>([
 ]);
 
 const now = () => new Date().toISOString();
-const queueId = (store: string, entityId: string) => `${store}:${entityId}`;
+const legacyQueueId = (store: string, entityId: string) => `${store}:${entityId}`;
+const newMutationId = () => (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`);
+const queueId = (accountOwnerUserId: string, store: string, entityId: string, clientMutationId: string) => `${accountOwnerUserId}:${store}:${entityId}:${clientMutationId}`;
 const suppressedQueueItems = new Map<string, SyncOperation>();
 
 export function suppressNextSyncQueueItem(store: string, entityId: string, operation: SyncOperation) {
-  suppressedQueueItems.set(queueId(store, entityId), operation);
+  suppressedQueueItems.set(legacyQueueId(store, entityId), operation);
 }
 
 export function consumeSuppressedSyncQueueItem(store: string, entityId: string, operation: SyncOperation) {
-  const id = queueId(store, entityId);
+  const id = legacyQueueId(store, entityId);
   if (suppressedQueueItems.get(id) !== operation) return false;
   suppressedQueueItems.delete(id);
   return true;
@@ -66,9 +73,11 @@ export function shouldTrackSyncStore(store: StoreName) {
   return TRACKED_STORES.has(store);
 }
 
-export async function enqueueSyncItem(input: Omit<SyncQueueItem, "id" | "createdAt" | "updatedAt" | "status" | "attempts">) {
+export async function enqueueSyncItem(input: Omit<SyncQueueItem, "id" | "createdAt" | "updatedAt" | "status" | "attempts" | "clientMutationId" | "deviceId" | "actorUserId" | "baseRemoteUpdatedAt"> & Partial<Pick<SyncQueueItem, "status" | "clientMutationId" | "deviceId" | "actorUserId" | "baseRemoteUpdatedAt">>) {
+  if (!input.accountOwnerUserId) throw new Error("SyncQueue exige accountOwnerUserId; fila sem namespace de conta foi bloqueada.");
   return withDb(async (db) => {
-    const id = queueId(input.store, input.entityId);
+    const clientMutationId = input.clientMutationId ?? newMutationId();
+    const id = queueId(input.accountOwnerUserId, input.store, input.entityId, clientMutationId);
     const tx = db.transaction(STORE_NAME, "readwrite");
     const os = tx.objectStore(STORE_NAME);
     const existing = await promisifyRequest(os.get(id)) as SyncQueueItem | undefined;
@@ -81,13 +90,18 @@ export async function enqueueSyncItem(input: Omit<SyncQueueItem, "id" | "created
       lastError: undefined,
     } : {
       id,
+      accountOwnerUserId: input.accountOwnerUserId,
+      actorUserId: input.actorUserId ?? null,
+      deviceId: input.deviceId ?? "unknown-device",
       store: input.store,
       entityId: input.entityId,
       operation: input.operation,
       payload: input.payload,
+      baseRemoteUpdatedAt: input.baseRemoteUpdatedAt ?? null,
+      clientMutationId,
       createdAt: existing?.createdAt ?? timestamp,
       updatedAt: timestamp,
-      status: "pending",
+      status: input.status ?? "pending",
       attempts: existing?.attempts ?? 0,
       lastError: undefined,
     };
@@ -104,13 +118,13 @@ export async function getPendingSyncItems() {
   return withDb(async (db) => {
     const tx = db.transaction(STORE_NAME, "readonly");
     const items = await promisifyRequest(tx.objectStore(STORE_NAME).getAll()) as SyncQueueItem[];
-    return items.filter((item) => item.status === "pending" || item.status === "error");
+    return items.filter((item) => (item.status === "pending" || item.status === "pending-offline" || item.status === "error") && Boolean(item.accountOwnerUserId));
   });
 }
 
 export async function compactSyncQueueItem(store: string, entityId: string, reason = "compactado") {
   return withDb(async (db) => {
-    const id = queueId(store, entityId);
+    const id = legacyQueueId(store, entityId);
     const tx = db.transaction(STORE_NAME, "readwrite");
     const os = tx.objectStore(STORE_NAME);
     const current = await promisifyRequest(os.get(id)) as SyncQueueItem | undefined;
@@ -129,7 +143,8 @@ export async function compactSyncQueueItem(store: string, entityId: string, reas
 }
 
 export async function removeSyncItemsForEntity(store: string, entityId: string) {
-  return markSyncItemSynced(queueId(store, entityId));
+  const items = await getAllSyncItems();
+  await Promise.all(items.filter((item) => item.store === store && item.entityId === entityId).map((item) => markSyncItemSynced(item.id)));
 }
 
 async function updateSyncItem(id: string, updater: (item: SyncQueueItem) => SyncQueueItem) {
@@ -161,6 +176,8 @@ export async function markSyncItemSynced(id: string) {
   });
 }
 export const markSyncItemError = (id: string, error: string) => updateSyncItem(id, (item) => ({ ...item, status: "error", updatedAt: now(), lastError: error }));
+export const markSyncItemConflict = (id: string, error: string) => updateSyncItem(id, (item) => ({ ...item, status: "conflict", updatedAt: now(), lastError: error }));
+export const markOrphanedLegacySyncItem = (id: string, error: string) => updateSyncItem(id, (item) => ({ ...item, status: "orphaned", updatedAt: now(), lastError: error }));
 
 export async function getAllSyncItems() {
   return withDb(async (db) => {
@@ -179,10 +196,11 @@ export async function requeueFailedAndStaleSyncItems(staleMinutes = 10) {
 
     items.forEach((item) => {
       const isStaleProcessing = item.status === "processing" && new Date(item.updatedAt).getTime() <= staleLimit;
-      if (item.status !== "error" && !isStaleProcessing) return;
+      if ((item.status !== "error" && item.status !== "pending-offline") && !isStaleProcessing) return;
+      if (!item.accountOwnerUserId) return;
       const updated: SyncQueueItem = {
         ...item,
-        status: "pending",
+        status: input.status ?? "pending",
         updatedAt: now(),
         lastError: item.status === "error" ? item.lastError : undefined,
       };

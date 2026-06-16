@@ -185,6 +185,7 @@ describe("cloudRestore", () => {
     const comparison = await restoredModule.compareLocalWithAccountSnapshot({
       session: { user: { id: "user-1" } } as never,
       accessStatus: "active",
+      accountOwnerUserId: "user-1",
     });
 
     expect(comparison.totals.localCount).toBe(4);
