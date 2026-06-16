@@ -3,6 +3,7 @@ import { openAppDb, promisifyRequest, type StoreName } from "@/lib/db";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 import {
   enqueueSyncItem,
+  compactSyncQueueItem,
   getPendingSyncItems,
   markSyncItemError,
   markSyncItemProcessing,
@@ -299,6 +300,8 @@ export async function getRemoteSyncMeta(context: SyncContext): Promise<SyncMetaP
 
 export async function syncPendingQueue(context: SyncContext): Promise<{ summary: SyncSummary; meta: SyncMetaPayload | null }> {
   ensureCanSync(context);
+  const initialItems = await getPendingSyncItems();
+  await Promise.all(initialItems.map((item) => compactSyncQueueItem(item.store, item.entityId, "Compactado antes do envio para evitar recriação por pendência antiga.")));
   const items = await getPendingSyncItems();
   const summary = emptySummary();
 
