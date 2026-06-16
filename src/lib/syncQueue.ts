@@ -1,7 +1,7 @@
 import { openAppDb, promisifyRequest, StoreName } from "@/lib/db";
 
 export type SyncOperation = "upsert" | "delete";
-export type SyncStatus = "pending" | "processing" | "synced" | "error";
+export type SyncStatus = "pending" | "processing" | "synced" | "error" | "obsolete";
 
 export interface SyncQueueItem {
   id: string;
@@ -72,14 +72,21 @@ export async function enqueueSyncItem(input: Omit<SyncQueueItem, "id" | "created
     const tx = db.transaction(STORE_NAME, "readwrite");
     const os = tx.objectStore(STORE_NAME);
     const existing = await promisifyRequest(os.get(id)) as SyncQueueItem | undefined;
-    const next: SyncQueueItem = {
+    const timestamp = now();
+    const shouldKeepExistingDelete = existing?.operation === "delete" && input.operation === "upsert" && existing.status !== "synced";
+    const next: SyncQueueItem = shouldKeepExistingDelete ? {
+      ...existing,
+      updatedAt: timestamp,
+      status: existing.status === "processing" ? "pending" : existing.status,
+      lastError: undefined,
+    } : {
       id,
       store: input.store,
       entityId: input.entityId,
       operation: input.operation,
       payload: input.payload,
-      createdAt: existing?.createdAt ?? now(),
-      updatedAt: now(),
+      createdAt: existing?.createdAt ?? timestamp,
+      updatedAt: timestamp,
       status: "pending",
       attempts: existing?.attempts ?? 0,
       lastError: undefined,
@@ -99,6 +106,30 @@ export async function getPendingSyncItems() {
     const items = await promisifyRequest(tx.objectStore(STORE_NAME).getAll()) as SyncQueueItem[];
     return items.filter((item) => item.status === "pending" || item.status === "error");
   });
+}
+
+export async function compactSyncQueueItem(store: string, entityId: string, reason = "compactado") {
+  return withDb(async (db) => {
+    const id = queueId(store, entityId);
+    const tx = db.transaction(STORE_NAME, "readwrite");
+    const os = tx.objectStore(STORE_NAME);
+    const current = await promisifyRequest(os.get(id)) as SyncQueueItem | undefined;
+    if (!current) return undefined;
+    if (current.operation === "delete") {
+      os.put({ ...current, status: "pending", updatedAt: now(), lastError: undefined });
+    } else if (!TRACKED_STORES.has(current.store as StoreName)) {
+      os.put({ ...current, status: "obsolete", updatedAt: now(), lastError: reason });
+    }
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error ?? new Error("Erro ao compactar item da fila."));
+    });
+    return current;
+  });
+}
+
+export async function removeSyncItemsForEntity(store: string, entityId: string) {
+  return markSyncItemSynced(queueId(store, entityId));
 }
 
 async function updateSyncItem(id: string, updater: (item: SyncQueueItem) => SyncQueueItem) {

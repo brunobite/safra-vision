@@ -1,6 +1,6 @@
 import type { Session } from "@supabase/supabase-js";
 import { openAppDb, type StoreName } from "@/lib/db";
-import { enqueueSyncItem, getAllSyncItems, markSyncItemSynced, suppressNextSyncQueueItem, type SyncOperation } from "@/lib/syncQueue";
+import { compactSyncQueueItem, enqueueSyncItem, getAllSyncItems, removeSyncItemsForEntity, suppressNextSyncQueueItem, type SyncOperation } from "@/lib/syncQueue";
 import { LOCAL_TO_REMOTE_TABLE, syncPendingQueue, type RemoteRow, type SyncableStore, type SyncSummary } from "@/lib/supabaseSync";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 import { normalizeAccessStatus } from "@/lib/accessStatus";
@@ -77,6 +77,10 @@ async function auditIfRequested<T extends { id: string }>(record: T, options: Op
   await recordAuditLog({ action: options.auditAction, resource: options.resource ?? "operational", entityId: record.id, entityLabel: (record as Record<string, unknown>).nome as string | undefined, beforeData: options.beforeData, afterData: options.afterData ?? record, metadata: { ...options.auditMetadata, actorUserId: options.actorUserId, actorNome: options.actorNome, actorPapel: options.actorPapel } });
 }
 
+export async function compactPendingQueue(store: string, id: string) {
+  return compactSyncQueueItem(store, id, "Compactado por operação cloud-first/tombstone remoto.");
+}
+
 export async function saveEntityCloudFirst<T extends { id: string }>(store: SyncableStore, record: T, options: OperationalPersistenceOptions) {
   const payload = normalizePayload(store, record);
   const fallback = options.offlineFallback !== false;
@@ -91,7 +95,7 @@ export async function saveEntityCloudFirst<T extends { id: string }>(store: Sync
   try {
     await writeRemoteRow(store, record, "upsert", options);
     await writeLocalRecord(store, record);
-    await markSyncItemSynced(queueKey(store, record.id));
+    await removeSyncItemsForEntity(store, record.id);
     suppressNextSyncQueueItem(store, record.id, "upsert");
     await auditIfRequested(record, options);
     await options.onRemoteSuccess?.();
@@ -123,7 +127,7 @@ export async function deleteEntityCloudFirst<T extends { id: string }>(store: Sy
   try {
     await writeRemoteRow(store, record, "delete", options);
     await deleteLocalRecord(store, id);
-    await markSyncItemSynced(queueKey(store, id));
+    await removeSyncItemsForEntity(store, id);
     suppressNextSyncQueueItem(store, id, "delete");
     await auditIfRequested(record, options);
     await options.onRemoteSuccess?.();
@@ -157,6 +161,15 @@ export async function hydrateLocalCacheFromCloud<T extends { id: string } = { id
     snapshot.active.forEach((record) => os.put(normalizePayload(store, record)));
     await new Promise<void>((res, rej) => { tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); });
   });
+  await Promise.all(snapshot.tombstones.map(async (row) => {
+    await removeSyncItemsForEntity(store, row.id);
+    if (store === "clientes") {
+      await recordAuditLog({ action: "sync_tombstone_cliente", resource: "clientes", entityId: row.id, beforeData: row.payload, metadata: { deletedAt: row.deleted_at, remoteUpdatedAt: row.updated_at } });
+    }
+  }));
+  if (store === "clientes" && snapshot.active.length > 0) {
+    await recordAuditLog({ action: "sync_download_cliente", resource: "clientes", entityId: "snapshot", afterData: { total: snapshot.active.length }, metadata: { tombstones: snapshot.tombstones.length } });
+  }
   return { ...snapshot, appliedActive: snapshot.active.length, appliedTombstones: snapshot.tombstones.length };
 }
 
@@ -177,6 +190,8 @@ export async function diagnosePendingQueue(): Promise<QueueDiagnostics> {
 export async function syncPendingQueueNow(options: OperationalPersistenceOptions): Promise<{ summary: SyncSummary; snapshot?: EntitySnapshot; diagnostics: QueueDiagnostics }> {
   if (!canAttemptRemote(options)) throw new Error("Sem conexão, sessão ativa ou Supabase configurado para sincronização.");
   const diagnostics = await diagnosePendingQueue();
+  const items = await getAllSyncItems();
+  await Promise.all(items.map((item) => compactPendingQueue(item.store, item.entityId)));
   const summaryResult = await syncPendingQueue({ session: options.session, accessStatus: "active", accountOwnerUserId: options.accountOwnerUserId });
   const snapshot = await fetchCloudSnapshot("clientes", options);
   return { summary: summaryResult.summary, snapshot, diagnostics };
