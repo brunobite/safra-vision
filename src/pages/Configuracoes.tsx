@@ -32,6 +32,7 @@ import { fetchAccountSnapshot, shouldRestoreFromCloud, buildCloudRestoreSummary,
 import { enqueueSyncItem, requeueFailedAndStaleSyncItems } from "@/lib/syncQueue";
 import { findRemoteOnlyClientTestCandidates, softDeleteRemoteClientTests, type RemoteOnlyClientTestCandidate } from "@/lib/remoteCleanup";
 import { findLocalTestRecordCandidates, getSyncQueueAudit, type SyncQueueAudit, type TestRecordCandidate } from "@/lib/syncAudit";
+import { diagnosePendingQueue, type QueueDiagnostics } from "@/lib/operationalPersistence";
 import { useAuth } from "@/store/AuthStore";
 import { UserAccessPanel } from "@/components/users/UserAccessPanel";
 import { AuditLogPanel } from "@/components/users/AuditLogPanel";
@@ -142,6 +143,7 @@ export default function Configuracoes() {
   const [importLogs, setImportLogs] = useState<ImportLog[]>([]);
   const [lastBackupAt, setLastBackupAt] = useState<string>("");
   const [syncSummary, setSyncSummary] = useState<SyncSummary | null>(null);
+  const [queueDiagnostics, setQueueDiagnostics] = useState<QueueDiagnostics | null>(null);
   const [syncComparison, setSyncComparison] = useState<LocalRemoteComparison | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -711,6 +713,7 @@ export default function Configuracoes() {
       const status = await runAccountSyncNowForAccount();
       if (status.comparison) setSyncComparison(status.comparison);
       if (status.uploadSummary) setSyncSummary(status.uploadSummary);
+      setQueueDiagnostics(await diagnosePendingQueue());
       if (status.code === "error" || status.code === "blocked") {
         setSyncError(status.message);
         toast.error(status.message);
@@ -1425,6 +1428,16 @@ export default function Configuracoes() {
               <div className="rounded-md border bg-background/60 p-3 text-sm"><div className="text-muted-foreground">Status da conta</div><div className="font-medium">{cloudSessionExists ? (isCloudAccessActive ? "Ativa" : "Aguardando aprovação") : "Não autenticado"}</div></div>
               <div className="rounded-md border bg-background/60 p-3 text-sm"><div className="text-muted-foreground">Última sincronização</div><div className="font-medium">{lastSyncAt ? new Date(lastSyncAt).toLocaleString("pt-BR") : "não registrado"}</div></div>
               <div className="rounded-md border bg-background/60 p-3 text-sm"><div className="text-muted-foreground">Pendências</div><div className="font-medium">{pendingSyncCount}</div></div>
+            </div>
+            <div className="grid gap-3 md:grid-cols-4">
+              <div className="rounded-md border bg-background/60 p-3 text-sm"><div className="text-muted-foreground">Última leitura da nuvem</div><div className="font-medium">{appConfig.syncMeta?.lastDownloadAt ? new Date(appConfig.syncMeta.lastDownloadAt).toLocaleString("pt-BR") : "não registrado"}</div></div>
+              <div className="rounded-md border bg-background/60 p-3 text-sm"><div className="text-muted-foreground">Último envio para nuvem</div><div className="font-medium">{appConfig.syncMeta?.lastUploadAt ? new Date(appConfig.syncMeta.lastUploadAt).toLocaleString("pt-BR") : "não registrado"}</div></div>
+              <div className="rounded-md border bg-background/60 p-3 text-sm"><div className="text-muted-foreground">Pendências válidas</div><div className="font-medium">{queueDiagnostics?.validas ?? pendingSyncCount}</div></div>
+              <div className="rounded-md border bg-background/60 p-3 text-sm"><div className="text-muted-foreground">Pendências obsoletas</div><div className="font-medium">{queueDiagnostics?.obsoletasSchemaAntigo ?? "—"}</div></div>
+              <div className="rounded-md border bg-background/60 p-3 text-sm"><div className="text-muted-foreground">Erros ativos</div><div className="font-medium">{syncSummary?.error ?? syncQueueAudit?.byStatus.error ?? "—"}</div></div>
+              <div className="rounded-md border bg-background/60 p-3 text-sm"><div className="text-muted-foreground">Tombstones aplicados</div><div className="font-medium">{syncSummary ? Object.values(syncSummary.byStore).reduce((total, item) => total + (item?.tombstoned ?? 0), 0) : (syncComparison?.totals.remoteDeleted ?? "—")}</div></div>
+              <div className="rounded-md border bg-background/60 p-3 text-sm"><div className="text-muted-foreground">Divergências</div><div className="font-medium">{syncComparison ? syncComparison.totals.onlyLocal + syncComparison.totals.onlyRemote + syncComparison.totals.changedInBoth : "—"}</div></div>
+              <div className="rounded-md border bg-background/60 p-3 text-sm"><div className="text-muted-foreground">Status operacional</div><div className="font-medium">{isAccountSyncing || isSyncing ? "Sincronizando" : syncError ? "Erro" : syncComparison && (syncComparison.totals.onlyLocal + syncComparison.totals.onlyRemote + syncComparison.totals.changedInBoth > 0) ? "Divergente" : pendingSyncCount > 0 ? "Pendente offline" : "Pronto"}</div></div>
             </div>
             <div className="rounded-md border bg-background/60 p-3 text-sm">{userSyncMessage}</div>
           </div>

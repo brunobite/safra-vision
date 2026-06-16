@@ -219,6 +219,14 @@ export default function Clientes() {
       session,
       accessStatus,
       accountOwnerUserId,
+      actorUserId: user?.id,
+      actorNome: vendedorNome || user?.email,
+      actorPapel: role,
+      auditAction: action,
+      resource: "clientes",
+      beforeData: edit,
+      afterData: saved,
+      offlineFallback: true,
       onStatusChange: setOperationStatus,
       onRemoteSuccess: async () => {
         await recordAuditLog({ action: "sync_upload_cliente", resource: "clientes", entityId: saved.id, entityLabel: saved.nome, afterData: saved, metadata: { operation: "upsert" } });
@@ -243,6 +251,13 @@ export default function Clientes() {
       session,
       accessStatus,
       accountOwnerUserId,
+      actorUserId: user?.id,
+      actorNome: vendedorNome || user?.email,
+      actorPapel: role,
+      auditAction: "excluir_cliente",
+      resource: "clientes",
+      beforeData: cliente,
+      offlineFallback: true,
       onStatusChange: setOperationStatus,
       onRemoteSuccess: async () => {
         await recordAuditLog({ action: "sync_upload_cliente", resource: "clientes", entityId: cliente.id, entityLabel: cliente.nome, beforeData: cliente, metadata: { operation: "delete" } });
