@@ -1,13 +1,13 @@
 import type { Session } from "@supabase/supabase-js";
 import { openAppDb, type StoreName } from "@/lib/db";
-import { compactSyncQueueItem, enqueueSyncItem, getAllSyncItems, removeSyncItemsForEntity, suppressNextSyncQueueItem, type SyncOperation } from "@/lib/syncQueue";
+import { compactSyncQueueItem, enqueueSyncItem, getAllSyncItems, markSyncItemConflict, removeSyncItemsForEntity, suppressNextSyncQueueItem, type SyncOperation } from "@/lib/syncQueue";
 import { LOCAL_TO_REMOTE_TABLE, syncPendingQueue, type RemoteRow, type SyncableStore, type SyncSummary } from "@/lib/supabaseSync";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 import { normalizeAccessStatus } from "@/lib/accessStatus";
 import { normalizeClienteForPersistence, normalizeClientesForPersistence } from "@/lib/clientNormalization";
 import { recordAuditLog } from "@/lib/audit";
 
-export type OperationalPersistenceStatus = "sending" | "synced" | "pending-offline" | "error";
+export type OperationalPersistenceStatus = "sending" | "synced" | "pending-offline" | "conflict" | "error";
 export type OperationalActor = { id?: string | null; email?: string | null; role?: string | null; nome?: string | null };
 
 export type OperationalPersistenceOptions = {
@@ -24,6 +24,7 @@ export type OperationalPersistenceOptions = {
   afterData?: unknown;
   operation?: string;
   auditMetadata?: Record<string, unknown>;
+  baseRemoteUpdatedAt?: string | null;
   offlineFallback?: boolean;
   onStatusChange?: (status: OperationalPersistenceStatus) => void;
   onRemoteSuccess?: () => Promise<void> | void;
@@ -64,16 +65,51 @@ function canAttemptRemote(options: OperationalPersistenceOptions) {
 }
 
 function formatRemoteError(error: unknown) { return error instanceof Error ? error : new Error("Falha desconhecida ao sincronizar operação."); }
-function normalizePayload<T extends { id: string }>(store: SyncableStore, record: T) { return store === "clientes" ? normalizeClienteForPersistence(record as Record<string, unknown>) : record; }
+function stripLocalSyncMetadata(record: Record<string, unknown>) {
+  const { __syncRemoteUpdatedAt: _remoteUpdatedAt, __syncAccountOwnerUserId: _owner, ...payload } = record;
+  void _remoteUpdatedAt;
+  void _owner;
+  return payload;
+}
+function normalizePayload<T extends { id: string }>(store: SyncableStore, record: T) {
+  const payload = stripLocalSyncMetadata(record as Record<string, unknown>) as T;
+  return store === "clientes" ? normalizeClienteForPersistence(payload as Record<string, unknown>) : payload;
+}
+function withRemoteSyncMetadata<T extends { id: string }>(record: T, row: RemoteRow): T {
+  return { ...(record as Record<string, unknown>), __syncRemoteUpdatedAt: row.updated_at ?? null, __syncAccountOwnerUserId: row.user_id } as T;
+}
+function getBaseRemoteUpdatedAt<T extends { id: string }>(record: T, options: OperationalPersistenceOptions): string | null | undefined {
+  if (Object.prototype.hasOwnProperty.call(options, "baseRemoteUpdatedAt")) return options.baseRemoteUpdatedAt;
+  if (Object.prototype.hasOwnProperty.call(options.auditMetadata ?? {}, "baseRemoteUpdatedAt")) return options.auditMetadata?.baseRemoteUpdatedAt as string | null | undefined;
+  if (Object.prototype.hasOwnProperty.call(record as Record<string, unknown>, "__syncRemoteUpdatedAt")) return (record as Record<string, unknown>).__syncRemoteUpdatedAt as string | null;
+  return undefined;
+}
+class SyncConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SyncConflictError";
+  }
+}
+function isSyncConflict(error: Error) {
+  return error instanceof SyncConflictError || /Conflito|tombstone/i.test(error.message);
+}
 function rowToRecord<T extends { id: string }>(store: SyncableStore, row: RemoteRow): T | null {
   if (row.deleted_at || !row.payload || typeof row.payload !== "object" || Array.isArray(row.payload)) return null;
   const record = { id: row.id, ...(row.payload as Record<string, unknown>) };
-  return (store === "clientes" ? normalizeClientesForPersistence([record])[0] : record) as T;
+  const normalized = (store === "clientes" ? normalizeClientesForPersistence([record])[0] : record) as T;
+  return withRemoteSyncMetadata(normalized, row);
 }
 
 async function withDb<T>(fn: (db: IDBDatabase) => Promise<T>) { const db = await openAppDb(); try { return await fn(db); } finally { db.close(); } }
+function normalizeLocalCacheRecord<T extends { id: string }>(store: SyncableStore, record: T) {
+  const normalized = normalizePayload(store, record) as Record<string, unknown>;
+  const syncMeta: Record<string, unknown> = {};
+  if (Object.prototype.hasOwnProperty.call(record as Record<string, unknown>, "__syncRemoteUpdatedAt")) syncMeta.__syncRemoteUpdatedAt = (record as Record<string, unknown>).__syncRemoteUpdatedAt;
+  if (Object.prototype.hasOwnProperty.call(record as Record<string, unknown>, "__syncAccountOwnerUserId")) syncMeta.__syncAccountOwnerUserId = (record as Record<string, unknown>).__syncAccountOwnerUserId;
+  return { ...normalized, ...syncMeta };
+}
 async function writeLocalRecord<T extends { id: string }>(store: SyncableStore, record: T) {
-  await withDb(async (db) => { const tx = db.transaction(store as StoreName, "readwrite"); tx.objectStore(store).put(normalizePayload(store, record)); await new Promise<void>((res, rej) => { tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); }); });
+  await withDb(async (db) => { const tx = db.transaction(store as StoreName, "readwrite"); tx.objectStore(store).put(normalizeLocalCacheRecord(store, record)); await new Promise<void>((res, rej) => { tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); }); });
 }
 async function deleteLocalRecord(store: SyncableStore, id: string) {
   await withDb(async (db) => { const tx = db.transaction(store as StoreName, "readwrite"); tx.objectStore(store).delete(id); await new Promise<void>((res, rej) => { tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); }); });
@@ -86,11 +122,13 @@ async function writeRemoteRow<T extends { id: string }>(store: SyncableStore, re
   const { data: currentRemote, error: currentRemoteError } = await supabase!.from(LOCAL_TO_REMOTE_TABLE[store]).select("updated_at,deleted_at").eq("user_id", accountOwnerUserId).eq("id", record.id).maybeSingle();
   if (currentRemoteError) throw new Error(currentRemoteError.message);
   const remote = currentRemote as { updated_at?: string | null; deleted_at?: string | null } | null;
-  const expectedBase = (options.auditMetadata?.baseRemoteUpdatedAt as string | null | undefined) ?? null;
-  if ((remote?.updated_at ?? null) !== expectedBase) throw new Error(`Conflito de sincronização em ${store}/${record.id}: remoto atualizado desde a base local.`);
-  if (operation === "upsert" && remote?.deleted_at) throw new Error(`Conflito de tombstone em ${store}/${record.id}: exclusão remota mais recente vence upsert local antigo.`);
+  const expectedBase = getBaseRemoteUpdatedAt(record, options);
+  if (expectedBase === undefined && remote?.updated_at) throw new SyncConflictError(`Conflito de sincronização em ${store}/${record.id}: baseRemoteUpdatedAt ausente para registro remoto existente.`);
+  if ((remote?.updated_at ?? null) !== (expectedBase ?? null)) throw new SyncConflictError(`Conflito de sincronização em ${store}/${record.id}: remoto atualizado desde a base local.`);
+  if (operation === "upsert" && remote?.deleted_at) throw new SyncConflictError(`Conflito de tombstone em ${store}/${record.id}: exclusão remota mais recente vence upsert local antigo.`);
   const { error } = await supabase!.from(LOCAL_TO_REMOTE_TABLE[store]).upsert({ id: record.id, user_id: accountOwnerUserId, payload: normalizePayload(store, record), updated_at: timestamp, deleted_at: operation === "delete" ? timestamp : null }, { onConflict: "user_id,id" });
   if (error) throw new Error(error.message);
+  return timestamp;
 }
 
 async function auditIfRequested<T extends { id: string }>(record: T, options: OperationalPersistenceOptions) {
@@ -108,14 +146,14 @@ export async function saveEntityCloudFirst<T extends { id: string }>(store: Sync
   if (!canAttemptRemote(options)) {
     if (!fallback) throw new Error("Operação online obrigatória indisponível.");
     await writeLocalRecord(store, record);
-    await enqueueSyncItem({ ...queueContext(options), store, entityId: record.id, operation: "upsert", payload, baseRemoteUpdatedAt: null, status: "pending-offline" });
+    await enqueueSyncItem({ ...queueContext(options), store, entityId: record.id, operation: "upsert", payload, baseRemoteUpdatedAt: getBaseRemoteUpdatedAt(record, options) ?? null, status: "pending-offline" });
     options.onStatusChange?.("pending-offline");
     return { status: "pending-offline" as const, remote: false };
   }
   options.onStatusChange?.("sending");
   try {
-    await writeRemoteRow(store, record, "upsert", options);
-    await writeLocalRecord(store, record);
+    const remoteUpdatedAt = await writeRemoteRow(store, record, "upsert", options);
+    await writeLocalRecord(store, { ...(record as Record<string, unknown>), __syncRemoteUpdatedAt: remoteUpdatedAt, __syncAccountOwnerUserId: requireAccountOwnerUserId(options) } as T);
     await removeSyncItemsForEntity(store, record.id);
     suppressNextSyncQueueItem(store, record.id, "upsert");
     await auditIfRequested(record, options);
@@ -124,9 +162,17 @@ export async function saveEntityCloudFirst<T extends { id: string }>(store: Sync
     return { status: "synced" as const, remote: true };
   } catch (error) {
     const formatted = formatRemoteError(error);
+    const baseRemoteUpdatedAt = getBaseRemoteUpdatedAt(record, options) ?? null;
+    if (isSyncConflict(formatted)) {
+      const conflictItem = await enqueueSyncItem({ ...queueContext(options), store, entityId: record.id, operation: "upsert", payload, baseRemoteUpdatedAt, status: "conflict" });
+      await markSyncItemConflict(conflictItem.id, formatted.message);
+      await options.onRemoteError?.(formatted);
+      options.onStatusChange?.("conflict");
+      return { status: "conflict" as const, remote: false, error: formatted };
+    }
     if (!fallback) throw formatted;
     await writeLocalRecord(store, record);
-    await enqueueSyncItem({ ...queueContext(options), store, entityId: record.id, operation: "upsert", payload, baseRemoteUpdatedAt: null, status: "pending-offline" });
+    await enqueueSyncItem({ ...queueContext(options), store, entityId: record.id, operation: "upsert", payload, baseRemoteUpdatedAt, status: "pending-offline" });
     await options.onRemoteError?.(formatted);
     options.onStatusChange?.("pending-offline");
     return { status: "pending-offline" as const, remote: false, error: formatted };
@@ -140,7 +186,7 @@ export async function deleteEntityCloudFirst<T extends { id: string }>(store: Sy
   if (!canAttemptRemote(options)) {
     if (!fallback) throw new Error("Exclusão online obrigatória indisponível.");
     await deleteLocalRecord(store, id);
-    await enqueueSyncItem({ ...queueContext(options), store, entityId: id, operation: "delete", payload, baseRemoteUpdatedAt: null, status: "pending-offline" });
+    await enqueueSyncItem({ ...queueContext(options), store, entityId: id, operation: "delete", payload, baseRemoteUpdatedAt: getBaseRemoteUpdatedAt(record, options) ?? null, status: "pending-offline" });
     options.onStatusChange?.("pending-offline");
     return { status: "pending-offline" as const, remote: false };
   }
@@ -156,9 +202,17 @@ export async function deleteEntityCloudFirst<T extends { id: string }>(store: Sy
     return { status: "synced" as const, remote: true };
   } catch (error) {
     const formatted = formatRemoteError(error);
+    const baseRemoteUpdatedAt = getBaseRemoteUpdatedAt(record, options) ?? null;
+    if (isSyncConflict(formatted)) {
+      const conflictItem = await enqueueSyncItem({ ...queueContext(options), store, entityId: id, operation: "delete", payload, baseRemoteUpdatedAt, status: "conflict" });
+      await markSyncItemConflict(conflictItem.id, formatted.message);
+      await options.onRemoteError?.(formatted);
+      options.onStatusChange?.("conflict");
+      return { status: "conflict" as const, remote: false, error: formatted };
+    }
     if (!fallback) throw formatted;
     await deleteLocalRecord(store, id);
-    await enqueueSyncItem({ ...queueContext(options), store, entityId: id, operation: "delete", payload, baseRemoteUpdatedAt: null, status: "pending-offline" });
+    await enqueueSyncItem({ ...queueContext(options), store, entityId: id, operation: "delete", payload, baseRemoteUpdatedAt, status: "pending-offline" });
     await options.onRemoteError?.(formatted);
     options.onStatusChange?.("pending-offline");
     return { status: "pending-offline" as const, remote: false, error: formatted };
@@ -179,7 +233,7 @@ export async function hydrateLocalCacheFromCloud<T extends { id: string } = { id
     const tx = db.transaction(store as StoreName, "readwrite");
     const os = tx.objectStore(store);
     snapshot.tombstones.forEach((row) => os.delete(row.id));
-    snapshot.active.forEach((record) => os.put(normalizePayload(store, record)));
+    snapshot.active.forEach((record) => os.put(normalizeLocalCacheRecord(store, record)));
     await new Promise<void>((res, rej) => { tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); });
   });
   await Promise.all(snapshot.tombstones.map(async (row) => {
@@ -205,7 +259,7 @@ export async function diagnosePendingQueue(): Promise<QueueDiagnostics> {
     dadosSemNamespace: items.filter((i) => !i.accountOwnerUserId).length,
     obsoletasSchemaAntigo: items.filter((i) => !LOCAL_TO_REMOTE_TABLE[i.store as SyncableStore]).length,
     duplicadasNamespaceAntigo: Array.from(byEntity.values()).filter((group) => group.length > 1).length,
-    conflitantes: Array.from(byEntity.values()).filter((group) => group.some((i) => i.operation === "delete") && group.some((i) => i.operation === "upsert")).length,
+    conflitantes: items.filter((i) => i.status === "conflict").length + Array.from(byEntity.values()).filter((group) => group.some((i) => i.operation === "delete") && group.some((i) => i.operation === "upsert")).length,
     falhasRedeSessao: items.filter((i) => /sess|network|fetch|rede|internet/i.test(i.lastError ?? "")).length,
     exportBackupRecommended: items.some((i) => !i.accountOwnerUserId || i.status === "conflict"),
   };

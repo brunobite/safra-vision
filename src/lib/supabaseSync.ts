@@ -331,9 +331,9 @@ export async function getRemoteSyncMeta(context: SyncContext): Promise<SyncMetaP
 export async function syncPendingQueue(context: SyncContext): Promise<{ summary: SyncSummary; meta: SyncMetaPayload | null }> {
   ensureCanSync(context);
   const runtime = ensureSyncRuntimeContext(context);
-  const initialItems = (await getPendingSyncItems()).filter((item) => item.accountOwnerUserId === runtime.accountOwnerUserId);
+  const initialItems = (await getPendingSyncItems()).filter((item) => item.accountOwnerUserId === runtime.accountOwnerUserId && ["pending", "pending-offline", "error"].includes(item.status));
   await Promise.all(initialItems.map((item) => compactSyncQueueItem(item.store, item.entityId, "Compactado antes do envio para evitar recriação por pendência antiga.")));
-  const items = (await getPendingSyncItems()).filter((item) => item.accountOwnerUserId === runtime.accountOwnerUserId);
+  const items = (await getPendingSyncItems()).filter((item) => item.accountOwnerUserId === runtime.accountOwnerUserId && ["pending", "pending-offline", "error"].includes(item.status));
   const summary = emptySummary();
 
   for (const item of items) {
@@ -507,7 +507,7 @@ async function readLocalSyncableStore(store: SyncableStore) {
   }
 }
 
-const TECHNICAL_PAYLOAD_FIELDS = new Set(["syncMeta", "lastUploadAt", "lastDownloadAt", "lastSyncSummary", "deviceLabel"]);
+const TECHNICAL_PAYLOAD_FIELDS = new Set(["syncMeta", "lastUploadAt", "lastDownloadAt", "lastSyncSummary", "deviceLabel", "__syncRemoteUpdatedAt", "__syncAccountOwnerUserId"]);
 
 type LocalComparableRecord = string | { id: string; [key: string]: unknown };
 

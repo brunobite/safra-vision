@@ -362,7 +362,8 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         setSyncError(result.reason === "cooldown" ? "Cooldown de sincronização; nova tentativa em instantes." : result.message);
       }
       recordAccountSyncHistory({ tipo: source === "auto" ? "auto-check" : "upload", status: "pendente", mensagem: result.message });
-      await refreshPendingSyncCount();
+      const nextPending = await refreshPendingSyncCount();
+      if (nextPending > 0) setSyncStatus("pending");
       return;
     }
 
@@ -370,16 +371,17 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       setSyncStatus("error");
       setSyncError(result.message);
       recordAccountSyncHistory({ tipo: "error", status: "erro", mensagem: "Não foi possível concluir a sincronização agora.", detalhes: result.message });
-      await refreshPendingSyncCount();
+      const nextPending = await refreshPendingSyncCount();
+      if (nextPending > 0) setSyncStatus("pending");
       return;
     }
 
     setSyncError(null);
-    setSyncStatus(result.summary.error > 0 ? "error" : "synced");
+    const remainingAfterSync = await refreshPendingSyncCount();
+    setSyncStatus(result.summary.error > 0 ? "error" : remainingAfterSync > 0 ? "pending" : "synced");
     setLastAutoSyncAt(new Date().toISOString());
     if (result.meta) setAppConfig((current) => ({ ...current, syncMeta: result.meta }));
     recordAccountSyncHistory({ tipo: source === "auto" ? "auto-check" : "upload", status: result.summary.error > 0 ? "erro" : "sucesso", mensagem: result.summary.error > 0 ? `${result.summary.error} item(ns) não foram sincronizados.` : "Sincronização concluída.", detalhes: `${result.summary.success} enviados, ${result.summary.error} erros.` });
-    await refreshPendingSyncCount();
     if (source === "auto" && result.summary.error > 0) {
       setSyncError(`${result.summary.error} item(ns) não foram sincronizados automaticamente.`);
     }
@@ -425,8 +427,12 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       return;
     }
     if (status.code === "restored" || status.code === "synced") {
-      setSyncStatus("synced");
-      setSyncError(null);
+      if (pendingSyncCountRef.current > 0) {
+        setSyncStatus("pending");
+      } else {
+        setSyncStatus("synced");
+      }
+      setSyncError(pendingSyncCountRef.current > 0 ? "Há conflitos ou pendências locais exigindo revisão." : null);
       setLastAutoSyncAt(status.lastCheckedAt);
       return;
     }

@@ -118,7 +118,7 @@ export async function getPendingSyncItems() {
   return withDb(async (db) => {
     const tx = db.transaction(STORE_NAME, "readonly");
     const items = await promisifyRequest(tx.objectStore(STORE_NAME).getAll()) as SyncQueueItem[];
-    return items.filter((item) => (item.status === "pending" || item.status === "pending-offline" || item.status === "error") && Boolean(item.accountOwnerUserId));
+    return items.filter((item) => ["pending", "pending-offline", "error", "conflict", "orphaned"].includes(item.status));
   });
 }
 
@@ -200,7 +200,7 @@ export async function requeueFailedAndStaleSyncItems(staleMinutes = 10) {
       if (!item.accountOwnerUserId) return;
       const updated: SyncQueueItem = {
         ...item,
-        status: input.status ?? "pending",
+        status: "pending",
         updatedAt: now(),
         lastError: item.status === "error" ? item.lastError : undefined,
       };
