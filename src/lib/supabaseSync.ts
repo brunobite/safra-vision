@@ -233,6 +233,18 @@ async function uploadQueueItem(item: SyncQueueItem, context: SyncContext) {
 
   if (item.operation === "upsert") {
     if (!item.payload || typeof item.payload !== "object") throw new Error("Payload inválido: item sem objeto para upsert.");
+    const { data: currentRemote, error: currentRemoteError } = await client
+      .from(table)
+      .select("deleted_at,updated_at")
+      .eq("user_id", accountOwnerUserId)
+      .eq("id", item.entityId)
+      .maybeSingle();
+    if (currentRemoteError) throw new Error(friendlySupabaseError(currentRemoteError.message));
+    const remoteDeletedAt = (currentRemote as { deleted_at?: string | null } | null)?.deleted_at;
+    const remoteUpdatedAt = (currentRemote as { updated_at?: string | null } | null)?.updated_at;
+    if (remoteDeletedAt && (!remoteUpdatedAt || new Date(remoteUpdatedAt).getTime() >= new Date(item.updatedAt).getTime())) {
+      return;
+    }
     const { error } = await client.from(table).upsert({
       id: item.entityId,
       user_id: accountOwnerUserId,

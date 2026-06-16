@@ -1,19 +1,27 @@
 import type { Session } from "@supabase/supabase-js";
-import { enqueueSyncItem, markSyncItemSynced, suppressNextSyncQueueItem, type SyncOperation } from "@/lib/syncQueue";
+import { openAppDb, type StoreName } from "@/lib/db";
+import { enqueueSyncItem, getAllSyncItems, markSyncItemSynced, suppressNextSyncQueueItem, type SyncOperation } from "@/lib/syncQueue";
 import { LOCAL_TO_REMOTE_TABLE, syncPendingQueue, type RemoteRow, type SyncableStore, type SyncSummary } from "@/lib/supabaseSync";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 import { normalizeAccessStatus } from "@/lib/accessStatus";
 import { normalizeClienteForPersistence, normalizeClientesForPersistence } from "@/lib/clientNormalization";
+import { recordAuditLog } from "@/lib/audit";
 
 export type OperationalPersistenceStatus = "sending" | "synced" | "pending-offline" | "error";
-
 export type OperationalActor = { id?: string | null; email?: string | null; role?: string | null; nome?: string | null };
 
 export type OperationalPersistenceOptions = {
   session: Session | null;
-  accessStatus: string | null;
+  accessStatus?: string | null;
   actorUser?: OperationalActor | null;
   accountOwnerUserId?: string | null;
+  actorUserId?: string | null;
+  actorNome?: string | null;
+  actorPapel?: string | null;
+  auditAction?: string;
+  resource?: string;
+  beforeData?: unknown;
+  afterData?: unknown;
   operation?: string;
   auditMetadata?: Record<string, unknown>;
   offlineFallback?: boolean;
@@ -23,119 +31,159 @@ export type OperationalPersistenceOptions = {
 };
 
 export type SaveOperationalEntityOptions = OperationalPersistenceOptions;
-
-export type EntitySnapshot<T extends { id: string } = { id: string }> = {
-  store: SyncableStore;
-  active: T[];
-  tombstones: RemoteRow[];
-  rows: RemoteRow[];
-  fetchedAt: string;
-};
-
-export type HydrateStoreResult<T extends { id: string } = { id: string }> = EntitySnapshot<T> & {
-  appliedActive: number;
-  appliedTombstones: number;
-};
+export type EntitySnapshot<T extends { id: string } = { id: string }> = { store: SyncableStore; active: T[]; tombstones: RemoteRow[]; rows: RemoteRow[]; fetchedAt: string };
+export type HydrateStoreResult<T extends { id: string } = { id: string }> = EntitySnapshot<T> & { appliedActive: number; appliedTombstones: number };
+export type QueueDiagnostics = { validas: number; obsoletasSchemaAntigo: number; duplicadasNamespaceAntigo: number; conflitantes: number; falhasRedeSessao: number; total: number };
+export const CRITICAL_OPERATION_RULES = {
+  priceRelease: "Liberação de preço deve usar gravação cloud-first direta no Supabase e não depender da fila geral.",
+} as const;
 
 const nowIso = () => new Date().toISOString();
+const queueKey = (store: string, id: string) => `${store}:${id}`;
 
 function getRemoteUserId(options: OperationalPersistenceOptions) {
-  return options.accountOwnerUserId || options.session?.user.id || null;
+  return options.accountOwnerUserId || null;
 }
 
 function canAttemptRemote(options: OperationalPersistenceOptions) {
   return Boolean(isSupabaseConfigured && supabase && options.session?.user && normalizeAccessStatus(options.accessStatus) === "active" && getRemoteUserId(options) && (typeof navigator === "undefined" || navigator.onLine));
 }
 
-function formatRemoteError(error: unknown) {
-  if (error instanceof Error) return error;
-  return new Error("Falha desconhecida ao sincronizar operação.");
-}
-
-function normalizePayload<T extends { id: string }>(store: SyncableStore, record: T) {
-  return store === "clientes" ? normalizeClienteForPersistence(record as Record<string, unknown>) : record;
-}
-
+function formatRemoteError(error: unknown) { return error instanceof Error ? error : new Error("Falha desconhecida ao sincronizar operação."); }
+function normalizePayload<T extends { id: string }>(store: SyncableStore, record: T) { return store === "clientes" ? normalizeClienteForPersistence(record as Record<string, unknown>) : record; }
 function rowToRecord<T extends { id: string }>(store: SyncableStore, row: RemoteRow): T | null {
   if (row.deleted_at || !row.payload || typeof row.payload !== "object" || Array.isArray(row.payload)) return null;
   const record = { id: row.id, ...(row.payload as Record<string, unknown>) };
   return (store === "clientes" ? normalizeClientesForPersistence([record])[0] : record) as T;
 }
 
+async function withDb<T>(fn: (db: IDBDatabase) => Promise<T>) { const db = await openAppDb(); try { return await fn(db); } finally { db.close(); } }
+async function writeLocalRecord<T extends { id: string }>(store: SyncableStore, record: T) {
+  await withDb(async (db) => { const tx = db.transaction(store as StoreName, "readwrite"); tx.objectStore(store).put(normalizePayload(store, record)); await new Promise<void>((res, rej) => { tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); }); });
+}
+async function deleteLocalRecord(store: SyncableStore, id: string) {
+  await withDb(async (db) => { const tx = db.transaction(store as StoreName, "readwrite"); tx.objectStore(store).delete(id); await new Promise<void>((res, rej) => { tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); }); });
+}
+
 async function writeRemoteRow<T extends { id: string }>(store: SyncableStore, record: T, operation: SyncOperation, options: OperationalPersistenceOptions) {
   if (!canAttemptRemote(options)) throw new Error("Sem conexão, sessão ativa ou Supabase configurado para gravação online.");
   const timestamp = nowIso();
-  const payload = normalizePayload(store, record);
-  const { error } = await supabase!.from(LOCAL_TO_REMOTE_TABLE[store]).upsert({
-    id: record.id,
-    user_id: getRemoteUserId(options)!,
-    payload,
-    updated_at: timestamp,
-    deleted_at: operation === "delete" ? timestamp : null,
-  }, { onConflict: "user_id,id" });
+  const { error } = await supabase!.from(LOCAL_TO_REMOTE_TABLE[store]).upsert({ id: record.id, user_id: getRemoteUserId(options)!, payload: normalizePayload(store, record), updated_at: timestamp, deleted_at: operation === "delete" ? timestamp : null }, { onConflict: "user_id,id" });
   if (error) throw new Error(error.message);
 }
 
-export async function saveEntity<T extends { id: string }>(store: SyncableStore, record: T, options: OperationalPersistenceOptions) {
-  const operation = (options.operation === "delete" ? "delete" : "upsert") as SyncOperation;
+async function auditIfRequested<T extends { id: string }>(record: T, options: OperationalPersistenceOptions) {
+  if (!options.auditAction) return;
+  await recordAuditLog({ action: options.auditAction, resource: options.resource ?? "operational", entityId: record.id, entityLabel: (record as Record<string, unknown>).nome as string | undefined, beforeData: options.beforeData, afterData: options.afterData ?? record, metadata: { ...options.auditMetadata, actorUserId: options.actorUserId, actorNome: options.actorNome, actorPapel: options.actorPapel } });
+}
+
+export async function saveEntityCloudFirst<T extends { id: string }>(store: SyncableStore, record: T, options: OperationalPersistenceOptions) {
   const payload = normalizePayload(store, record);
   const fallback = options.offlineFallback !== false;
-
   if (!canAttemptRemote(options)) {
     if (!fallback) throw new Error("Operação online obrigatória indisponível.");
-    await enqueueSyncItem({ store, entityId: record.id, operation, payload });
+    await writeLocalRecord(store, record);
+    await enqueueSyncItem({ store, entityId: record.id, operation: "upsert", payload });
     options.onStatusChange?.("pending-offline");
     return { status: "pending-offline" as const, remote: false };
   }
-
   options.onStatusChange?.("sending");
   try {
-    await writeRemoteRow(store, record, operation, options);
-    await markSyncItemSynced(`${store}:${record.id}`);
-    suppressNextSyncQueueItem(store, record.id, operation);
+    await writeRemoteRow(store, record, "upsert", options);
+    await writeLocalRecord(store, record);
+    await markSyncItemSynced(queueKey(store, record.id));
+    suppressNextSyncQueueItem(store, record.id, "upsert");
+    await auditIfRequested(record, options);
     await options.onRemoteSuccess?.();
     options.onStatusChange?.("synced");
     return { status: "synced" as const, remote: true };
   } catch (error) {
     const formatted = formatRemoteError(error);
     if (!fallback) throw formatted;
-    await enqueueSyncItem({ store, entityId: record.id, operation, payload });
+    await writeLocalRecord(store, record);
+    await enqueueSyncItem({ store, entityId: record.id, operation: "upsert", payload });
     await options.onRemoteError?.(formatted);
     options.onStatusChange?.("pending-offline");
     return { status: "pending-offline" as const, remote: false, error: formatted };
   }
 }
 
-export async function deleteEntity<T extends { id: string }>(store: SyncableStore, id: string, options: OperationalPersistenceOptions & { record?: T }) {
+export async function deleteEntityCloudFirst<T extends { id: string }>(store: SyncableStore, id: string, options: OperationalPersistenceOptions & { record?: T }) {
   const record = options.record ?? ({ id } as T);
-  return saveEntity(store, record, { ...options, operation: "delete" });
+  const payload = normalizePayload(store, record);
+  const fallback = options.offlineFallback !== false;
+  if (!canAttemptRemote(options)) {
+    if (!fallback) throw new Error("Exclusão online obrigatória indisponível.");
+    await deleteLocalRecord(store, id);
+    await enqueueSyncItem({ store, entityId: id, operation: "delete", payload });
+    options.onStatusChange?.("pending-offline");
+    return { status: "pending-offline" as const, remote: false };
+  }
+  options.onStatusChange?.("sending");
+  try {
+    await writeRemoteRow(store, record, "delete", options);
+    await deleteLocalRecord(store, id);
+    await markSyncItemSynced(queueKey(store, id));
+    suppressNextSyncQueueItem(store, id, "delete");
+    await auditIfRequested(record, options);
+    await options.onRemoteSuccess?.();
+    options.onStatusChange?.("synced");
+    return { status: "synced" as const, remote: true };
+  } catch (error) {
+    const formatted = formatRemoteError(error);
+    if (!fallback) throw formatted;
+    await deleteLocalRecord(store, id);
+    await enqueueSyncItem({ store, entityId: id, operation: "delete", payload });
+    await options.onRemoteError?.(formatted);
+    options.onStatusChange?.("pending-offline");
+    return { status: "pending-offline" as const, remote: false, error: formatted };
+  }
 }
 
-export async function saveOperationalEntity<T extends { id: string }>(store: SyncableStore, record: T, operation: SyncOperation, options: SaveOperationalEntityOptions) {
-  return operation === "delete" ? deleteEntity(store, record.id, { ...options, record, operation }) : saveEntity(store, record, { ...options, operation });
-}
-
-export async function fetchEntitySnapshot<T extends { id: string } = { id: string }>(store: SyncableStore, options: OperationalPersistenceOptions): Promise<EntitySnapshot<T>> {
+export async function fetchCloudSnapshot<T extends { id: string } = { id: string }>(store: SyncableStore, options: OperationalPersistenceOptions): Promise<EntitySnapshot<T>> {
   if (!canAttemptRemote(options)) throw new Error("Sem conexão, sessão ativa ou Supabase configurado para leitura online.");
-  const { data, error } = await supabase!
-    .from(LOCAL_TO_REMOTE_TABLE[store])
-    .select("id,user_id,payload,created_at,updated_at,deleted_at")
-    .eq("user_id", getRemoteUserId(options)!)
-    .order("updated_at", { ascending: false });
+  const { data, error } = await supabase!.from(LOCAL_TO_REMOTE_TABLE[store]).select("id,user_id,payload,created_at,updated_at,deleted_at").eq("user_id", getRemoteUserId(options)!).order("updated_at", { ascending: false });
   if (error) throw new Error(error.message);
   const rows = (data ?? []) as RemoteRow[];
-  const active = rows.map((row) => rowToRecord<T>(store, row)).filter((record): record is T => Boolean(record));
-  return { store, active, tombstones: rows.filter((row) => Boolean(row.deleted_at)), rows, fetchedAt: nowIso() };
+  return { store, active: rows.map((row) => rowToRecord<T>(store, row)).filter((r): r is T => Boolean(r)), tombstones: rows.filter((row) => Boolean(row.deleted_at)), rows, fetchedAt: nowIso() };
 }
 
-export async function hydrateStoreFromCloud<T extends { id: string } = { id: string }>(store: SyncableStore, options: OperationalPersistenceOptions): Promise<HydrateStoreResult<T>> {
-  const snapshot = await fetchEntitySnapshot<T>(store, options);
+export async function hydrateLocalCacheFromCloud<T extends { id: string } = { id: string }>(store: SyncableStore, options: OperationalPersistenceOptions): Promise<HydrateStoreResult<T>> {
+  const snapshot = await fetchCloudSnapshot<T>(store, options);
+  await withDb(async (db) => {
+    const tx = db.transaction(store as StoreName, "readwrite");
+    const os = tx.objectStore(store);
+    snapshot.tombstones.forEach((row) => os.delete(row.id));
+    snapshot.active.forEach((record) => os.put(normalizePayload(store, record)));
+    await new Promise<void>((res, rej) => { tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); });
+  });
   return { ...snapshot, appliedActive: snapshot.active.length, appliedTombstones: snapshot.tombstones.length };
 }
 
-export async function syncPendingQueueNow(options: OperationalPersistenceOptions): Promise<{ summary: SyncSummary; snapshot?: EntitySnapshot }> {
-  if (!canAttemptRemote(options)) throw new Error("Sem conexão, sessão ativa ou Supabase configurado para sincronização.");
-  const summaryResult = await syncPendingQueue({ session: options.session, accessStatus: "active", accountOwnerUserId: options.accountOwnerUserId });
-  const snapshot = await fetchEntitySnapshot("clientes", options);
-  return { summary: summaryResult.summary, snapshot };
+export async function diagnosePendingQueue(): Promise<QueueDiagnostics> {
+  const items = await getAllSyncItems();
+  const byEntity = new Map<string, typeof items>();
+  items.forEach((item) => byEntity.set(queueKey(item.store, item.entityId), [...(byEntity.get(queueKey(item.store, item.entityId)) ?? []), item]));
+  return {
+    total: items.length,
+    validas: items.filter((i) => i.status === "pending" || i.status === "error").length,
+    obsoletasSchemaAntigo: items.filter((i) => !LOCAL_TO_REMOTE_TABLE[i.store as SyncableStore]).length,
+    duplicadasNamespaceAntigo: Array.from(byEntity.values()).filter((group) => group.length > 1).length,
+    conflitantes: Array.from(byEntity.values()).filter((group) => group.some((i) => i.operation === "delete") && group.some((i) => i.operation === "upsert")).length,
+    falhasRedeSessao: items.filter((i) => /sess|network|fetch|rede|internet/i.test(i.lastError ?? "")).length,
+  };
 }
+
+export async function syncPendingQueueNow(options: OperationalPersistenceOptions): Promise<{ summary: SyncSummary; snapshot?: EntitySnapshot; diagnostics: QueueDiagnostics }> {
+  if (!canAttemptRemote(options)) throw new Error("Sem conexão, sessão ativa ou Supabase configurado para sincronização.");
+  const diagnostics = await diagnosePendingQueue();
+  const summaryResult = await syncPendingQueue({ session: options.session, accessStatus: "active", accountOwnerUserId: options.accountOwnerUserId });
+  const snapshot = await fetchCloudSnapshot("clientes", options);
+  return { summary: summaryResult.summary, snapshot, diagnostics };
+}
+
+export const saveEntity = saveEntityCloudFirst;
+export const deleteEntity = deleteEntityCloudFirst;
+export const saveOperationalEntity = <T extends { id: string }>(store: SyncableStore, record: T, operation: SyncOperation, options: SaveOperationalEntityOptions) => operation === "delete" ? deleteEntityCloudFirst(store, record.id, { ...options, record, operation }) : saveEntityCloudFirst(store, record, { ...options, operation });
+export const fetchEntitySnapshot = fetchCloudSnapshot;
+export const hydrateStoreFromCloud = hydrateLocalCacheFromCloud;
