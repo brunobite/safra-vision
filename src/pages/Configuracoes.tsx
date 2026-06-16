@@ -29,7 +29,7 @@ import { isSupabaseConfigured } from "@/lib/supabase";
 import { getFreshSupabaseAccessContext, type FreshSupabaseAccessContext } from "@/lib/supabaseAccess";
 import { compareLocalAndRemote, getRemoteSyncMeta, publishLocalSnapshotAsOfficial, type LocalRemoteComparison, type SyncSummary } from "@/lib/supabaseSync";
 import { fetchAccountSnapshot, shouldRestoreFromCloud, buildCloudRestoreSummary, type CloudRestoreSummary } from "@/lib/cloudRestore";
-import { enqueueSyncItem, requeueFailedAndStaleSyncItems } from "@/lib/syncQueue";
+import { clearOrphanedAndObsoleteSyncItems, enqueueSyncItem, exportSyncQueueDiagnostics, requeueFailedAndStaleSyncItems } from "@/lib/syncQueue";
 import { findRemoteOnlyClientTestCandidates, softDeleteRemoteClientTests, type RemoteOnlyClientTestCandidate } from "@/lib/remoteCleanup";
 import { findLocalTestRecordCandidates, getSyncQueueAudit, type SyncQueueAudit, type TestRecordCandidate } from "@/lib/syncAudit";
 import { diagnosePendingQueue, type QueueDiagnostics } from "@/lib/operationalPersistence";
@@ -483,6 +483,35 @@ export default function Configuracoes() {
       toast.error(message);
     } finally {
       setIsRequeueingSync(false);
+    }
+  };
+
+  const handleExportQueueDiagnostics = async () => {
+    try {
+      const report = await exportSyncQueueDiagnostics();
+      saveAsTextFile(`diagnostico-fila-sync-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(report, null, 2), "application/json");
+      toast.success("Diagnóstico da fila exportado.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Erro desconhecido ao exportar diagnóstico da fila.";
+      setSyncError(message);
+      toast.error(message);
+    }
+  };
+
+  const handleClearOrphanedQueueItems = async () => {
+    const ok = window.confirm("Confirme a limpeza APENAS de itens órfãos/legados/obsoletos da fila local. Clientes e conflitos serão preservados.");
+    if (!ok) return;
+    const secondOk = window.confirm("Confirmação final: remover itens técnicos órfãos/legados da syncQueue deste dispositivo? Itens conflict NÃO serão removidos.");
+    if (!secondOk) return;
+    try {
+      const removed = await clearOrphanedAndObsoleteSyncItems();
+      const [diagnostics] = await Promise.all([diagnosePendingQueue(), refreshPendingSyncCount()]);
+      setQueueDiagnostics(diagnostics);
+      toast.success(`${removed.length} item(ns) órfão(s)/legado(s) removido(s) da fila.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Erro desconhecido ao limpar itens órfãos/legados.";
+      setSyncError(message);
+      toast.error(message);
     }
   };
 
@@ -1432,14 +1461,26 @@ export default function Configuracoes() {
             <div className="grid gap-3 md:grid-cols-4">
               <div className="rounded-md border bg-background/60 p-3 text-sm"><div className="text-muted-foreground">Última leitura da nuvem</div><div className="font-medium">{appConfig.syncMeta?.lastDownloadAt ? new Date(appConfig.syncMeta.lastDownloadAt).toLocaleString("pt-BR") : "não registrado"}</div></div>
               <div className="rounded-md border bg-background/60 p-3 text-sm"><div className="text-muted-foreground">Último envio para nuvem</div><div className="font-medium">{appConfig.syncMeta?.lastUploadAt ? new Date(appConfig.syncMeta.lastUploadAt).toLocaleString("pt-BR") : "não registrado"}</div></div>
-              <div className="rounded-md border bg-background/60 p-3 text-sm"><div className="text-muted-foreground">Pendências válidas</div><div className="font-medium">{queueDiagnostics?.validas ?? pendingSyncCount}</div></div>
-              <div className="rounded-md border bg-background/60 p-3 text-sm"><div className="text-muted-foreground">Pendências obsoletas</div><div className="font-medium">{queueDiagnostics?.obsoletasSchemaAntigo ?? "—"}</div></div>
+              <div className="rounded-md border bg-background/60 p-3 text-sm"><div className="text-muted-foreground">Pendências reais de envio</div><div className="font-medium">{queueDiagnostics?.validas ?? pendingSyncCount}</div></div>
+              <div className="rounded-md border bg-background/60 p-3 text-sm"><div className="text-muted-foreground">Conflitos preservados</div><div className="font-medium">{queueDiagnostics?.conflitantes ?? "—"}</div></div>
+              <div className="rounded-md border bg-background/60 p-3 text-sm"><div className="text-muted-foreground">Órfãos/legados</div><div className="font-medium">{queueDiagnostics?.filasOrfas ?? "—"}</div></div>
+              <div className="rounded-md border bg-background/60 p-3 text-sm"><div className="text-muted-foreground">Itens obsoletos</div><div className="font-medium">{queueDiagnostics?.obsoletasSchemaAntigo ?? "—"}</div></div>
+              <div className="rounded-md border bg-background/60 p-3 text-sm"><div className="text-muted-foreground">Erros rede/sessão</div><div className="font-medium">{queueDiagnostics?.falhasRedeSessao ?? "—"}</div></div>
               <div className="rounded-md border bg-background/60 p-3 text-sm"><div className="text-muted-foreground">Erros ativos</div><div className="font-medium">{syncSummary?.error ?? syncQueueAudit?.byStatus.error ?? "—"}</div></div>
               <div className="rounded-md border bg-background/60 p-3 text-sm"><div className="text-muted-foreground">Tombstones aplicados</div><div className="font-medium">{syncSummary ? Object.values(syncSummary.byStore).reduce((total, item) => total + (item?.tombstoned ?? 0), 0) : (syncComparison?.totals.remoteDeleted ?? "—")}</div></div>
               <div className="rounded-md border bg-background/60 p-3 text-sm"><div className="text-muted-foreground">Divergências</div><div className="font-medium">{syncComparison ? syncComparison.totals.onlyLocal + syncComparison.totals.onlyRemote + syncComparison.totals.changedInBoth : "—"}</div></div>
               <div className="rounded-md border bg-background/60 p-3 text-sm"><div className="text-muted-foreground">Status operacional</div><div className="font-medium">{isAccountSyncing || isSyncing ? "Sincronizando" : syncError ? "Erro" : syncComparison && (syncComparison.totals.onlyLocal + syncComparison.totals.onlyRemote + syncComparison.totals.changedInBoth > 0) ? "Divergente" : pendingSyncCount > 0 ? "Pendente offline" : "Pronto"}</div></div>
             </div>
             <div className="rounded-md border bg-background/60 p-3 text-sm">{userSyncMessage}</div>
+            {queueDiagnostics && (queueDiagnostics.conflitantes > 0 || queueDiagnostics.filasOrfas > 0 || queueDiagnostics.obsoletasSchemaAntigo > 0) && (
+              <div className="rounded-md border border-yellow-500/40 bg-yellow-500/10 p-3 text-sm text-yellow-900">
+                Atenção: conflitos, órfãos/legados e obsoletos são diagnóstico técnico e não entram em nova tentativa automática. Use exportação antes de limpar.
+              </div>
+            )}
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" onClick={() => void handleExportQueueDiagnostics()}>Exportar diagnóstico da fila</Button>
+              <Button variant="outline" onClick={() => void handleClearOrphanedQueueItems()} disabled={!queueDiagnostics || (queueDiagnostics.filasOrfas + queueDiagnostics.obsoletasSchemaAntigo === 0)}>Limpar itens órfãos/legados</Button>
+            </div>
           </div>
 
           <Collapsible open={advancedSyncOpen} onOpenChange={setAdvancedSyncOpen} className="space-y-3 rounded-md border p-3">
