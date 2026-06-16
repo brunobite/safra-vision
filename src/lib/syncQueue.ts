@@ -44,6 +44,18 @@ const TRACKED_STORES = new Set<StoreName>([
 
 const now = () => new Date().toISOString();
 const queueId = (store: string, entityId: string) => `${store}:${entityId}`;
+const suppressedQueueItems = new Map<string, SyncOperation>();
+
+export function suppressNextSyncQueueItem(store: string, entityId: string, operation: SyncOperation) {
+  suppressedQueueItems.set(queueId(store, entityId), operation);
+}
+
+export function consumeSuppressedSyncQueueItem(store: string, entityId: string, operation: SyncOperation) {
+  const id = queueId(store, entityId);
+  if (suppressedQueueItems.get(id) !== operation) return false;
+  suppressedQueueItems.delete(id);
+  return true;
+}
 
 async function withDb<T>(fn: (db: IDBDatabase) => Promise<T>) {
   const db = await openAppDb();

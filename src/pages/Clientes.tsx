@@ -15,8 +15,8 @@ import { Cliente, ABC } from "@/types";
 import { fmtBRL, fmtNum } from "@/utils/calculations";
 import { computeClienteStatus, formatDateBR, isClienteAtrasado, sugestaoRetornoDias } from "@/lib/clientesUtils";
 import { normalizeClienteForPersistence, normalizeClientesForPersistence } from "@/lib/clientNormalization";
-import { saveOperationalEntity, type OperationalPersistenceStatus } from "@/lib/operationalPersistence";
-import { fetchRemoteSnapshot } from "@/lib/supabaseSync";
+import { suppressNextSyncQueueItem } from "@/lib/syncQueue";
+import { hydrateStoreFromCloud, saveOperationalEntity, type OperationalPersistenceStatus } from "@/lib/operationalPersistence";
 import { useAuth } from "@/store/AuthStore";
 import { canCreate, canDelete, canEdit, canManage, canView, isAdminRole, normalizeRole } from "@/lib/permissions";
 import { normalizeAccessStatus } from "@/lib/accessStatus";
@@ -115,14 +115,13 @@ export default function Clientes() {
   const refreshClientesFromCloud = useCallback(async () => {
     if (!session?.user || normalizeAccessStatus(accessStatus) !== "active" || (typeof navigator !== "undefined" && !navigator.onLine)) return;
     try {
-      const snapshot = await fetchRemoteSnapshot({ session, accessStatus: "active", accountOwnerUserId });
-      const remoteClientes = normalizeClientesForPersistence((snapshot.clientes ?? []) as Record<string, unknown>[]) as Cliente[];
-      if (remoteClientes.length === 0) {
-        setLastCloudRefreshAt(new Date().toISOString());
-        return;
-      }
+      const snapshot = await hydrateStoreFromCloud<Cliente>("clientes", { session, accessStatus: "active", accountOwnerUserId });
+      const remoteClientes = normalizeClientesForPersistence(snapshot.active as Record<string, unknown>[]) as Cliente[];
+      const tombstoneIds = new Set(snapshot.tombstones.map((row) => row.id));
+      remoteClientes.forEach((cliente) => suppressNextSyncQueueItem("clientes", cliente.id, "upsert"));
+      tombstoneIds.forEach((id) => suppressNextSyncQueueItem("clientes", id, "delete"));
       setClientes((current) => {
-        const byId = new Map(current.map((cliente) => [cliente.id, cliente]));
+        const byId = new Map(current.filter((cliente) => !tombstoneIds.has(cliente.id)).map((cliente) => [cliente.id, cliente]));
         remoteClientes.forEach((cliente) => byId.set(cliente.id, cliente));
         return Array.from(byId.values());
       });
@@ -222,7 +221,7 @@ export default function Clientes() {
       accountOwnerUserId,
       onStatusChange: setOperationStatus,
       onRemoteSuccess: async () => {
-        await recordAuditLog({ action: "sincronizar_cliente_imediato", resource: "clientes", entityId: saved.id, entityLabel: saved.nome, afterData: saved, metadata: { operation: "upsert" } });
+        await recordAuditLog({ action: "sync_upload_cliente", resource: "clientes", entityId: saved.id, entityLabel: saved.nome, afterData: saved, metadata: { operation: "upsert" } });
       },
       onRemoteError: async (error) => {
         await recordAuditLog({ action: "erro_sync_cliente", resource: "clientes", entityId: saved.id, entityLabel: saved.nome, afterData: saved, metadata: { operation: "upsert", error: error.message } });
@@ -234,6 +233,7 @@ export default function Clientes() {
     if (edit && beforeResponsavelId !== getClienteResponsavelId(saved)) void recordAuditLog({ action: "alterar_responsavel_cliente", resource: "clientes", entityId: saved.id, entityLabel: saved.nome, beforeData: { responsavelUserId: beforeResponsavelId, responsavelNome: getClienteResponsavelNome(edit) }, afterData: { responsavelUserId: getClienteResponsavelId(saved), responsavelNome: getClienteResponsavelNome(saved) }, metadata: { responsavelAnterior: getClienteResponsavelNome(edit), responsavelNovo: getClienteResponsavelNome(saved) } });
     await refreshPendingSyncCount();
     if (result.status === "pending-offline") triggerFastSync();
+    else void refreshClientesFromCloud();
     setOpen(false); toast.success(result.status === "synced" ? "Cliente salvo e sincronizado." : "Cliente salvo com pendência offline.");
   };
 
@@ -245,7 +245,7 @@ export default function Clientes() {
       accountOwnerUserId,
       onStatusChange: setOperationStatus,
       onRemoteSuccess: async () => {
-        await recordAuditLog({ action: "sincronizar_cliente_imediato", resource: "clientes", entityId: cliente.id, entityLabel: cliente.nome, beforeData: cliente, metadata: { operation: "delete" } });
+        await recordAuditLog({ action: "sync_upload_cliente", resource: "clientes", entityId: cliente.id, entityLabel: cliente.nome, beforeData: cliente, metadata: { operation: "delete" } });
       },
       onRemoteError: async (error) => {
         await recordAuditLog({ action: "erro_sync_cliente", resource: "clientes", entityId: cliente.id, entityLabel: cliente.nome, beforeData: cliente, metadata: { operation: "delete", error: error.message } });
@@ -255,6 +255,7 @@ export default function Clientes() {
     void recordAuditLog({ action: "excluir_cliente", resource: "clientes", entityId: cliente.id, entityLabel: cliente.nome, beforeData: cliente });
     await refreshPendingSyncCount();
     if (result.status === "pending-offline") triggerFastSync();
+    else void refreshClientesFromCloud();
     toast.success(result.status === "synced" ? "Cliente excluído e sincronizado." : "Cliente excluído com pendência offline.");
   };
 
