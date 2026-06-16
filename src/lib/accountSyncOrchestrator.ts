@@ -10,6 +10,8 @@ export type AccountSyncFreshContext = {
   session: Session | null;
   accessStatus: AccountSyncAccessStatus;
   error?: string | null;
+  accountOwnerUserId?: string | null;
+  role?: string | null;
 };
 
 export type AccountSyncUploadResult =
@@ -25,9 +27,9 @@ export type AccountSyncRestoreResult = {
 export type AccountSyncDependencies = {
   getFreshAccessContext: () => Promise<AccountSyncFreshContext>;
   refreshPendingSyncCount: () => Promise<number>;
-  uploadPending: (context: { session: Session; accessStatus: "active" }) => Promise<AccountSyncUploadResult>;
-  compareLocalAndRemote?: (context: { session: Session; accessStatus: "active" }) => Promise<LocalRemoteComparison>;
-  fetchAccountSnapshot?: (context: { session: Session; accessStatus: "active" }) => Promise<AccountSnapshot>;
+  uploadPending: (context: { session: Session; accessStatus: "active"; accountOwnerUserId: string; role?: string | null }) => Promise<AccountSyncUploadResult>;
+  compareLocalAndRemote?: (context: { session: Session; accessStatus: "active"; accountOwnerUserId: string; role?: string | null }) => Promise<LocalRemoteComparison>;
+  fetchAccountSnapshot?: (context: { session: Session; accessStatus: "active"; accountOwnerUserId: string; role?: string | null }) => Promise<AccountSnapshot>;
   restoreAccountSnapshot: (snapshot: AccountSnapshot) => Promise<AccountSyncRestoreResult>;
   isOnline?: () => boolean;
   isSupabaseConfigured?: () => boolean;
@@ -106,7 +108,7 @@ function buildStatus(input: Omit<AccountSyncStatus, "lastCheckedAt"> & { lastChe
   return { ...input, lastCheckedAt: input.lastCheckedAt ?? nowIso() };
 }
 
-function activeContext(fresh: AccountSyncFreshContext): { session: Session; accessStatus: "active" } | AccountSyncStatus {
+function activeContext(fresh: AccountSyncFreshContext): { session: Session; accessStatus: "active"; accountOwnerUserId: string; role?: string | null } | AccountSyncStatus {
   if (fresh.error) {
     return buildAccountSyncStatus({ code: "error", technicalMessage: fresh.error });
   }
@@ -116,7 +118,10 @@ function activeContext(fresh: AccountSyncFreshContext): { session: Session; acce
   if (normalizeAccessStatus(fresh.accessStatus) !== "active") {
     return buildAccountSyncStatus({ code: "skipped", reason: "inactive-profile" });
   }
-  return { session: fresh.session, accessStatus: "active" };
+  if (!fresh.accountOwnerUserId) {
+    return buildAccountSyncStatus({ code: "blocked", technicalMessage: "Conta comercial (accountOwnerUserId) obrigatória ausente; sincronização bloqueada." });
+  }
+  return { session: fresh.session, accessStatus: "active", accountOwnerUserId: fresh.accountOwnerUserId, role: fresh.role ?? null };
 }
 
 export function shouldUploadPendingFirst(params: { pendingSyncCount: number }) {
@@ -181,7 +186,7 @@ export function buildAccountSyncStatus(params: {
 
 async function uploadPendingFirstIfNeeded(
   dependencies: AccountSyncDependencies,
-  syncContext: { session: Session; accessStatus: "active" },
+  syncContext: { session: Session; accessStatus: "active"; accountOwnerUserId: string; role?: string | null },
   pendingSyncCount: number,
 ): Promise<{ status?: AccountSyncStatus; pendingSyncCount: number; uploadSummary?: SyncSummary }> {
   if (!shouldUploadPendingFirst({ pendingSyncCount })) return { pendingSyncCount };
@@ -224,7 +229,7 @@ async function uploadPendingFirstIfNeeded(
 
 async function restoreRemoteOnlyData(
   dependencies: AccountSyncDependencies,
-  syncContext: { session: Session; accessStatus: "active" },
+  syncContext: { session: Session; accessStatus: "active"; accountOwnerUserId: string; role?: string | null },
   comparison: LocalRemoteComparison,
   uploadSummary?: SyncSummary,
 ) {
