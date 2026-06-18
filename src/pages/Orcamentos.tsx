@@ -181,7 +181,7 @@ export default function Orcamentos() {
     const ownerApplied = selectedAgent ? applyAgentToOrcamento(form, selectedAgent) : form;
     const idNovo = ownerApplied.id || `orc${Date.now()}`;
     const createdAt = ownerApplied.createdAt || new Date().toISOString();
-    const payload = recalc({ ...ownerApplied, id: idNovo, orcamentoOrigemId: ownerApplied.orcamentoOrigemId || idNovo, createdAt, createdByUserId: ownerApplied.createdByUserId || user?.id, updatedByUserId: user?.id || ownerApplied.updatedByUserId, motivoRevisao: motivoRevisao || ownerApplied.motivoRevisao, updatedAt: new Date().toISOString() });
+    const payload = recalc({ ...ownerApplied, id: idNovo, orcamentoOrigemId: ownerApplied.orcamentoOrigemId || idNovo, createdAt, createdByUserId: ownerApplied.createdByUserId || user?.id, updatedByUserId: user?.id || ownerApplied.updatedByUserId, motivoRevisao: motivoRevisao || ownerApplied.motivoRevisao, status: normalizePedidoStatus(ownerApplied.status), updatedAt: new Date().toISOString() });
     if (!payload.clienteId) return toast.error("Cliente obrigatório");
     const excecoesPreco = payload.itens.filter((it) => it.abaixoPrecoMinimo);
     if (excecoesPreco.length && !canUseMinimumPriceException) return toast.error("Preço abaixo do mínimo exige a permissão específica excecao_preco_minimo.");
@@ -214,10 +214,14 @@ export default function Orcamentos() {
       toast.error(error instanceof Error ? error.message : "Falha ao salvar orçamento.");
       return;
     }
+    if (result.status === "conflict") {
+      toast.error("Conflito ao salvar orçamento. Atualize/recarregue os dados e tente novamente para evitar sobrescrever alterações mais recentes.");
+      return;
+    }
     if (reservasAprovacao.length) setProdutos(produtosComReservaAprovacao);
     setOrcamentos((prev) => edit ? prev.map((o) => (o.id === edit.id ? payloadPersistido : o)) : [payloadPersistido, ...prev.filter((o) => o.id !== idNovo)]);
     if (edit && (edit.responsavelUserId !== payload.responsavelUserId || edit.responsavelNome !== payload.responsavelNome)) void recordAuditLog({ action: "alterar_responsavel_orcamento", resource: "orcamentos", entityId: idNovo, entityLabel: payload.codigo, metadata: { de: edit.responsavelNome || edit.responsavel, para: payload.responsavelNome || payload.responsavel } });
-    if (edit?.status !== payload.status) void recordAuditLog({ action: "alterar_status_orcamento", resource: "orcamentos", entityId: idNovo, entityLabel: payload.codigo, metadata: { de: edit?.status, para: payload.status } });
+    if (edit && normalizePedidoStatus(edit.status) !== normalizePedidoStatus(payloadPersistido.status)) void recordAuditLog({ action: "alterar_status_orcamento", resource: "orcamentos", entityId: idNovo, entityLabel: payload.codigo, metadata: { de: normalizePedidoStatus(edit.status), para: normalizePedidoStatus(payloadPersistido.status), persistencia: result.status } });
     if ((payload.descontoTotal || 0) > 0 || payload.itens.some((it) => (it.desconto || 0) > 0)) void recordAuditLog({ action: "aplicar_desconto_orcamento", resource: "orcamentos", entityId: idNovo, entityLabel: payload.codigo, metadata: { descontoTotal: payload.descontoTotal, itens: payload.itens.map((it) => ({ produtoId: it.produtoId, desconto: it.desconto || 0 })) } });
     if (excecoesPreco.length) void recordAuditLog({ action: "preco_abaixo_minimo_autorizado", resource: "orcamentos", entityId: idNovo, entityLabel: payload.codigo, metadata: { itens: excecoesPreco.map((it) => ({ produtoId: it.produtoId, precoUnitario: it.precoUnitario, desconto: it.desconto, precoMinimo: it.precoMinimo })) } });
     if (normalizePedidoStatus(payload.status) === "Aprovado pelo gestor") {
@@ -383,10 +387,15 @@ export default function Orcamentos() {
     const oportunidadeGanha = oportunidadeAtual ? { ...oportunidadeAtual, etapa: "Ganha" as EtapaOportunidade, negocioId: negocio.id, orcamentoId: orcamento.id, valorFinal: orcamento.valorTotal, valorEstimado: orcamento.valorTotal, itensEstimados: orcamento.itens, dataFechamento: current.slice(0, 10), updatedAt: current, updatedByUserId: user?.id } : orcamento.oportunidadeId ? { id: orcamento.oportunidadeId, origem: "Orçamento" as const, etapa: "Ganha" as EtapaOportunidade, orcamentoId: orcamento.id, negocioId: negocio.id, clienteId: orcamento.clienteId, clienteNome: cliente?.nome, valorFinal: orcamento.valorTotal, valorEstimado: orcamento.valorTotal, itensEstimados: orcamento.itens, vendedor: orcamento.vendedor, vendedorId: orcamento.vendedorId, vendedorUserId: orcamento.vendedorUserId, vendedorNome: orcamento.vendedorNome, responsavel: orcamento.responsavel || orcamento.vendedor, responsavelId: orcamento.responsavelId || orcamento.vendedorId, responsavelUserId: orcamento.responsavelUserId || orcamento.vendedorUserId, responsavelNome: orcamento.responsavelNome || orcamento.vendedorNome || orcamento.vendedor, createdByUserId: orcamento.createdByUserId || user?.id, updatedByUserId: user?.id, dataFechamento: current.slice(0, 10), createdAt: current, updatedAt: current } : undefined;
     const historicoGanho = oportunidadeGanha ? { id: `hf${Date.now()}-${negocio.id}`, oportunidadeId: oportunidadeGanha.id, clienteId: oportunidadeGanha.clienteId, etapaAnterior: oportunidadeAtual?.etapa, etapaNova: "Ganha" as EtapaOportunidade, dataMovimento: current, vendedor: negocio.vendedor, observacao: `Venda ${negocio.codigo} criada a partir do orçamento ${orcamento.codigo}.`, createdAt: current } : undefined;
     try {
-      await saveEntityCloudFirst("negocios", negocio, { ...persistenceOptions, auditAction: "criar_negocio", resource: "negocios", afterData: negocio, auditMetadata: { action: "fechar_venda", orcamentoId: orcamento.id, oportunidadeId: orcamento.oportunidadeId, clienteId: orcamento.clienteId, valor: orcamento.valorTotal, produtosAfetados: produtosComReserva(orcamento).map((r) => ({ produtoId: r.item.produtoId, quantidade: r.item.quantidadeTotal })) } });
-      await saveEntityCloudFirst("orcamentos", orcamentoConvertido, { ...persistenceOptions, auditAction: "converter_orcamento_negocio", resource: "orcamentos", beforeData: orcamento, afterData: orcamentoConvertido, auditMetadata: { negocioId: negocio.id, valor: negocio.valorTotal } });
-      if (oportunidadeGanha) await saveEntityCloudFirst("oportunidades", oportunidadeGanha, { ...persistenceOptions, auditAction: oportunidadeAtual ? "oportunidade_ganha_por_orcamento" : "recriar_oportunidade_orfa_ganha", resource: "oportunidades", beforeData: oportunidadeAtual || null, afterData: oportunidadeGanha, auditMetadata: { orcamentoId: orcamento.id, negocioId: negocio.id } });
-      if (historicoGanho) await saveEntityCloudFirst("historicoFunil", historicoGanho, { ...persistenceOptions, auditAction: "registrar_historico_funil_ganho", resource: "historicoFunil", afterData: historicoGanho, auditMetadata: { orcamentoId: orcamento.id, negocioId: negocio.id, oportunidadeId: oportunidadeGanha?.id } });
+      const negocioResult = await saveEntityCloudFirst("negocios", negocio, { ...persistenceOptions, auditAction: "criar_negocio", resource: "negocios", afterData: negocio, auditMetadata: { action: "fechar_venda", orcamentoId: orcamento.id, oportunidadeId: orcamento.oportunidadeId, clienteId: orcamento.clienteId, valor: orcamento.valorTotal, produtosAfetados: produtosComReserva(orcamento).map((r) => ({ produtoId: r.item.produtoId, quantidade: r.item.quantidadeTotal })) } });
+      const orcamentoResult = await saveEntityCloudFirst("orcamentos", orcamentoConvertido, { ...persistenceOptions, auditAction: "converter_orcamento_negocio", resource: "orcamentos", beforeData: orcamento, afterData: orcamentoConvertido, auditMetadata: { negocioId: negocio.id, valor: negocio.valorTotal } });
+      const oportunidadeResult = oportunidadeGanha ? await saveEntityCloudFirst("oportunidades", oportunidadeGanha, { ...persistenceOptions, auditAction: oportunidadeAtual ? "oportunidade_ganha_por_orcamento" : "recriar_oportunidade_orfa_ganha", resource: "oportunidades", beforeData: oportunidadeAtual || null, afterData: oportunidadeGanha, auditMetadata: { orcamentoId: orcamento.id, negocioId: negocio.id } }) : null;
+      const historicoResult = historicoGanho ? await saveEntityCloudFirst("historicoFunil", historicoGanho, { ...persistenceOptions, auditAction: "registrar_historico_funil_ganho", resource: "historicoFunil", afterData: historicoGanho, auditMetadata: { orcamentoId: orcamento.id, negocioId: negocio.id, oportunidadeId: oportunidadeGanha?.id } }) : null;
+      if ([negocioResult, orcamentoResult, oportunidadeResult, historicoResult].some((result) => result?.status === "conflict")) {
+        toast.error("Conflito ao fechar venda. Atualize/recarregue os dados e tente novamente para evitar sobrescrever alterações mais recentes.");
+        setClosingSale(false);
+        return;
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Falha ao fechar venda.");
       setClosingSale(false);
@@ -413,13 +422,37 @@ export default function Orcamentos() {
     { label: "Cancelar/Perder", status: "Perdido" },
   ];
 
-  const abrirComStatus = (orcamento: Orcamento, status: OrcamentoStatus) => {
-    if (!canTransitionPedidoStatus(orcamento.status, status, normalizedRole)) return toast.error("Ação não permitida para seu papel ou status atual.");
+  const persistirStatusGuiado = async (orcamento: Orcamento, status: OrcamentoStatus) => {
+    const destino = normalizePedidoStatus(status);
+    const origem = normalizePedidoStatus(orcamento.status);
+    if (origem === destino) return toast.error("O orçamento já está neste status.");
+    if (!canTransitionPedidoStatus(origem, destino, normalizedRole)) return toast.error("Ação não permitida para seu papel ou status atual.");
+    if (!canEditOrcamentos || !canSeeOrcamento(orcamento)) return toast.error("Você não tem permissão para editar este orçamento.");
     const current = new Date().toISOString();
-    setEdit(orcamento);
-    setForm({ ...orcamento, status, dataEnvio: status === "Enviado ao cliente" ? (orcamento.dataEnvio || current.slice(0, 10)) : orcamento.dataEnvio });
-    setMotivoRevisao(orcamento.motivoRevisao || "");
-    setOpen(true);
+    const payload: Orcamento = recalc({
+      ...orcamento,
+      status: destino,
+      canalEnvio: destino === "Enviado ao cliente" ? (orcamento.canalEnvio || "WhatsApp") : orcamento.canalEnvio,
+      dataEnvio: destino === "Enviado ao cliente" ? (orcamento.dataEnvio || current.slice(0, 10)) : orcamento.dataEnvio,
+      updatedAt: current,
+      updatedByUserId: user?.id || orcamento.updatedByUserId,
+    });
+    try {
+      const result = await saveEntityCloudFirst("orcamentos", payload, { ...persistenceOptions, auditAction: "editar_status_orcamento", resource: "orcamentos", beforeData: orcamento, afterData: payload });
+      if (result.status === "conflict") {
+        toast.error("Conflito ao alterar status. Atualize/recarregue os dados e tente novamente para evitar sobrescrever alterações mais recentes.");
+        return;
+      }
+      setOrcamentos((prev) => prev.map((o) => o.id === orcamento.id ? payload : o));
+      void recordAuditLog({ action: "alterar_status_orcamento", resource: "orcamentos", entityId: orcamento.id, entityLabel: orcamento.codigo, metadata: { de: origem, para: destino, persistencia: result.status } });
+      if (payload.oportunidadeId) {
+        const etapaNova = pedidoStatusToEtapa(destino);
+        setOportunidades((prev) => prev.map((o) => o.id === payload.oportunidadeId ? { ...o, etapa: etapaNova, orcamentoId: payload.id, valorEstimado: payload.valorTotal || o.valorEstimado, updatedAt: current } : o));
+      }
+      toast.success(result.status === "pending-offline" ? "Status salvo localmente e pendente de sincronização" : "Status do orçamento salvo");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Falha ao alterar status do orçamento.");
+    }
   };
 
   const excluirOrcamento = async (orcamento: Orcamento) => {
@@ -447,14 +480,14 @@ export default function Orcamentos() {
     {orcamentosVisiveis.map((o) => <Card key={o.id} className="p-3">
       <div className="flex flex-col gap-2 md:flex-row md:items-center">
         <div className="flex-1 text-sm"><div className="font-semibold">{o.codigo} v{o.versao || 1} · {clientes.find((c) => c.id === o.clienteId)?.nome || "Sem cliente"}</div>
-          <div className="text-muted-foreground">Status: {o.status} · Validade: {formatDateBR(o.validade)} · Responsável: {o.responsavelNome || o.vendedorNome || o.responsavel || o.vendedor || "-"}</div>
+          <div className="text-muted-foreground">Status: {normalizePedidoStatus(o.status)} · Validade: {formatDateBR(o.validade)} · Responsável: {o.responsavelNome || o.vendedorNome || o.responsavel || o.vendedor || "-"}</div>
           <div className="text-muted-foreground">Oportunidade: {o.oportunidadeId || "Legado/sem vínculo"} · Envio: {o.canalEnvio || "-"} {o.dataEnvio ? `em ${formatDateBR(o.dataEnvio)}` : ""}</div></div>
         <div className="text-sm font-semibold">{fmtBRL(o.valorTotal)}</div>
         <div className="flex flex-wrap gap-2">
           <Button size="sm" variant="outline" onClick={() => { setEdit(o); setForm(o); setMotivoRevisao(o.motivoRevisao || ""); setOpen(true); }}>{isOrcamentoBloqueado(o, oportunidades) ? "Ver orçamento" : "Abrir/Editar"}</Button>
           <Button size="sm" variant="outline" onClick={() => { if (!canExportOrcamentos) return toast.error("Você não tem permissão para exportar orçamentos."); void recordAuditLog({ action: "gerar_pdf_orcamento", resource: "orcamentos", entityId: o.id, entityLabel: o.codigo }); gerarPdfOrcamento(o, clientes.find((c) => c.id === o.clienteId), empresas.find((e) => e.id === o.empresaId), oportunidades.find((op) => op.id === o.oportunidadeId)); }}>PDF</Button>
           <Button size="sm" onClick={() => criarNovaVersao(o)} disabled={isOrcamentoBloqueado(o, oportunidades) || !canCreateOrcamentos}>Criar nova versão</Button>
-          <div className="flex flex-wrap gap-1">{statusGuiados.map((acao) => <Button key={acao.label} size="sm" variant="outline" onClick={() => abrirComStatus(o, acao.status)} disabled={!canTransitionPedidoStatus(o.status, acao.status, normalizedRole)}>{acao.label}</Button>)}</div>
+          <div className="flex flex-wrap gap-1">{statusGuiados.map((acao) => <Button key={acao.label} size="sm" variant="outline" onClick={() => void persistirStatusGuiado(o, acao.status)} disabled={normalizePedidoStatus(o.status) === normalizePedidoStatus(acao.status) || !canTransitionPedidoStatus(o.status, acao.status, normalizedRole)}>{acao.label}</Button>)}</div>
           {negocioVinculado(o) ? <Button size="sm" variant="secondary" disabled>Venda já criada</Button> : <Button size="sm" variant="secondary" onClick={() => setCloseSaleTarget(o)} disabled={!["Aprovado pelo gestor", "Reservado"].includes(normalizePedidoStatus(o.status)) || !canConvertOrcamentoToSale(o)}>Fechar venda aprovado</Button>}
           <Button size="sm" variant="destructive" onClick={() => void excluirOrcamento(o)} disabled={!canDeleteOrcamento(o)}>Excluir</Button>
         </div>

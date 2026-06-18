@@ -74,7 +74,9 @@ export function buildPedidoRascunhoFromOportunidade(oportunidade: OportunidadeCo
 }
 
 export function canTransitionPedidoStatus(from: OrcamentoStatus, to: OrcamentoStatus, role: PedidoWorkflowRole) {
-  if (from === to) return true;
+  const normalizedFrom = normalizePedidoStatus(from);
+  const normalizedTo = normalizePedidoStatus(to);
+  if (normalizedFrom === normalizedTo) return false;
   const normalizedRole = role === "administrador" || role === "admin" ? "administrador" : role;
   const manager = normalizedRole === "gestor" || normalizedRole === "administrador";
   const allowedSeller: Record<string, OrcamentoStatus[]> = {
@@ -91,5 +93,5 @@ export function canTransitionPedidoStatus(from: OrcamentoStatus, to: OrcamentoSt
     Reservado: ["Convertido em venda", "Faturado", "Cancelado"],
     "Convertido em venda": ["Faturado"],
   };
-  return (manager ? allowedManager : allowedSeller)[normalizePedidoStatus(from)]?.includes(normalizePedidoStatus(to)) ?? false;
+  return (manager ? allowedManager : allowedSeller)[normalizedFrom]?.includes(normalizedTo) ?? false;
 }
