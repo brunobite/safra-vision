@@ -119,6 +119,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const [lastAutoSyncAt, setLastAutoSyncAt] = useState<string | null>(null);
   const [accountSyncStatus, setAccountSyncStatus] = useState<AccountSyncStatus | null>(null);
   const [hierarchySellerIds, setHierarchySellerIds] = useState<Set<string>>(() => new Set());
+  const [hierarchySellerNames, setHierarchySellerNames] = useState<Set<string>>(() => new Set());
   const [accountSyncHistory, setAccountSyncHistory] = useState<AccountSyncHistoryEvent[]>(() => {
     try {
       return JSON.parse(localStorage.getItem("accountSyncHistory") || "[]") as AccountSyncHistoryEvent[];
@@ -652,13 +653,14 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!supabase || !session?.user?.id || !isManagerScope) {
       setHierarchySellerIds(new Set());
+      setHierarchySellerNames(new Set());
       return;
     }
     let cancelled = false;
     void (async () => {
       const { data, error } = await supabase
         .from("user_profiles")
-        .select("user_id")
+        .select("user_id,nome,email")
         .eq("status", "ativo")
         .eq("papel", "vendedor")
         .eq("superior_user_id", session.user.id);
@@ -666,7 +668,10 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         console.warn("Não foi possível carregar vendedores subordinados:", error.message);
         return;
       }
-      if (!cancelled) setHierarchySellerIds(new Set((data ?? []).map((profile) => profile.user_id).filter(Boolean) as string[]));
+      if (!cancelled) {
+        setHierarchySellerIds(new Set((data ?? []).map((profile) => profile.user_id).filter(Boolean) as string[]));
+        setHierarchySellerNames(new Set((data ?? []).map((profile) => (profile.nome || profile.email || "").trim().toLowerCase()).filter(Boolean)));
+      }
     })();
     return () => { cancelled = true; };
   }, [isManagerScope, session?.user?.id]);
@@ -679,9 +684,14 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       if (currentUserId && (id === currentUserId || createdByUserId === currentUserId)) return true;
       return isOwnSellerDataById(vendedorId, linkedSellerName, id, name);
     }
-    if (isManagerScope) return Boolean(id && (hierarchySellerIds.has(id) || id === currentUserId));
+    if (isManagerScope) {
+      if (currentUserId && (id === currentUserId || createdByUserId === currentUserId)) return true;
+      if (id && hierarchySellerIds.has(id)) return true;
+      const normalizedName = (name || "").trim().toLowerCase();
+      return Boolean(normalizedName && hierarchySellerNames.has(normalizedName));
+    }
     return true;
-  }, [currentUserId, hierarchySellerIds, isManagerScope, isSellerScope, linkedSellerName, vendedorId]);
+  }, [currentUserId, hierarchySellerIds, hierarchySellerNames, isManagerScope, isSellerScope, linkedSellerName, vendedorId]);
   const scopedClientes = useMemo(() => (isSellerScope || isManagerScope) ? clientes.filter((cliente) => isVisibleSellerData(cliente.responsavelUserId || cliente.vendedorUserId || cliente.vendedorId, cliente.responsavelNome || cliente.vendedorNome || cliente.vendedor, cliente.createdByUserId)) : clientes, [clientes, isSellerScope, isManagerScope, isVisibleSellerData]);
   const scopedClienteIds = useMemo(() => new Set(scopedClientes.map((cliente) => cliente.id)), [scopedClientes]);
   const scopedLancamentos = useMemo(() => (isSellerScope || isManagerScope) ? lancamentos.filter((lancamento) => scopedClienteIds.has(lancamento.clienteId) || isVisibleSellerData(lancamento.responsavelUserId || lancamento.vendedorUserId || lancamento.vendedorId, lancamento.responsavelNome || lancamento.vendedorNome || lancamento.vendedor, lancamento.createdByUserId)) : lancamentos, [isSellerScope, isManagerScope, lancamentos, scopedClienteIds, isVisibleSellerData]);

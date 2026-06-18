@@ -190,14 +190,30 @@ export default function Orcamentos() {
 
     if (edit && (!canEditOrcamentos || !canSeeOrcamento(edit))) return toast.error("Você não tem permissão para editar este orçamento.");
     if (!edit && !canCreateOrcamentos) return toast.error("Você não tem permissão para criar orçamentos.");
+    const shouldReserveOnApproval = payload.status === "Aprovado" && edit?.status !== "Aprovado" && !payload.estoqueReservado;
+    const currentApproval = new Date().toISOString();
+    const reservasAprovacao = shouldReserveOnApproval ? produtosComReserva(payload) : [];
+    const produtosComReservaAprovacao = reservasAprovacao.length
+      ? produtos.map((produto) => {
+        const totalReservar = reservasAprovacao.filter((entry) => entry.produto.id === produto.id).reduce((sum, entry) => sum + entry.item.quantidadeTotal, 0);
+        return totalReservar > 0 ? { ...produto, estoqueReservado: (produto.estoqueReservado || 0) + totalReservar, updatedAt: currentApproval, ultimaAtualizacao: currentApproval, updatedByUserId: user?.id } : produto;
+      })
+      : produtos;
+    const payloadPersistido: Orcamento = reservasAprovacao.length ? { ...payload, estoqueReservado: true, estoqueReservadoAt: currentApproval } : payload;
+
     let result: Awaited<ReturnType<typeof saveEntityCloudFirst<Orcamento>>>;
     try {
-      result = await saveEntityCloudFirst("orcamentos", payload, { ...persistenceOptions, auditAction: edit ? "editar_orcamento" : "criar_orcamento", resource: "orcamentos", beforeData: edit || null, afterData: payload });
+      result = await saveEntityCloudFirst("orcamentos", payloadPersistido, { ...persistenceOptions, auditAction: edit ? "editar_orcamento" : "criar_orcamento", resource: "orcamentos", beforeData: edit || null, afterData: payloadPersistido });
+      for (const reserva of reservasAprovacao) {
+        const produtoAtualizado = produtosComReservaAprovacao.find((p) => p.id === reserva.produto.id)!;
+        await saveEntityCloudFirst("produtos", produtoAtualizado, { ...persistenceOptions, auditAction: "reservar_estoque_orcamento_aprovado", resource: "produtos", beforeData: reserva.produto, afterData: produtoAtualizado, auditMetadata: { orcamentoId: payloadPersistido.id, quantidadeReservada: reserva.item.quantidadeTotal } });
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Falha ao salvar orçamento.");
       return;
     }
-    setOrcamentos((prev) => edit ? prev.map((o) => (o.id === edit.id ? payload : o)) : [payload, ...prev.filter((o) => o.id !== idNovo)]);
+    if (reservasAprovacao.length) setProdutos(produtosComReservaAprovacao);
+    setOrcamentos((prev) => edit ? prev.map((o) => (o.id === edit.id ? payloadPersistido : o)) : [payloadPersistido, ...prev.filter((o) => o.id !== idNovo)]);
     if (edit && (edit.responsavelUserId !== payload.responsavelUserId || edit.responsavelNome !== payload.responsavelNome)) void recordAuditLog({ action: "alterar_responsavel_orcamento", resource: "orcamentos", entityId: idNovo, entityLabel: payload.codigo, metadata: { de: edit.responsavelNome || edit.responsavel, para: payload.responsavelNome || payload.responsavel } });
     if (edit?.status !== payload.status) void recordAuditLog({ action: "alterar_status_orcamento", resource: "orcamentos", entityId: idNovo, entityLabel: payload.codigo, metadata: { de: edit?.status, para: payload.status } });
     if ((payload.descontoTotal || 0) > 0 || payload.itens.some((it) => (it.desconto || 0) > 0)) void recordAuditLog({ action: "aplicar_desconto_orcamento", resource: "orcamentos", entityId: idNovo, entityLabel: payload.codigo, metadata: { descontoTotal: payload.descontoTotal, itens: payload.itens.map((it) => ({ produtoId: it.produtoId, desconto: it.desconto || 0 })) } });
@@ -228,7 +244,7 @@ export default function Orcamentos() {
       }
     }
 
-    if (payload.status === "Aprovado") toast.message("Orçamento aprovado. Feche a oportunidade como Ganha para criar negócio.");
+    if (payloadPersistido.status === "Aprovado") toast.message("Orçamento aprovado. Use Fechar venda para criar o negócio operacional.");
     if (payload.status === "Perdido") toast.message("Orçamento perdido. Feche a oportunidade como Perdida e informe motivo.");
     setOpen(false);
     toast.success(result.status === "pending-offline" ? "Orçamento salvo localmente e pendente de sincronização" : "Orçamento salvo");
@@ -347,25 +363,18 @@ export default function Orcamentos() {
       ultimaAtualizacao: current,
       createdAt: current,
       updatedAt: current,
-      estoqueReservado: true,
+      estoqueReservado: Boolean(orcamento.estoqueReservado),
       estoqueBaixado: false,
     };
-    const orcamentoConvertido: Orcamento = { ...orcamento, status: "Convertido", negocioId: negocio.id, updatedAt: current, updatedByUserId: user?.id };
+    const orcamentoConvertido: Orcamento = { ...orcamento, status: "Convertido", negocioId: negocio.id, estoqueReservado: Boolean(orcamento.estoqueReservado), estoqueReservadoAt: orcamento.estoqueReservadoAt, updatedAt: current, updatedByUserId: user?.id };
     const oportunidadeAtual = orcamento.oportunidadeId ? oportunidades.find((o) => o.id === orcamento.oportunidadeId) : undefined;
-    const oportunidadeGanha = oportunidadeAtual ? { ...oportunidadeAtual, etapa: "Ganha" as EtapaOportunidade, negocioId: negocio.id, orcamentoId: orcamento.id, valorFinal: orcamento.valorTotal, dataFechamento: current.slice(0, 10), updatedAt: current, updatedByUserId: user?.id } : undefined;
-    const reservas = produtosComReserva(orcamento);
-    const produtosAtualizados = produtos.map((produto) => {
-      const reserva = reservas.find((entry) => entry.produto.id === produto.id);
-      return reserva ? { ...produto, estoqueReservado: (produto.estoqueReservado || 0) + reserva.item.quantidadeTotal, updatedAt: current, ultimaAtualizacao: current, updatedByUserId: user?.id } : produto;
-    });
+    const oportunidadeGanha = oportunidadeAtual ? { ...oportunidadeAtual, etapa: "Ganha" as EtapaOportunidade, negocioId: negocio.id, orcamentoId: orcamento.id, valorFinal: orcamento.valorTotal, valorEstimado: orcamento.valorTotal, itensEstimados: orcamento.itens, dataFechamento: current.slice(0, 10), updatedAt: current, updatedByUserId: user?.id } : orcamento.oportunidadeId ? { id: orcamento.oportunidadeId, origem: "Orçamento" as const, etapa: "Ganha" as EtapaOportunidade, orcamentoId: orcamento.id, negocioId: negocio.id, clienteId: orcamento.clienteId, clienteNome: cliente?.nome, valorFinal: orcamento.valorTotal, valorEstimado: orcamento.valorTotal, itensEstimados: orcamento.itens, vendedor: orcamento.vendedor, vendedorId: orcamento.vendedorId, vendedorUserId: orcamento.vendedorUserId, vendedorNome: orcamento.vendedorNome, responsavel: orcamento.responsavel || orcamento.vendedor, responsavelId: orcamento.responsavelId || orcamento.vendedorId, responsavelUserId: orcamento.responsavelUserId || orcamento.vendedorUserId, responsavelNome: orcamento.responsavelNome || orcamento.vendedorNome || orcamento.vendedor, createdByUserId: orcamento.createdByUserId || user?.id, updatedByUserId: user?.id, dataFechamento: current.slice(0, 10), createdAt: current, updatedAt: current } : undefined;
+    const historicoGanho = oportunidadeGanha ? { id: `hf${Date.now()}-${negocio.id}`, oportunidadeId: oportunidadeGanha.id, clienteId: oportunidadeGanha.clienteId, etapaAnterior: oportunidadeAtual?.etapa, etapaNova: "Ganha" as EtapaOportunidade, dataMovimento: current, vendedor: negocio.vendedor, observacao: `Venda ${negocio.codigo} criada a partir do orçamento ${orcamento.codigo}.`, createdAt: current } : undefined;
     try {
-      await saveEntityCloudFirst("negocios", negocio, { ...persistenceOptions, auditAction: "criar_negocio", resource: "negocios", afterData: negocio, auditMetadata: { action: "fechar_venda", orcamentoId: orcamento.id, oportunidadeId: orcamento.oportunidadeId, clienteId: orcamento.clienteId, valor: orcamento.valorTotal, produtosAfetados: reservas.map((r) => ({ produtoId: r.item.produtoId, quantidade: r.item.quantidadeTotal })) } });
+      await saveEntityCloudFirst("negocios", negocio, { ...persistenceOptions, auditAction: "criar_negocio", resource: "negocios", afterData: negocio, auditMetadata: { action: "fechar_venda", orcamentoId: orcamento.id, oportunidadeId: orcamento.oportunidadeId, clienteId: orcamento.clienteId, valor: orcamento.valorTotal, produtosAfetados: produtosComReserva(orcamento).map((r) => ({ produtoId: r.item.produtoId, quantidade: r.item.quantidadeTotal })) } });
       await saveEntityCloudFirst("orcamentos", orcamentoConvertido, { ...persistenceOptions, auditAction: "converter_orcamento_negocio", resource: "orcamentos", beforeData: orcamento, afterData: orcamentoConvertido, auditMetadata: { negocioId: negocio.id, valor: negocio.valorTotal } });
-      if (oportunidadeGanha) await saveEntityCloudFirst("oportunidades", oportunidadeGanha, { ...persistenceOptions, auditAction: "oportunidade_ganha_por_orcamento", resource: "oportunidades", beforeData: oportunidadeAtual, afterData: oportunidadeGanha, auditMetadata: { orcamentoId: orcamento.id, negocioId: negocio.id } });
-      for (const reserva of reservas) {
-        const produtoAtualizado = produtosAtualizados.find((p) => p.id === reserva.produto.id)!;
-        await saveEntityCloudFirst("produtos", produtoAtualizado, { ...persistenceOptions, auditAction: "reservar_estoque_negocio", resource: "produtos", beforeData: reserva.produto, afterData: produtoAtualizado, auditMetadata: { negocioId: negocio.id, orcamentoId: orcamento.id, quantidadeReservada: reserva.item.quantidadeTotal } });
-      }
+      if (oportunidadeGanha) await saveEntityCloudFirst("oportunidades", oportunidadeGanha, { ...persistenceOptions, auditAction: oportunidadeAtual ? "oportunidade_ganha_por_orcamento" : "recriar_oportunidade_orfa_ganha", resource: "oportunidades", beforeData: oportunidadeAtual || null, afterData: oportunidadeGanha, auditMetadata: { orcamentoId: orcamento.id, negocioId: negocio.id } });
+      if (historicoGanho) await saveEntityCloudFirst("historicoFunil", historicoGanho, { ...persistenceOptions, auditAction: "registrar_historico_funil_ganho", resource: "historicoFunil", afterData: historicoGanho, auditMetadata: { orcamentoId: orcamento.id, negocioId: negocio.id, oportunidadeId: oportunidadeGanha?.id } });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Falha ao fechar venda.");
       setClosingSale(false);
@@ -373,10 +382,9 @@ export default function Orcamentos() {
     }
     setNegocios((prev) => [negocio, ...prev.filter((n) => n.id !== negocio.id && n.orcamentoId !== orcamento.id)]);
     setOrcamentos((prev) => prev.map((o) => o.id === orcamento.id ? orcamentoConvertido : o));
-    if (oportunidadeGanha) setOportunidades((prev) => prev.map((o) => o.id === oportunidadeGanha.id ? oportunidadeGanha : o));
-    if (oportunidadeAtual) setHistoricoFunil((prev) => [{ id: `hf${Date.now()}-${negocio.id}`, oportunidadeId: oportunidadeAtual.id, clienteId: oportunidadeAtual.clienteId, etapaAnterior: oportunidadeAtual.etapa, etapaNova: "Ganha", dataMovimento: current, vendedor: negocio.vendedor, observacao: `Venda ${negocio.codigo} criada a partir do orçamento ${orcamento.codigo}.`, createdAt: current }, ...prev]);
-    setProdutos(produtosAtualizados);
-    void recordAuditLog({ action: "fechar_venda", resource: "negocios", entityId: negocio.id, entityLabel: negocio.codigo, metadata: { orcamentoId: orcamento.id, oportunidadeId: orcamento.oportunidadeId, clienteId: orcamento.clienteId, valor: negocio.valorTotal, produtosAfetados: reservas.map((r) => ({ produtoId: r.item.produtoId, quantidade: r.item.quantidadeTotal })) } });
+    if (oportunidadeGanha) setOportunidades((prev) => [oportunidadeGanha, ...prev.filter((o) => o.id !== oportunidadeGanha.id)]);
+    if (historicoGanho) setHistoricoFunil((prev) => [historicoGanho, ...prev.filter((h) => h.id !== historicoGanho.id)]);
+    void recordAuditLog({ action: "fechar_venda", resource: "negocios", entityId: negocio.id, entityLabel: negocio.codigo, metadata: { orcamentoId: orcamento.id, oportunidadeId: orcamento.oportunidadeId, clienteId: orcamento.clienteId, valor: negocio.valorTotal, produtosAfetados: produtosComReserva(orcamento).map((r) => ({ produtoId: r.item.produtoId, quantidade: r.item.quantidadeTotal })) } });
     setClosingSale(false);
     setCloseSaleTarget(null);
     toast.success("Venda criada e orçamento convertido.");

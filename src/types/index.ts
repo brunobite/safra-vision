@@ -609,6 +609,8 @@ export interface Orcamento {
   dataPrevistaFechamento?: string;
   dataDecisao?: string;
   motivoPerda?: string;
+  estoqueReservado?: boolean;
+  estoqueReservadoAt?: string;
   createdAt: string;
   responsavelUserId?: string;
   responsavelNome?: string;
