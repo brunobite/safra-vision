@@ -6,13 +6,14 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useAppStore } from "@/store/AppStore";
-import { EtapaOportunidade, Negocio, Orcamento, OrcamentoItem, OrcamentoStatus, Produto, UnidadeDose } from "@/types";
+import { EtapaOportunidade, Negocio, Orcamento, OrcamentoItem, OrcamentoStatus, ProximaAcao, Produto, UnidadeDose } from "@/types";
 import { fmtBRL } from "@/utils/calculations";
 import { toast } from "sonner";
 import { useSearchParams } from "react-router-dom";
 import { calcularQuantidadeComercial, DOSE_UNIDADES, isOrcamentoBloqueado, recalcularItem } from "@/lib/orcamentoUtils";
 import { PEDIDO_STATUS_OFICIAIS, canTransitionPedidoStatus, normalizePedidoStatus, pedidoStatusToEtapa } from "@/lib/pedidoWorkflow";
 import { gerarPdfOrcamento } from "@/lib/orcamentoPdf";
+import { CanalProposta, getDataFollowUpProposta, hasFollowUpPendenteParaOrcamento, montarAssuntoProposta, montarMailtoUrl, montarMensagemProposta, montarWhatsAppUrl } from "@/lib/propostaWorkflow";
 import { formatDateBR } from "@/utils/dateUtils";
 import { useAuth } from "@/store/AuthStore";
 import { canCreate, canDelete, canEdit, canExport, canManage, canSaveBelowMinimumPrice, canView, isAdminRole, normalizeRole } from "@/lib/permissions";
@@ -62,6 +63,9 @@ export default function Orcamentos() {
 
   const [open, setOpen] = useState(false);
   const [closeSaleTarget, setCloseSaleTarget] = useState<Orcamento | null>(null);
+  const [sendProposalTarget, setSendProposalTarget] = useState<Orcamento | null>(null);
+  const [sendProposalChannel, setSendProposalChannel] = useState<CanalProposta>("WhatsApp");
+  const [confirmingProposal, setConfirmingProposal] = useState(false);
   const [closingSale, setClosingSale] = useState(false);
   const [edit, setEdit] = useState<Orcamento | null>(null);
   const [motivoRevisao, setMotivoRevisao] = useState("");
@@ -136,6 +140,63 @@ export default function Orcamentos() {
   const canDeleteOrcamento = (orcamento: Orcamento) => canDeleteOrcamentos && canSeeOrcamento(orcamento);
 
   const currentUserAgent = (): CommercialAgent => ({ user_id: user?.id || vendedorId || "", nome: vendedorNome || user?.user_metadata?.nome || user?.email || "", papel: normalizedRole as CommercialAgent["papel"], status: "ativo" });
+
+  const canEnviarProposta = (orcamento: Orcamento) => canEditOrcamentos && canSeeOrcamento(orcamento) && normalizedRole !== "visualizador" && ["Rascunho", "Em negociação"].includes(normalizePedidoStatus(orcamento.status));
+
+  const abrirModalEnvioProposta = (orcamento: Orcamento) => {
+    if (!canEnviarProposta(orcamento)) return toast.error("Você não tem permissão ou o status não permite enviar esta proposta.");
+    setSendProposalTarget(orcamento);
+    setSendProposalChannel(orcamento.canalEnvio === "E-mail" ? "E-mail" : "WhatsApp");
+  };
+
+  const abrirCanalProposta = () => {
+    if (!sendProposalTarget) return;
+    const cliente = clientes.find((c) => c.id === sendProposalTarget.clienteId);
+    const mensagem = montarMensagemProposta(sendProposalTarget, cliente, currentUserAgent().nome);
+    const url = sendProposalChannel === "WhatsApp" ? montarWhatsAppUrl(cliente, mensagem) : montarMailtoUrl(cliente, montarAssuntoProposta(sendProposalTarget), mensagem);
+    if (sendProposalChannel === "WhatsApp" && !cliente?.telefone) toast.warning("Cliente sem telefone cadastrado. O WhatsApp será aberto sem destinatário; cadastre o telefone para preencher automaticamente.");
+    if (sendProposalChannel === "E-mail" && !cliente?.email) toast.warning("Cliente sem e-mail cadastrado. O e-mail será aberto sem destinatário; cadastre o e-mail para preencher automaticamente.");
+    window.open(url, "_blank", "noopener,noreferrer");
+  };
+
+  const gerarPdfProposta = (orcamento: Orcamento) => {
+    if (!canExportOrcamentos) return toast.error("Você não tem permissão para exportar orçamentos.");
+    void recordAuditLog({ action: "gerar_pdf_orcamento", resource: "orcamentos", entityId: orcamento.id, entityLabel: orcamento.codigo });
+    gerarPdfOrcamento(orcamento, clientes.find((c) => c.id === orcamento.clienteId), empresas.find((e) => e.id === orcamento.empresaId), oportunidades.find((op) => op.id === orcamento.oportunidadeId));
+  };
+
+  const confirmarEnvioProposta = async () => {
+    const orcamento = sendProposalTarget;
+    if (!orcamento) return;
+    if (!canEnviarProposta(orcamento)) return toast.error("Você não tem permissão ou o status não permite enviar esta proposta.");
+    const current = new Date().toISOString();
+    const actor = currentUserAgent();
+    const payload: Orcamento = recalc({ ...orcamento, status: "Enviado ao cliente", canalEnvio: sendProposalChannel, dataEnvio: current.slice(0, 10), enviadoPorUserId: actor.user_id || user?.id, enviadoPorNome: actor.nome, updatedAt: current, updatedByUserId: user?.id || orcamento.updatedByUserId });
+    const oportunidadeAtual = payload.oportunidadeId ? oportunidades.find((o) => o.id === payload.oportunidadeId) : undefined;
+    const oportunidadeAtualizada = oportunidadeAtual && !["Ganha", "Perdida", "Cancelada", "Suspensa/Sem timing"].includes(oportunidadeAtual.etapa) ? { ...oportunidadeAtual, etapa: "Orçamento enviado" as EtapaOportunidade, orcamentoId: payload.id, valorEstimado: payload.valorTotal || oportunidadeAtual.valorEstimado, updatedAt: current, updatedByUserId: user?.id } : undefined;
+    const followUpExistente = hasFollowUpPendenteParaOrcamento(proximasAcoes, payload.id);
+    const followUp: ProximaAcao | undefined = followUpExistente ? undefined : { id: `pa-proposta-${payload.id}-${Date.now()}`, clienteId: payload.clienteId, oportunidadeId: payload.oportunidadeId, orcamentoId: payload.id, responsavel: payload.responsavel || payload.vendedor || actor.nome, responsavelId: payload.responsavelId || payload.vendedorId, responsavelUserId: payload.responsavelUserId || payload.vendedorUserId || actor.user_id, responsavelNome: payload.responsavelNome || payload.vendedorNome || actor.nome, vendedorUserId: payload.vendedorUserId, vendedorNome: payload.vendedorNome, createdByUserId: user?.id, updatedByUserId: user?.id, descricao: `Follow-up da proposta ${payload.codigo}`, tipo: "Follow-up", data: getDataFollowUpProposta(payload), status: "Pendente", origem: "Orçamento", createdAt: current, updatedAt: current };
+    setConfirmingProposal(true);
+    try {
+      const results = [await saveEntityCloudFirst("orcamentos", payload, { ...persistenceOptions, auditAction: "enviar_proposta_orcamento", resource: "orcamentos", beforeData: orcamento, afterData: payload, auditMetadata: { canalEnvio: sendProposalChannel } })];
+      if (oportunidadeAtualizada) results.push(await saveEntityCloudFirst("oportunidades", oportunidadeAtualizada, { ...persistenceOptions, auditAction: "atualizar_funil_proposta_enviada", resource: "oportunidades", beforeData: oportunidadeAtual, afterData: oportunidadeAtualizada, auditMetadata: { orcamentoId: payload.id } }));
+      if (followUp) results.push(await saveEntityCloudFirst("proximasAcoes", followUp, { ...persistenceOptions, auditAction: "criar_followup_proposta", resource: "proximasAcoes", afterData: followUp, auditMetadata: { orcamentoId: payload.id, oportunidadeId: payload.oportunidadeId } }));
+      if (results.some((result) => result.status === "conflict")) {
+        toast.error("Conflito ao confirmar envio. Atualize/recarregue os dados e tente novamente; o status local não foi alterado.");
+        return;
+      }
+      setOrcamentos((prev) => prev.map((o) => o.id === payload.id ? payload : o));
+      if (oportunidadeAtualizada) setOportunidades((prev) => prev.map((o) => o.id === oportunidadeAtualizada.id ? oportunidadeAtualizada : o));
+      if (followUp) setProximasAcoes((prev) => [followUp, ...prev]);
+      void recordAuditLog({ action: "confirmar_envio_proposta", resource: "orcamentos", entityId: payload.id, entityLabel: payload.codigo, metadata: { canalEnvio: sendProposalChannel, dataEnvio: payload.dataEnvio, followUpCriado: Boolean(followUp), persistencia: results.map((r) => r.status) } });
+      toast.success(results.some((r) => r.status === "pending-offline") ? "Envio confirmado localmente e pendente de sincronização." : "Envio da proposta confirmado.");
+      setSendProposalTarget(null);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Falha ao confirmar envio da proposta.");
+    } finally {
+      setConfirmingProposal(false);
+    }
+  };
 
   useEffect(() => {
     if (!canViewOrcamentos || !session?.user || !accountOwnerUserId || (typeof navigator !== "undefined" && !navigator.onLine)) return;
@@ -413,7 +474,6 @@ export default function Orcamentos() {
 
 
   const statusGuiados: Array<{ label: string; status: OrcamentoStatus }> = [
-    { label: "Enviar ao cliente", status: "Enviado ao cliente" },
     { label: "Marcar em negociação", status: "Em negociação" },
     { label: "Marcar venda fechada", status: "Venda fechada pelo vendedor" },
     { label: "Enviar para aprovação", status: "Aguardando aprovação" },
@@ -485,7 +545,8 @@ export default function Orcamentos() {
         <div className="text-sm font-semibold">{fmtBRL(o.valorTotal)}</div>
         <div className="flex flex-wrap gap-2">
           <Button size="sm" variant="outline" onClick={() => { setEdit(o); setForm(o); setMotivoRevisao(o.motivoRevisao || ""); setOpen(true); }}>{isOrcamentoBloqueado(o, oportunidades) ? "Ver orçamento" : "Abrir/Editar"}</Button>
-          <Button size="sm" variant="outline" onClick={() => { if (!canExportOrcamentos) return toast.error("Você não tem permissão para exportar orçamentos."); void recordAuditLog({ action: "gerar_pdf_orcamento", resource: "orcamentos", entityId: o.id, entityLabel: o.codigo }); gerarPdfOrcamento(o, clientes.find((c) => c.id === o.clienteId), empresas.find((e) => e.id === o.empresaId), oportunidades.find((op) => op.id === o.oportunidadeId)); }}>PDF</Button>
+          <Button size="sm" variant="outline" onClick={() => gerarPdfProposta(o)}>PDF</Button>
+          <Button size="sm" onClick={() => abrirModalEnvioProposta(o)} disabled={!canEnviarProposta(o)}>Enviar proposta</Button>
           <Button size="sm" onClick={() => criarNovaVersao(o)} disabled={isOrcamentoBloqueado(o, oportunidades) || !canCreateOrcamentos}>Criar nova versão</Button>
           <div className="flex flex-wrap gap-1">{statusGuiados.map((acao) => <Button key={acao.label} size="sm" variant="outline" onClick={() => void persistirStatusGuiado(o, acao.status)} disabled={normalizePedidoStatus(o.status) === normalizePedidoStatus(acao.status) || !canTransitionPedidoStatus(o.status, acao.status, normalizedRole)}>{acao.label}</Button>)}</div>
           {negocioVinculado(o) ? <Button size="sm" variant="secondary" disabled>Venda já criada</Button> : <Button size="sm" variant="secondary" onClick={() => setCloseSaleTarget(o)} disabled={!["Aprovado pelo gestor", "Reservado"].includes(normalizePedidoStatus(o.status)) || !canConvertOrcamentoToSale(o)}>Fechar venda aprovado</Button>}
@@ -494,6 +555,24 @@ export default function Orcamentos() {
       </div>
     </Card>)}
 
+
+    <Dialog open={!!sendProposalTarget} onOpenChange={(v) => !v && setSendProposalTarget(null)}><DialogContent className="max-w-3xl"><DialogHeader><DialogTitle>Enviar proposta</DialogTitle></DialogHeader>
+      {sendProposalTarget && (() => { const cliente = clientes.find((c) => c.id === sendProposalTarget.clienteId); const mensagem = montarMensagemProposta(sendProposalTarget, cliente, currentUserAgent().nome); return <div className="space-y-3 text-sm">
+        <Card className="p-3"><div className="grid gap-2 md:grid-cols-2">
+          <div><b>Cliente:</b> {cliente?.nome || sendProposalTarget.clienteId}</div>
+          <div><b>Proposta:</b> {sendProposalTarget.codigo} v{sendProposalTarget.versao || 1}</div>
+          <div><b>Valor total:</b> {fmtBRL(sendProposalTarget.valorTotal)}</div>
+          <div><b>Validade:</b> {formatDateBR(sendProposalTarget.validade) || "-"}</div>
+          <div><b>Condição:</b> {sendProposalTarget.formaPagamento || "-"} / {sendProposalTarget.prazoPagamento || "-"}</div>
+          <div><b>Responsável:</b> {sendProposalTarget.responsavelNome || sendProposalTarget.vendedorNome || sendProposalTarget.responsavel || sendProposalTarget.vendedor || "-"}</div>
+        </div></Card>
+        <div className="grid gap-2 md:grid-cols-2"><div><Label>Canal de envio</Label><Select value={sendProposalChannel} onValueChange={(v: CanalProposta) => setSendProposalChannel(v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="WhatsApp">WhatsApp</SelectItem><SelectItem value="E-mail">E-mail</SelectItem></SelectContent></Select></div></div>
+        <Card className="p-3"><b>Mensagem pronta</b><pre className="mt-2 whitespace-pre-wrap rounded bg-muted p-2 text-xs">{mensagem}</pre><p className="mt-2 text-xs text-muted-foreground">O PDF deve ser baixado e anexado manualmente se o navegador/canal externo não permitir anexo automático.</p></Card>
+        {sendProposalChannel === "WhatsApp" && !cliente?.telefone && <Card className="border-amber-500 bg-amber-50 p-3 text-amber-900">Cliente sem telefone cadastrado. O WhatsApp será aberto sem destinatário.</Card>}
+        {sendProposalChannel === "E-mail" && !cliente?.email && <Card className="border-amber-500 bg-amber-50 p-3 text-amber-900">Cliente sem e-mail cadastrado. O e-mail será aberto sem destinatário.</Card>}
+      </div>; })()}
+      <DialogFooter><Button variant="outline" onClick={() => setSendProposalTarget(null)}>Cancelar</Button><Button variant="outline" onClick={() => sendProposalTarget && gerarPdfProposta(sendProposalTarget)}>Gerar/baixar PDF</Button><Button variant="secondary" onClick={abrirCanalProposta}>Abrir canal</Button><Button onClick={() => void confirmarEnvioProposta()} disabled={confirmingProposal}>{confirmingProposal ? "Confirmando..." : "Confirmar envio"}</Button></DialogFooter>
+    </DialogContent></Dialog>
 
     <Dialog open={!!closeSaleTarget} onOpenChange={(v) => !v && setCloseSaleTarget(null)}><DialogContent className="max-w-3xl"><DialogHeader><DialogTitle>Fechar venda</DialogTitle></DialogHeader>
       {closeSaleTarget && <div className="space-y-3 text-sm">
