@@ -15,6 +15,7 @@ import { ResponsiveContainer, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGri
 import type { Cliente, OportunidadeComercial, OrcamentoStatus, StatusProximaAcao } from "@/types";
 import { getCategoriasComerciais } from "@/utils/commercialCategories";
 import { isOwnSellerDataById } from "@/lib/permissions";
+import { getPedidoValorPotencial } from "@/lib/pedidoWorkflow";
 
 const ALL = "__all__";
 const OPEN_OPPORTUNITY_STAGES = [
@@ -98,8 +99,8 @@ function probabilityToRatio(value: number) {
   return value > 1 ? value / 100 : value;
 }
 
-function opportunityValue(oportunidade: OportunidadeComercial) {
-  return oportunidade.valorFinal || oportunidade.valorEstimado || 0;
+function opportunityValue(oportunidade: OportunidadeComercial, orcamentos: Parameters<typeof getPedidoValorPotencial>[1]) {
+  return oportunidade.valorFinal || getPedidoValorPotencial(oportunidade, orcamentos);
 }
 
 function isOpenOpportunity(oportunidade: OportunidadeComercial) {
@@ -193,13 +194,13 @@ export default function Dashboard() {
     const visitasSemRelatorio = Math.max(visitasConcluidas.length - scoped.relatoriosFiltrados.length, 0);
     const oportunidadesAbertas = scoped.oportunidadesFiltradas.filter(isOpenOpportunity);
     const oportunidadesSemProbabilidade = oportunidadesAbertas.filter((oportunidade) => !oportunidade.probabilidade);
-    const valorAberto = oportunidadesAbertas.reduce((sum, oportunidade) => sum + opportunityValue(oportunidade), 0);
-    const valorPonderado = oportunidadesAbertas.reduce((sum, oportunidade) => sum + opportunityValue(oportunidade) * probabilityToRatio(effectiveOpportunityProbability(oportunidade)), 0);
+    const valorAberto = oportunidadesAbertas.reduce((sum, oportunidade) => sum + opportunityValue(oportunidade, scoped.orcamentosFiltrados), 0);
+    const valorPonderado = oportunidadesAbertas.reduce((sum, oportunidade) => sum + opportunityValue(oportunidade, scoped.orcamentosFiltrados) * probabilityToRatio(effectiveOpportunityProbability(oportunidade)), 0);
     const oportunidadesPorEtapa = Object.values(oportunidadesAbertas.reduce((acc, oportunidade) => {
       acc[oportunidade.etapa] ??= { etapa: oportunidade.etapa, quantidade: 0, valor: 0, ponderado: 0 };
       acc[oportunidade.etapa].quantidade += 1;
-      acc[oportunidade.etapa].valor += opportunityValue(oportunidade);
-      acc[oportunidade.etapa].ponderado += opportunityValue(oportunidade) * probabilityToRatio(effectiveOpportunityProbability(oportunidade));
+      acc[oportunidade.etapa].valor += opportunityValue(oportunidade, scoped.orcamentosFiltrados);
+      acc[oportunidade.etapa].ponderado += opportunityValue(oportunidade, scoped.orcamentosFiltrados) * probabilityToRatio(effectiveOpportunityProbability(oportunidade));
       return acc;
     }, {} as Record<string, { etapa: string; quantidade: number; valor: number; ponderado: number }>)).sort((a, b) => b.valor - a.valor);
     const oportunidadeTemProximaAcao = (oportunidade: OportunidadeComercial) =>
@@ -214,7 +215,7 @@ export default function Dashboard() {
         if (!acc.some((item) => item.id === oportunidade.id)) acc.push(oportunidade);
         return acc;
       }, [] as Array<OportunidadeComercial & { motivoCritico: string; diasParada?: number }>)
-      .sort((a, b) => opportunityValue(b) - opportunityValue(a));
+      .sort((a, b) => opportunityValue(b, scoped.orcamentosFiltrados) - opportunityValue(a, scoped.orcamentosFiltrados));
     const orcamentosPorStatus = scoped.orcamentosFiltrados.reduce((acc, orcamento) => {
       const status = orcamento.status as OrcamentoStatus;
       acc[status] = (acc[status] || 0) + 1;
@@ -223,7 +224,7 @@ export default function Dashboard() {
     const orcamentoBuckets = {
       abertos: (orcamentosPorStatus.Rascunho || 0) + (orcamentosPorStatus.Aberto || 0) + (orcamentosPorStatus["Em revisão"] || 0),
       enviados: (orcamentosPorStatus.Enviado || 0) + (orcamentosPorStatus.Reenviado || 0) + (orcamentosPorStatus["Em negociação"] || 0),
-      aprovados: orcamentosPorStatus.Aprovado || 0,
+      aprovados: orcamentosPorStatus["Aprovado pelo gestor"] || 0,
       perdidos: (orcamentosPorStatus.Perdido || 0) + (orcamentosPorStatus.Recusado || 0) + (orcamentosPorStatus.Vencido || 0) + (orcamentosPorStatus.Reprovado || 0) + (orcamentosPorStatus.Expirado || 0) + (orcamentosPorStatus.Cancelado || 0),
     };
     const negociosGanhos = scoped.negociosFiltrados.filter((negocio) => negocio.status === "Fechado ganho" || negocio.status === "Fechado" || negocio.status === "Pendente de faturamento" || negocio.status === "Faturado" || negocio.status === "Entregue");
@@ -232,7 +233,7 @@ export default function Dashboard() {
     const valorVendido = negociosGanhos.reduce((sum, negocio) => sum + (negocio.valorTotal || negocio.valorFechado || negocio.valorPotencial || 0), 0);
     const valorPendenteFaturamento = negociosPendentesFaturamento.reduce((sum, negocio) => sum + (negocio.valorTotal || negocio.valorFechado || negocio.valorPotencial || 0), 0);
     const valorFaturado = negociosFaturados.reduce((sum, negocio) => sum + (negocio.valorTotal || negocio.valorFechado || negocio.valorPotencial || 0), 0);
-    const taxaConversaoOrcamentoVenda = (orcamentosPorStatus.Aprovado || 0) + (orcamentosPorStatus.Convertido || 0) > 0 ? (orcamentosPorStatus.Convertido || 0) / ((orcamentosPorStatus.Aprovado || 0) + (orcamentosPorStatus.Convertido || 0)) : 0;
+    const taxaConversaoOrcamentoVenda = (orcamentosPorStatus["Aprovado pelo gestor"] || 0) + (orcamentosPorStatus["Convertido em venda"] || 0) > 0 ? (orcamentosPorStatus["Convertido em venda"] || 0) / ((orcamentosPorStatus["Aprovado pelo gestor"] || 0) + (orcamentosPorStatus["Convertido em venda"] || 0)) : 0;
     const oportunidadesGanhas = scoped.oportunidadesFiltradas.filter((oportunidade) => oportunidade.etapa === "Ganha");
     const oportunidadesPerdidas = scoped.oportunidadesFiltradas.filter((oportunidade) => oportunidade.etapa === "Perdida");
     const taxaConversao = oportunidadesGanhas.length + oportunidadesPerdidas.length
@@ -244,8 +245,8 @@ export default function Dashboard() {
       const periodo = oportunidade.previsaoFechamento?.slice(0, 7) || "Sem previsão";
       acc[periodo] ??= { periodo, quantidade: 0, valor: 0, ponderado: 0 };
       acc[periodo].quantidade += 1;
-      acc[periodo].valor += opportunityValue(oportunidade);
-      acc[periodo].ponderado += opportunityValue(oportunidade) * probabilityToRatio(effectiveOpportunityProbability(oportunidade));
+      acc[periodo].valor += opportunityValue(oportunidade, scoped.orcamentosFiltrados);
+      acc[periodo].ponderado += opportunityValue(oportunidade, scoped.orcamentosFiltrados) * probabilityToRatio(effectiveOpportunityProbability(oportunidade));
       return acc;
     }, {} as Record<string, { periodo: string; quantidade: number; valor: number; ponderado: number }>)).sort((a, b) => a.periodo.localeCompare(b.periodo));
     const rankingVendedor = Object.values(scoped.clientesFiltrados.reduce((acc, cliente) => {
@@ -266,8 +267,8 @@ export default function Dashboard() {
     oportunidadesAbertas.forEach((oportunidade) => {
       const row = ensureSeller(oportunidade.vendedor || oportunidade.responsavel || clienteMap.get(oportunidade.clienteId)?.vendedor);
       row.oportunidades += 1;
-      row.valorAberto += opportunityValue(oportunidade);
-      row.valorPonderado += opportunityValue(oportunidade) * probabilityToRatio(effectiveOpportunityProbability(oportunidade));
+      row.valorAberto += opportunityValue(oportunidade, scoped.orcamentosFiltrados);
+      row.valorPonderado += opportunityValue(oportunidade, scoped.orcamentosFiltrados) * probabilityToRatio(effectiveOpportunityProbability(oportunidade));
     });
     acoesAtrasadas.forEach((acao) => ensureSeller(acao.responsavel || clienteMap.get(acao.clienteId || "")?.vendedor).acoesAtrasadas += 1);
     negociosGanhos.forEach((negocio) => ensureSeller(negocio.vendedor || clienteMap.get(negocio.clienteId)?.vendedor).negociosGanhos += 1);
@@ -427,7 +428,7 @@ export default function Dashboard() {
           <div className="space-y-2">
             {dashboard.oportunidadesCriticas.slice(0, 10).map((oportunidade) => {
               const cliente = clienteById(oportunidade.clienteId);
-              return <div key={oportunidade.id} className="rounded-lg border p-3 text-xs"><div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between"><button className="text-left font-medium text-primary hover:underline" onClick={() => nav("/funil")}>{oportunidade.clienteNome || cliente?.nome || "Cliente não identificado"}</button><Badge className={stageTone(oportunidade.etapa)}>{oportunidade.motivoCritico}</Badge></div><div className="mt-1 text-muted-foreground">{oportunidade.etapa} • {oportunidade.vendedor || oportunidade.responsavel || cliente?.vendedor || "Sem vendedor"} • {fmtBRL(opportunityValue(oportunidade))}</div></div>;
+              return <div key={oportunidade.id} className="rounded-lg border p-3 text-xs"><div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between"><button className="text-left font-medium text-primary hover:underline" onClick={() => nav("/funil")}>{oportunidade.clienteNome || cliente?.nome || "Cliente não identificado"}</button><Badge className={stageTone(oportunidade.etapa)}>{oportunidade.motivoCritico}</Badge></div><div className="mt-1 text-muted-foreground">{oportunidade.etapa} • {oportunidade.vendedor || oportunidade.responsavel || cliente?.vendedor || "Sem vendedor"} • {fmtBRL(opportunityValue(oportunidade, scoped.orcamentosFiltrados))}</div></div>;
             })}
             {!dashboard.oportunidadesCriticas.length && <p className="text-xs text-muted-foreground">Nenhuma oportunidade crítica no recorte atual.</p>}
           </div>

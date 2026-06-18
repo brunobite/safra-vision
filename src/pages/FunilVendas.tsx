@@ -17,6 +17,7 @@ import { KpiCard } from "@/components/dashboard/KpiCard";
 import { Plus, Pencil, Trash2, AlertTriangle, ArrowLeft, ArrowRight, Eye } from "lucide-react";
 import { toast } from "sonner";
 import { getOrcamentoAtualDaOportunidade } from "@/lib/orcamentoUtils";
+import { buildPedidoRascunhoFromOportunidade, getPedidoValorPotencial, pedidoStatusToEtapa } from "@/lib/pedidoWorkflow";
 import { getCategoriasComerciais, normalizarCategoriaComercial } from "@/utils/commercialCategories";
 
 const ORIGENS: OrigemOportunidade[] = ["Visita", "Relatório de visita", "Ligação", "WhatsApp", "Indicação", "Manual", "Orçamento", "Outro"];
@@ -49,7 +50,7 @@ type MoveState = { oportunidade: OportunidadeComercial; etapaNova: EtapaOportuni
 export default function FunilVendas() {
   const {
     oportunidades, setOportunidades, historicoFunil, setHistoricoFunil, clientes, clienteById, vendedores, filtered,
-    orcamentos, proximasAcoes, setProximasAcoes, relatoriosVisita, produtos, metasCategoria, ticketsMedios, negocios,
+    orcamentos, setOrcamentos, proximasAcoes, setProximasAcoes, relatoriosVisita, produtos, metasCategoria, ticketsMedios, negocios,
   } = useAppStore();
   const nav = useNavigate();
   const [params, setParams] = useSearchParams();
@@ -70,8 +71,8 @@ export default function FunilVendas() {
     const abertas = normalizedList.filter((o) => !ETAPAS_FECHADAS.includes(o.etapa));
     const ganhas = normalizedList.filter((o) => o.etapa === "Ganha");
     const perdidas = normalizedList.filter((o) => o.etapa === "Perdida");
-    return { abertas: abertas.length, ganhas: ganhas.length, perdidas: perdidas.length, taxa: ganhas.length + perdidas.length ? ganhas.length / (ganhas.length + perdidas.length) : 0, valorAberto: abertas.reduce((s, o) => s + (o.valorEstimado || 0), 0) };
-  }, [normalizedList]);
+    return { abertas: abertas.length, ganhas: ganhas.length, perdidas: perdidas.length, taxa: ganhas.length + perdidas.length ? ganhas.length / (ganhas.length + perdidas.length) : 0, valorAberto: abertas.reduce((s, o) => s + getPedidoValorPotencial(o, orcamentos), 0) };
+  }, [normalizedList, orcamentos]);
 
   useEffect(() => {
     const clienteId = params.get("clienteId");
@@ -101,8 +102,10 @@ export default function FunilVendas() {
       if (edit.etapa !== payload.etapa) addHistorico({ ...payload, id: edit.id }, payload.etapa, "Etapa ajustada na edição da oportunidade.", edit.etapa);
     } else {
       const nova = { ...payload, id: `op${Date.now()}`, createdAt: now };
-      setOportunidades((prev) => [nova, ...prev]);
-      addHistorico(nova, nova.etapa, "Oportunidade criada no funil.", undefined);
+      const rascunho = buildPedidoRascunhoFromOportunidade(nova, orcamentos, now);
+      setOportunidades((prev) => [{ ...nova, orcamentoId: rascunho?.id }, ...prev]);
+      if (rascunho) setOrcamentos((prev) => [rascunho, ...prev]);
+      addHistorico(nova, nova.etapa, rascunho ? "Oportunidade criada no funil com pedido/orçamento em rascunho." : "Oportunidade criada no funil.", undefined);
     }
     setOpen(false);
     toast.success("Oportunidade salva");
@@ -111,8 +114,10 @@ export default function FunilVendas() {
   const requestMove = (oportunidade: OportunidadeComercial, delta: -1 | 1) => {
     const etapaAtual = etapaCanonical(oportunidade.etapa);
     const index = ETAPAS_FUNIL.indexOf(etapaAtual);
-    const etapaNova = ETAPAS_FUNIL[Math.max(0, Math.min(ETAPAS_FUNIL.length - 1, index + delta))];
+    const pedido = getOrcamentoAtualDaOportunidade(oportunidade.id, orcamentos);
+    const etapaNova = pedido ? pedidoStatusToEtapa(pedido.status) : ETAPAS_FUNIL[Math.max(0, Math.min(ETAPAS_FUNIL.length - 1, index + delta))];
     if (!etapaNova || etapaNova === etapaAtual) return;
+    if (pedido) return toast.info("O funil desta oportunidade é comandado pelo status do pedido/orçamento vinculado.");
     if (etapaNova === "Ganha" || etapaNova === "Perdida") return openClose(oportunidade, etapaNova);
     setMove({ oportunidade, etapaNova });
     setMoveObs("");
@@ -209,7 +214,7 @@ export default function FunilVendas() {
                   <div><b>{o.necessidade || o.segmento || "Oportunidade comercial"}</b><div className="text-xs text-muted-foreground">{o.vendedor || o.responsavel || "Sem vendedor"} · {o.origemTipo || o.origem}</div></div>
                   <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => setDetails(o)}><Eye className="h-3 w-3" /></Button>
                 </div>
-                <div className="mt-2 grid grid-cols-2 gap-1 text-xs"><span>Estimado: <b>{fmtBRL(o.valorEstimado || 0)}</b></span><span>Prob.: <b>{fmtPct((o.probabilidade || 0) / 100)}</b></span><span className="col-span-2">Fechamento: <b>{formatDateBR(o.previsaoFechamento) || "—"}</b></span></div>
+                <div className="mt-2 grid grid-cols-2 gap-1 text-xs"><span>Potencial: <b>{fmtBRL(getPedidoValorPotencial(o, orcamentos))}</b></span><span>Prob.: <b>{fmtPct((o.probabilidade || 0) / 100)}</b></span><span className="col-span-2">Fechamento: <b>{formatDateBR(o.previsaoFechamento) || "—"}</b></span></div>
                 {renderVinculos(o)}
                 {alertas.length > 0 && <div className="mt-2 flex flex-wrap gap-1">{alertas.map((a) => <Badge key={a} variant="destructive" className="gap-1"><AlertTriangle className="h-3 w-3" />{a}</Badge>)}</div>}
                 <div className="mt-2 flex flex-wrap gap-1">

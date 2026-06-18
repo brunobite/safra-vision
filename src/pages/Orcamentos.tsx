@@ -11,6 +11,7 @@ import { fmtBRL } from "@/utils/calculations";
 import { toast } from "sonner";
 import { useSearchParams } from "react-router-dom";
 import { calcularQuantidadeComercial, DOSE_UNIDADES, isOrcamentoBloqueado, recalcularItem } from "@/lib/orcamentoUtils";
+import { PEDIDO_STATUS_OFICIAIS, canTransitionPedidoStatus, normalizePedidoStatus, pedidoStatusToEtapa } from "@/lib/pedidoWorkflow";
 import { gerarPdfOrcamento } from "@/lib/orcamentoPdf";
 import { formatDateBR } from "@/utils/dateUtils";
 import { useAuth } from "@/store/AuthStore";
@@ -19,8 +20,8 @@ import { supabase } from "@/lib/supabase";
 import { recordAuditLog } from "@/lib/audit";
 import { deleteEntityCloudFirst, hydrateLocalCacheFromCloud, saveEntityCloudFirst } from "@/lib/operationalPersistence";
 
-const STATUS_OFICIAIS: OrcamentoStatus[] = ["Rascunho", "Enviado", "Em negociação", "Aprovado", "Recusado", "Cancelado", "Convertido"];
-const STATUS_LEGADO: OrcamentoStatus[] = ["Aberto", "Em negociação", "Recusado", "Vencido", "Reprovado"];
+const STATUS_OFICIAIS: OrcamentoStatus[] = [...PEDIDO_STATUS_OFICIAIS];
+const STATUS_LEGADO: OrcamentoStatus[] = ["Aberto", "Enviado", "Aprovado", "Recusado", "Convertido", "Em revisão", "Reenviado", "Vencido", "Reprovado", "Expirado"];
 const CANAIS_ENVIO = ["WhatsApp", "E-mail", "Presencial", "Ligação", "Outro"] as const;
 const validade7 = (base: string) => new Date(new Date(base).getTime() + 7 * 86400000).toISOString().slice(0, 10);
 
@@ -186,11 +187,12 @@ export default function Orcamentos() {
     if (excecoesPreco.length && !canUseMinimumPriceException) return toast.error("Preço abaixo do mínimo exige a permissão específica excecao_preco_minimo.");
     const estouroEstoque = payload.itens.filter((it) => it.controlaEstoque && !it.representacaoComissionado && it.quantidadeTotal > (it.estoqueDisponivel || 0));
     if (estouroEstoque.length) toast.warning("Há itens acima do estoque disponível; produtos representados não bloqueiam por estoque.");
-    if (payload.status === "Enviado" && (!payload.canalEnvio || !payload.dataEnvio)) return toast.error("Informe canal e data de envio");
+    if (normalizePedidoStatus(payload.status) === "Enviado ao cliente" && (!payload.canalEnvio || !payload.dataEnvio)) return toast.error("Informe canal e data de envio");
+    if (edit && !canTransitionPedidoStatus(edit.status, payload.status, normalizedRole)) return toast.error("Transição de status não permitida para seu papel.");
 
     if (edit && (!canEditOrcamentos || !canSeeOrcamento(edit))) return toast.error("Você não tem permissão para editar este orçamento.");
     if (!edit && !canCreateOrcamentos) return toast.error("Você não tem permissão para criar orçamentos.");
-    const shouldReserveOnApproval = payload.status === "Aprovado" && edit?.status !== "Aprovado" && !payload.estoqueReservado;
+    const shouldReserveOnApproval = normalizePedidoStatus(payload.status) === "Aprovado pelo gestor" && normalizePedidoStatus(edit?.status) !== "Aprovado pelo gestor" && !payload.estoqueReservado;
     const currentApproval = new Date().toISOString();
     const reservasAprovacao = shouldReserveOnApproval ? produtosComReserva(payload) : [];
     const produtosComReservaAprovacao = reservasAprovacao.length
@@ -218,12 +220,22 @@ export default function Orcamentos() {
     if (edit?.status !== payload.status) void recordAuditLog({ action: "alterar_status_orcamento", resource: "orcamentos", entityId: idNovo, entityLabel: payload.codigo, metadata: { de: edit?.status, para: payload.status } });
     if ((payload.descontoTotal || 0) > 0 || payload.itens.some((it) => (it.desconto || 0) > 0)) void recordAuditLog({ action: "aplicar_desconto_orcamento", resource: "orcamentos", entityId: idNovo, entityLabel: payload.codigo, metadata: { descontoTotal: payload.descontoTotal, itens: payload.itens.map((it) => ({ produtoId: it.produtoId, desconto: it.desconto || 0 })) } });
     if (excecoesPreco.length) void recordAuditLog({ action: "preco_abaixo_minimo_autorizado", resource: "orcamentos", entityId: idNovo, entityLabel: payload.codigo, metadata: { itens: excecoesPreco.map((it) => ({ produtoId: it.produtoId, precoUnitario: it.precoUnitario, desconto: it.desconto, precoMinimo: it.precoMinimo })) } });
-    if (payload.status === "Aprovado") {
+    if (normalizePedidoStatus(payload.status) === "Aprovado pelo gestor") {
       void recordAuditLog({ action: "aprovar_orcamento", resource: "orcamentos", entityId: idNovo, entityLabel: payload.codigo });
     }
     if (payload.status === "Cancelado") void recordAuditLog({ action: "cancelar_orcamento", resource: "orcamentos", entityId: idNovo, entityLabel: payload.codigo });
 
-    if (payload.oportunidadeId && payload.status === "Enviado") {
+    if (payload.oportunidadeId) {
+      const oportunidadeAtual = oportunidades.find((o) => o.id === payload.oportunidadeId);
+      const etapaNova = pedidoStatusToEtapa(payload.status);
+      setOportunidades((prev) => prev.map((o) => o.id === payload.oportunidadeId ? { ...o, etapa: etapaNova, orcamentoId: idNovo, valorEstimado: payload.valorTotal || o.valorEstimado, updatedAt: new Date().toISOString() } : o));
+      if (oportunidadeAtual && oportunidadeAtual.etapa !== etapaNova) {
+        const current = new Date().toISOString();
+        setHistoricoFunil((prev) => [{ id: `hf${Date.now()}-${idNovo}-${payload.status}`, oportunidadeId: oportunidadeAtual.id, clienteId: oportunidadeAtual.clienteId, etapaAnterior: oportunidadeAtual.etapa, etapaNova, dataMovimento: current, vendedor: oportunidadeAtual.vendedor || oportunidadeAtual.responsavel || payload.responsavel || payload.vendedor, observacao: `Status do pedido ${payload.codigo}: ${payload.status}.`, createdAt: current }, ...prev]);
+      }
+    }
+
+    if (payload.oportunidadeId && normalizePedidoStatus(payload.status) === "Enviado ao cliente") {
       const oportunidadeAtual = oportunidades.find((o) => o.id === payload.oportunidadeId);
       setOportunidades((prev) => prev.map((o) => o.id === payload.oportunidadeId && !["Ganha", "Perdida", "Cancelada", "Suspensa/Sem timing"].includes(o.etapa) ? { ...o, etapa: "Orçamento enviado", orcamentoId: idNovo, updatedAt: new Date().toISOString() } : o));
       if (oportunidadeAtual && oportunidadeAtual.etapa !== "Orçamento enviado") {
@@ -244,8 +256,8 @@ export default function Orcamentos() {
       }
     }
 
-    if (payloadPersistido.status === "Aprovado") toast.message("Orçamento aprovado. Use Fechar venda para criar o negócio operacional.");
-    if (payload.status === "Perdido") toast.message("Orçamento perdido. Feche a oportunidade como Perdida e informe motivo.");
+    if (normalizePedidoStatus(payloadPersistido.status) === "Aprovado pelo gestor") toast.message("Orçamento aprovado. Use Fechar venda para criar o negócio operacional.");
+    if (normalizePedidoStatus(payload.status) === "Perdido") toast.message("Orçamento perdido. Feche a oportunidade como Perdida e informe motivo.");
     setOpen(false);
     toast.success(result.status === "pending-offline" ? "Orçamento salvo localmente e pendente de sincronização" : "Orçamento salvo");
   };
@@ -278,13 +290,13 @@ export default function Orcamentos() {
   }, [params, oportunidades, orcamentos]);
 
   const converterEmOportunidade = (orcamento: Orcamento) => {
-    if (orcamento.status !== "Aprovado") return toast.error("Apenas orçamento aprovado pode ser convertido.");
+    if (normalizePedidoStatus(orcamento.status) !== "Aprovado pelo gestor") return toast.error("Apenas pedido aprovado pelo gestor pode avançar.");
     const current = new Date().toISOString();
     const opId = orcamento.oportunidadeId || `op${Date.now()}`;
     if (!orcamento.oportunidadeId) setOportunidades((prev) => [{ id: opId, clienteId: orcamento.clienteId, clienteNome: clientes.find((c) => c.id === orcamento.clienteId)?.nome, vendedor: orcamento.vendedor, vendedorId: orcamento.vendedorId, origem: "Orçamento", necessidade: `Conversão do orçamento ${orcamento.codigo}`, valorEstimado: orcamento.valorTotal, responsavel: orcamento.responsavel || orcamento.vendedor, etapa: "Fechamento encaminhado" as EtapaOportunidade, probabilidade: 80, itensEstimados: orcamento.itens, orcamentoId: orcamento.id, createdAt: current, updatedAt: current }, ...prev]);
     else setOportunidades((prev) => prev.map((o) => o.id === opId ? { ...o, etapa: "Fechamento encaminhado", valorEstimado: orcamento.valorTotal, itensEstimados: orcamento.itens, orcamentoId: orcamento.id, updatedAt: current } : o));
     setProximasAcoes((prev) => [{ id: `pa${Date.now()}`, clienteId: orcamento.clienteId, oportunidadeId: opId, orcamentoId: orcamento.id, responsavel: orcamento.responsavel || orcamento.vendedor || "", descricao: `Próxima ação da oportunidade convertida do orçamento ${orcamento.codigo}`, tipo: "Follow-up", data: orcamento.validade || current.slice(0, 10), status: "Pendente", origem: "Orçamento", createdAt: current, updatedAt: current }, ...prev]);
-    setOrcamentos((prev) => prev.map((o) => o.id === orcamento.id ? { ...o, status: "Convertido", oportunidadeId: opId, updatedAt: current } : o));
+    setOrcamentos((prev) => prev.map((o) => o.id === orcamento.id ? { ...o, status: "Convertido em venda", oportunidadeId: opId, updatedAt: current } : o));
     void recordAuditLog({ action: "converter_orcamento_oportunidade", resource: "orcamentos", entityId: orcamento.id, entityLabel: orcamento.codigo, metadata: { oportunidadeId: opId, valorPrevisto: orcamento.valorTotal, produtos: orcamento.itens.map((it) => it.produtoId) } });
     toast.success("Orçamento convertido em oportunidade.");
   };
@@ -309,7 +321,7 @@ export default function Orcamentos() {
   const confirmarFecharVenda = async () => {
     const orcamento = closeSaleTarget;
     if (!orcamento) return;
-    if (orcamento.status !== "Aprovado") return toast.error("Apenas orçamento aprovado pode ser fechado como venda.");
+    if (normalizePedidoStatus(orcamento.status) !== "Aprovado pelo gestor" && normalizePedidoStatus(orcamento.status) !== "Reservado") return toast.error("Apenas pedido aprovado/reservado pode ser fechado como venda.");
     if (!canConvertOrcamentoToSale(orcamento)) return toast.error("Você não tem permissão para fechar esta venda.");
     const existente = negocioVinculado(orcamento);
     if (existente) return toast.error(`Venda já criada: ${existente.codigo || existente.id}.`);
@@ -366,7 +378,7 @@ export default function Orcamentos() {
       estoqueReservado: Boolean(orcamento.estoqueReservado),
       estoqueBaixado: false,
     };
-    const orcamentoConvertido: Orcamento = { ...orcamento, status: "Convertido", negocioId: negocio.id, estoqueReservado: Boolean(orcamento.estoqueReservado), estoqueReservadoAt: orcamento.estoqueReservadoAt, updatedAt: current, updatedByUserId: user?.id };
+    const orcamentoConvertido: Orcamento = { ...orcamento, status: "Convertido em venda", negocioId: negocio.id, estoqueReservado: Boolean(orcamento.estoqueReservado), estoqueReservadoAt: orcamento.estoqueReservadoAt, updatedAt: current, updatedByUserId: user?.id };
     const oportunidadeAtual = orcamento.oportunidadeId ? oportunidades.find((o) => o.id === orcamento.oportunidadeId) : undefined;
     const oportunidadeGanha = oportunidadeAtual ? { ...oportunidadeAtual, etapa: "Ganha" as EtapaOportunidade, negocioId: negocio.id, orcamentoId: orcamento.id, valorFinal: orcamento.valorTotal, valorEstimado: orcamento.valorTotal, itensEstimados: orcamento.itens, dataFechamento: current.slice(0, 10), updatedAt: current, updatedByUserId: user?.id } : orcamento.oportunidadeId ? { id: orcamento.oportunidadeId, origem: "Orçamento" as const, etapa: "Ganha" as EtapaOportunidade, orcamentoId: orcamento.id, negocioId: negocio.id, clienteId: orcamento.clienteId, clienteNome: cliente?.nome, valorFinal: orcamento.valorTotal, valorEstimado: orcamento.valorTotal, itensEstimados: orcamento.itens, vendedor: orcamento.vendedor, vendedorId: orcamento.vendedorId, vendedorUserId: orcamento.vendedorUserId, vendedorNome: orcamento.vendedorNome, responsavel: orcamento.responsavel || orcamento.vendedor, responsavelId: orcamento.responsavelId || orcamento.vendedorId, responsavelUserId: orcamento.responsavelUserId || orcamento.vendedorUserId, responsavelNome: orcamento.responsavelNome || orcamento.vendedorNome || orcamento.vendedor, createdByUserId: orcamento.createdByUserId || user?.id, updatedByUserId: user?.id, dataFechamento: current.slice(0, 10), createdAt: current, updatedAt: current } : undefined;
     const historicoGanho = oportunidadeGanha ? { id: `hf${Date.now()}-${negocio.id}`, oportunidadeId: oportunidadeGanha.id, clienteId: oportunidadeGanha.clienteId, etapaAnterior: oportunidadeAtual?.etapa, etapaNova: "Ganha" as EtapaOportunidade, dataMovimento: current, vendedor: negocio.vendedor, observacao: `Venda ${negocio.codigo} criada a partir do orçamento ${orcamento.codigo}.`, createdAt: current } : undefined;
@@ -388,6 +400,26 @@ export default function Orcamentos() {
     setClosingSale(false);
     setCloseSaleTarget(null);
     toast.success("Venda criada e orçamento convertido.");
+  };
+
+
+  const statusGuiados: Array<{ label: string; status: OrcamentoStatus }> = [
+    { label: "Enviar ao cliente", status: "Enviado ao cliente" },
+    { label: "Marcar em negociação", status: "Em negociação" },
+    { label: "Marcar venda fechada", status: "Venda fechada pelo vendedor" },
+    { label: "Enviar para aprovação", status: "Aguardando aprovação" },
+    { label: "Aprovar pedido", status: "Aprovado pelo gestor" },
+    { label: "Reprovar pedido", status: "Reprovado pelo gestor" },
+    { label: "Cancelar/Perder", status: "Perdido" },
+  ];
+
+  const abrirComStatus = (orcamento: Orcamento, status: OrcamentoStatus) => {
+    if (!canTransitionPedidoStatus(orcamento.status, status, normalizedRole)) return toast.error("Ação não permitida para seu papel ou status atual.");
+    const current = new Date().toISOString();
+    setEdit(orcamento);
+    setForm({ ...orcamento, status, dataEnvio: status === "Enviado ao cliente" ? (orcamento.dataEnvio || current.slice(0, 10)) : orcamento.dataEnvio });
+    setMotivoRevisao(orcamento.motivoRevisao || "");
+    setOpen(true);
   };
 
   const excluirOrcamento = async (orcamento: Orcamento) => {
@@ -422,8 +454,8 @@ export default function Orcamentos() {
           <Button size="sm" variant="outline" onClick={() => { setEdit(o); setForm(o); setMotivoRevisao(o.motivoRevisao || ""); setOpen(true); }}>{isOrcamentoBloqueado(o, oportunidades) ? "Ver orçamento" : "Abrir/Editar"}</Button>
           <Button size="sm" variant="outline" onClick={() => { if (!canExportOrcamentos) return toast.error("Você não tem permissão para exportar orçamentos."); void recordAuditLog({ action: "gerar_pdf_orcamento", resource: "orcamentos", entityId: o.id, entityLabel: o.codigo }); gerarPdfOrcamento(o, clientes.find((c) => c.id === o.clienteId), empresas.find((e) => e.id === o.empresaId), oportunidades.find((op) => op.id === o.oportunidadeId)); }}>PDF</Button>
           <Button size="sm" onClick={() => criarNovaVersao(o)} disabled={isOrcamentoBloqueado(o, oportunidades) || !canCreateOrcamentos}>Criar nova versão</Button>
-          {negocioVinculado(o) ? <Button size="sm" variant="secondary" disabled>Venda já criada</Button> : <Button size="sm" variant="secondary" onClick={() => setCloseSaleTarget(o)} disabled={o.status !== "Aprovado" || !canConvertOrcamentoToSale(o)}>Fechar venda</Button>}
-          <Button size="sm" variant="outline" onClick={() => converterEmOportunidade(o)} disabled={o.status !== "Aprovado" || !canManageOrcamentos}>Converter oportunidade</Button>
+          <div className="flex flex-wrap gap-1">{statusGuiados.map((acao) => <Button key={acao.label} size="sm" variant="outline" onClick={() => abrirComStatus(o, acao.status)} disabled={!canTransitionPedidoStatus(o.status, acao.status, normalizedRole)}>{acao.label}</Button>)}</div>
+          {negocioVinculado(o) ? <Button size="sm" variant="secondary" disabled>Venda já criada</Button> : <Button size="sm" variant="secondary" onClick={() => setCloseSaleTarget(o)} disabled={!["Aprovado pelo gestor", "Reservado"].includes(normalizePedidoStatus(o.status)) || !canConvertOrcamentoToSale(o)}>Fechar venda aprovado</Button>}
           <Button size="sm" variant="destructive" onClick={() => void excluirOrcamento(o)} disabled={!canDeleteOrcamento(o)}>Excluir</Button>
         </div>
       </div>
@@ -460,7 +492,7 @@ export default function Orcamentos() {
         {!isVendedor && <div><Label>Responsável comercial</Label><Select value={form.responsavelUserId || form.vendedorUserId || ""} onValueChange={(agentId) => { const agent = selectableAgents.find((item) => item.user_id === agentId); if (agent) setForm(applyAgentToOrcamento(form, agent)); }}><SelectTrigger><SelectValue placeholder="Selecione o responsável" /></SelectTrigger><SelectContent>{selectableAgents.length ? selectableAgents.map((agent) => <SelectItem key={agent.user_id} value={agent.user_id}>{agent.nome} · {agent.papel}</SelectItem>) : <SelectItem value="sem-agente" disabled>Nenhum agente disponível</SelectItem>}</SelectContent></Select></div>}
         <div><Label>Data</Label><Input type="date" value={form.data} onChange={(e) => setForm({ ...form, data: e.target.value })} /></div>
         <div><Label>Validade</Label><Input type="date" value={form.validade || ""} onChange={(e) => setForm({ ...form, validade: e.target.value })} /></div>
-        <div><Label>Status</Label><Select value={form.status} onValueChange={(v: OrcamentoStatus) => setForm({ ...form, status: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{statusOptions.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent></Select></div>
+        <div><Label>Status</Label><Select value={form.status} onValueChange={(v: OrcamentoStatus) => setForm({ ...form, status: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{statusOptions.map((s) => <SelectItem key={s} value={s} disabled={edit ? !canTransitionPedidoStatus(edit.status, s, normalizedRole) : s !== "Rascunho"}>{s}</SelectItem>)}</SelectContent></Select></div>
         <div><Label>Motivo revisão</Label><Input value={motivoRevisao} onChange={(e) => setMotivoRevisao(e.target.value)} /></div>
       </div></Card>
 
