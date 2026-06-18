@@ -146,7 +146,9 @@ export async function saveEntityCloudFirst<T extends { id: string }>(store: Sync
   if (!canAttemptRemote(options)) {
     if (!fallback) throw new Error("Operação online obrigatória indisponível.");
     await writeLocalRecord(store, record);
-    await enqueueSyncItem({ ...queueContext(options), store, entityId: record.id, operation: "upsert", payload, baseRemoteUpdatedAt: getBaseRemoteUpdatedAt(record, options) ?? null, status: "pending-offline" });
+    if (getRemoteUserId(options)) {
+      await enqueueSyncItem({ ...queueContext(options), store, entityId: record.id, operation: "upsert", payload, baseRemoteUpdatedAt: getBaseRemoteUpdatedAt(record, options) ?? null, status: "pending-offline" });
+    }
     options.onStatusChange?.("pending-offline");
     return { status: "pending-offline" as const, remote: false };
   }
@@ -186,7 +188,9 @@ export async function deleteEntityCloudFirst<T extends { id: string }>(store: Sy
   if (!canAttemptRemote(options)) {
     if (!fallback) throw new Error("Exclusão online obrigatória indisponível.");
     await deleteLocalRecord(store, id);
-    await enqueueSyncItem({ ...queueContext(options), store, entityId: id, operation: "delete", payload, baseRemoteUpdatedAt: getBaseRemoteUpdatedAt(record, options) ?? null, status: "pending-offline" });
+    if (getRemoteUserId(options)) {
+      await enqueueSyncItem({ ...queueContext(options), store, entityId: id, operation: "delete", payload, baseRemoteUpdatedAt: getBaseRemoteUpdatedAt(record, options) ?? null, status: "pending-offline" });
+    }
     options.onStatusChange?.("pending-offline");
     return { status: "pending-offline" as const, remote: false };
   }

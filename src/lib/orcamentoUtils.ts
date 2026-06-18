@@ -70,7 +70,7 @@ export function recalcularItem(base: OrcamentoItem, produto: Produto): Orcamento
 }
 
 
-const statusComerciaisAtuais = new Set(["Enviado", "Reenviado", "Aprovado"]);
+const statusComerciaisAtuais = new Set(["Enviado", "Enviado ao cliente", "Reenviado", "Em negociação", "Venda fechada pelo vendedor", "Aguardando aprovação", "Aprovado", "Aprovado pelo gestor", "Reservado", "Convertido", "Convertido em venda"]);
 const toTs = (value?: string) => (value ? new Date(value).getTime() : 0);
 
 export function getOrcamentoAtualDaOportunidade(oportunidadeId: string, orcamentos: { oportunidadeId?: string; status: string; dataEnvio?: string; versao?: number; updatedAt: string; createdAt: string; }[]) {

@@ -525,7 +525,7 @@ export interface ImportLog {
 
 export interface NegocioProdutoItem { produtoId: string; quantidade: number; precoUnitario: number; }
 
-export type OrcamentoStatus = "Rascunho" | "Enviado" | "Em negociação" | "Aprovado" | "Recusado" | "Cancelado" | "Convertido" | "Em revisão" | "Reenviado" | "Perdido" | "Expirado" | "Aberto" | "Vencido" | "Reprovado";
+export type OrcamentoStatus = "Rascunho" | "Enviado ao cliente" | "Em negociação" | "Venda fechada pelo vendedor" | "Aguardando aprovação" | "Aprovado pelo gestor" | "Reprovado pelo gestor" | "Reservado" | "Convertido em venda" | "Faturado" | "Cancelado" | "Perdido" | "Enviado" | "Aprovado" | "Recusado" | "Convertido" | "Em revisão" | "Reenviado" | "Expirado" | "Aberto" | "Vencido" | "Reprovado";
 export type UnidadeDose = "L/ha" | "mL/ha" | "kg/ha" | "g/ha" | "ton/ha" | "un/ha";
 
 export interface OrcamentoItem {

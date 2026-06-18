@@ -28,6 +28,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
+import { buildPedidoRascunhoFromOportunidade } from "@/lib/pedidoWorkflow";
 import { GOOGLE_CALENDAR_OFFLINE_MANUAL_SYNC_MESSAGE, GOOGLE_CALENDAR_OFFLINE_SYNC_TOAST, buildAgendaItemIcs, buildCalendarEventFromAgendaItem, ensureGoogleCalendarAccess, getGoogleCalendarBackendStatus, getGoogleCalendarClientId, isGoogleCalendarOffline, isGoogleCalendarPreferenceEnabled, metadataAfterGoogleCalendarDelete, metadataAfterGoogleCalendarError, metadataAfterGoogleCalendarOfflinePending, metadataAfterGoogleCalendarReschedule, metadataAfterGoogleCalendarSuccess, setGoogleCalendarPreferenceEnabled, upsertGoogleCalendarEventForAgendaItem, upsertGoogleCalendarEventViaBackend, isGoogleCalendarPendingActionEligible, isGoogleCalendarEventNotFoundError, isGoogleCalendarRevokedOrExpiredError, GOOGLE_CALENDAR_RECONNECT_SETTINGS_HINT } from "@/lib/googleCalendar";
 
 const TIPOS: TipoProximaAcao[] = ["Visita", "Ligação", "WhatsApp", "Reunião", "Follow-up", "Enviar orçamento", "Cobrar retorno", "Pós-venda", "Renovação", "Outro"];
@@ -104,7 +105,7 @@ const emptyRelatorioForm = (): RelatorioVisitaForm => ({ resumoVisita: "", ponto
 
 export default function Agenda() {
   const { session } = useAuth();
-  const { clientes, vendedores, proximasAcoes, setProximasAcoes, setRelatoriosVisita, oportunidades, setOportunidades, orcamentos, negocios, setNegocios, lancamentos, setLancamentos, produtos } = useAppStore();
+  const { clientes, vendedores, proximasAcoes, setProximasAcoes, setRelatoriosVisita, oportunidades, setOportunidades, orcamentos, setOrcamentos, negocios, setNegocios, lancamentos, setLancamentos, produtos } = useAppStore();
   const nav = useNavigate();
   const location = useLocation();
   const [params, setParams] = useSearchParams();
@@ -464,21 +465,24 @@ export default function Agenda() {
       const produto = produtos.find((p) => p.id === item.produtoId);
       return { produtoId: item.produtoId, produtoNome: produto?.nome, categoria: produto?.categoria, unidadeProduto: item.unidade || produto?.unidade, quantidadeTotal: item.quantidade, precoUnitario: item.precoUnitario, valorTotalItem: item.quantidade * item.precoUnitario };
     });
-    setOportunidades((atuais) => [{
+    const oportunidade = {
       id: oportunidadeId,
       clienteId: contexto.clienteId,
-      origem: "Visita",
+      origem: "Visita" as const,
       necessidade: oppForm.descricao,
       valorEstimado: valorEstimadoTotal,
       responsavel: contexto.vendedor,
-      etapa: "Identificada",
+      etapa: "Identificada" as const,
       lancamentoId: contexto.lancamentoId,
       previsaoFechamento: oppForm.previsaoFechamento,
       observacoes: `Origem: Visita concluída${contexto.lancamentoId ? ` • lançamento ${contexto.lancamentoId}` : ""}`,
       itensEstimados,
       createdAt: now,
       updatedAt: now,
-    }, ...atuais]);
+    };
+    const pedidoRascunho = buildPedidoRascunhoFromOportunidade(oportunidade, orcamentos, now);
+    setOportunidades((atuais) => [{ ...oportunidade, orcamentoId: pedidoRascunho?.id }, ...atuais]);
+    if (pedidoRascunho) setOrcamentos((atuais) => [pedidoRascunho, ...atuais]);
     const negocioId = `neg${Date.now()}`;
     setNegocios((atuais) => [{
       id: negocioId,
@@ -505,7 +509,7 @@ export default function Agenda() {
     }
     setContexto((atual) => atual ? { ...atual, oportunidadeId, negocioId } : atual);
     setModal("marcarPergunta");
-    toast.success("Oportunidade criada no funil a partir da visita concluída.");
+    toast.success(pedidoRascunho ? "Oportunidade criada com pedido/orçamento em rascunho." : "Oportunidade criada no funil a partir da visita concluída.");
   };
 
   const prepararNovaAcaoDoContexto = () => {
