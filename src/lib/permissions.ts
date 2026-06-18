@@ -71,7 +71,7 @@ export function roleTemplate(role: UserRole | string | null | undefined): UserPe
   if (normalized === "administrador") return permissionResources.map(fullPermission);
   if (normalized === "visualizador") return permissionResources.map(readPermission);
   const allowed = new Set<PermissionResource>(normalized === "gestor"
-    ? ["dashboard", "clientes", "agenda", "funil", "orcamentos", "negocios", "metas", "relatorios"]
+    ? ["dashboard", "clientes", "agenda", "proximas_acoes", "lancamentos", "funil", "orcamentos", "negocios", "metas", "relatorios", "produtos"]
     : ["dashboard", "clientes", "agenda", "proximas_acoes", "lancamentos", "funil", "orcamentos", "negocios", "relatorios"]);
   return permissionResources.map((resource) => {
     if (!allowed.has(resource)) return emptyPermission(resource);
