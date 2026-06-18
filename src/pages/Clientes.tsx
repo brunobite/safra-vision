@@ -84,7 +84,7 @@ export default function Clientes() {
     if (isGestor) return commercialAgents.filter((agent) => agent.user_id === user?.id || teamSellerIds.has(agent.user_id));
     return commercialAgents.filter((agent) => agent.user_id === user?.id);
   }, [commercialAgents, isAdmin, isGestor, teamSellerIds, user?.id]);
-  const currentUserAgent = (): CommercialAgent => ({ user_id: user?.id || vendedorId || "", nome: vendedorNome || user?.user_metadata?.nome || user?.email || "", papel: normalizedRole as CommercialAgent["papel"], status: "ativo" });
+  const currentUserAgent = (): CommercialAgent => ({ user_id: user?.id || vendedorId || "local-admin", nome: vendedorNome || user?.user_metadata?.nome || user?.email || "Administrador local", papel: normalizedRole as CommercialAgent["papel"], status: "ativo" });
   const applyAgentToCliente = (cliente: Omit<Cliente, "id">, agent: CommercialAgent): Omit<Cliente, "id"> => ({ ...cliente, responsavelUserId: agent.user_id, responsavelNome: agent.nome, vendedorUserId: agent.user_id, vendedorNome: agent.nome, vendedor: agent.nome });
   const getClienteResponsavelId = (cliente: Cliente | Omit<Cliente, "id">) => cliente.responsavelUserId || cliente.vendedorUserId || cliente.vendedorId;
   const getClienteResponsavelNome = (cliente: Cliente | Omit<Cliente, "id">) => cliente.responsavelNome || cliente.vendedorNome || cliente.vendedor;
@@ -186,7 +186,13 @@ export default function Clientes() {
   }), [clientesVisiveis, proximaAcaoPendente]);
 
 
-  const openNew = () => { if (!canCreateClientes) return toast.error("Você não tem permissão para criar clientes."); setEdit(null); setForm(isVendedor ? applyAgentToCliente(empty, currentUserAgent()) : empty); setOpen(true); };
+  const openNew = () => {
+    if (!canCreateClientes) return toast.error("Você não tem permissão para criar clientes.");
+    setEdit(null);
+    const defaultAgent = isVendedor ? currentUserAgent() : selectableAgents[0] || currentUserAgent();
+    setForm(applyAgentToCliente(empty, defaultAgent));
+    setOpen(true);
+  };
   useEffect(() => { if (params.get("new")) { openNew(); setParams({}); } }, [params, setParams]);
   const openEdit = (c: Cliente) => { if (!canMutateCliente(c, "edit")) return toast.error("Você não tem permissão para editar este cliente."); setEdit(c); const { id, ...rest } = c; void id; setForm(rest); setOpen(true); };
   const calcStatus = (clienteId: string, inativoManual?: boolean) => {
@@ -207,7 +213,7 @@ export default function Clientes() {
     let assignedForm = form;
     if (isVendedor) assignedForm = applyAgentToCliente(form, currentUserAgent());
     const selectedAgentId = getClienteResponsavelId(assignedForm);
-    const selectedAgent = selectableAgents.find((agent) => agent.user_id === selectedAgentId) || (isVendedor ? currentUserAgent() : undefined);
+    const selectedAgent = selectableAgents.find((agent) => agent.user_id === selectedAgentId) || (isVendedor || isAdmin ? currentUserAgent() : undefined);
     if (!selectedAgent) return toast.error("Selecione um responsável comercial válido.");
     assignedForm = applyAgentToCliente(assignedForm, selectedAgent);
     const beforeResponsavelId = edit ? getClienteResponsavelId(edit) : undefined;
