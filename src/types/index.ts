@@ -571,6 +571,8 @@ export interface Orcamento {
   motivoRevisao?: string;
   canalEnvio?: "WhatsApp" | "E-mail" | "Presencial" | "Ligação" | "Outro";
   dataEnvio?: string;
+  enviadoPorUserId?: string;
+  enviadoPorNome?: string;
   empresaId?: string;
   id: string;
   codigo: string;
