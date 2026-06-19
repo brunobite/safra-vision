@@ -295,6 +295,7 @@ export interface Negocio {
   updatedAt?: string;
   estoqueReservado?: boolean;
   estoqueBaixado?: boolean;
+  estoqueBaixadoAt?: string;
 }
 
 
@@ -613,6 +614,7 @@ export interface Orcamento {
   motivoPerda?: string;
   estoqueReservado?: boolean;
   estoqueReservadoAt?: string;
+  estoqueReservadoPorUserId?: string;
   createdAt: string;
   responsavelUserId?: string;
   responsavelNome?: string;
