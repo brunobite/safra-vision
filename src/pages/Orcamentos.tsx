@@ -149,11 +149,11 @@ export default function Orcamentos() {
     setSendProposalChannel(orcamento.canalEnvio === "E-mail" ? "E-mail" : "WhatsApp");
   };
 
-  const abrirCanalProposta = () => {
-    if (!sendProposalTarget) return;
-    const cliente = clientes.find((c) => c.id === sendProposalTarget.clienteId);
-    const mensagem = montarMensagemProposta(sendProposalTarget, cliente, currentUserAgent().nome);
-    const url = sendProposalChannel === "WhatsApp" ? montarWhatsAppUrl(cliente, mensagem) : montarMailtoUrl(cliente, montarAssuntoProposta(sendProposalTarget), mensagem);
+  const abrirCanalProposta = (orcamento = sendProposalTarget) => {
+    if (!orcamento) return;
+    const cliente = clientes.find((c) => c.id === orcamento.clienteId);
+    const mensagem = montarMensagemProposta(orcamento, cliente, currentUserAgent().nome);
+    const url = sendProposalChannel === "WhatsApp" ? montarWhatsAppUrl(cliente, mensagem) : montarMailtoUrl(cliente, montarAssuntoProposta(orcamento), mensagem);
     if (sendProposalChannel === "WhatsApp" && !cliente?.telefone) toast.warning("Cliente sem telefone cadastrado. O WhatsApp será aberto sem destinatário; cadastre o telefone para preencher automaticamente.");
     if (sendProposalChannel === "E-mail" && !cliente?.email) toast.warning("Cliente sem e-mail cadastrado. O e-mail será aberto sem destinatário; cadastre o e-mail para preencher automaticamente.");
     window.open(url, "_blank", "noopener,noreferrer");
@@ -165,10 +165,11 @@ export default function Orcamentos() {
     gerarPdfOrcamento(orcamento, clientes.find((c) => c.id === orcamento.clienteId), empresas.find((e) => e.id === orcamento.empresaId), oportunidades.find((op) => op.id === orcamento.oportunidadeId));
   };
 
-  const confirmarEnvioProposta = async () => {
+  const enviarProposta = async () => {
     const orcamento = sendProposalTarget;
     if (!orcamento) return;
     if (!canEnviarProposta(orcamento)) return toast.error("Você não tem permissão ou o status não permite enviar esta proposta.");
+    if (!canExportOrcamentos) return toast.error("Você não tem permissão para exportar orçamentos.");
     const current = new Date().toISOString();
     const actor = currentUserAgent();
     const payload: Orcamento = recalc({ ...orcamento, status: "Enviado ao cliente", canalEnvio: sendProposalChannel, dataEnvio: current.slice(0, 10), enviadoPorUserId: actor.user_id || user?.id, enviadoPorNome: actor.nome, updatedAt: current, updatedByUserId: user?.id || orcamento.updatedByUserId });
@@ -178,21 +179,28 @@ export default function Orcamentos() {
     const followUp: ProximaAcao | undefined = followUpExistente ? undefined : { id: `pa-proposta-${payload.id}-${Date.now()}`, clienteId: payload.clienteId, oportunidadeId: payload.oportunidadeId, orcamentoId: payload.id, responsavel: payload.responsavel || payload.vendedor || actor.nome, responsavelId: payload.responsavelId || payload.vendedorId, responsavelUserId: payload.responsavelUserId || payload.vendedorUserId || actor.user_id, responsavelNome: payload.responsavelNome || payload.vendedorNome || actor.nome, vendedorUserId: payload.vendedorUserId, vendedorNome: payload.vendedorNome, createdByUserId: user?.id, updatedByUserId: user?.id, descricao: `Follow-up da proposta ${payload.codigo}`, tipo: "Follow-up", data: getDataFollowUpProposta(payload), status: "Pendente", origem: "Orçamento", createdAt: current, updatedAt: current };
     setConfirmingProposal(true);
     try {
-      const results = [await saveEntityCloudFirst("orcamentos", payload, { ...persistenceOptions, auditAction: "enviar_proposta_orcamento", resource: "orcamentos", beforeData: orcamento, afterData: payload, auditMetadata: { canalEnvio: sendProposalChannel } })];
-      if (oportunidadeAtualizada) results.push(await saveEntityCloudFirst("oportunidades", oportunidadeAtualizada, { ...persistenceOptions, auditAction: "atualizar_funil_proposta_enviada", resource: "oportunidades", beforeData: oportunidadeAtual, afterData: oportunidadeAtualizada, auditMetadata: { orcamentoId: payload.id } }));
-      if (followUp) results.push(await saveEntityCloudFirst("proximasAcoes", followUp, { ...persistenceOptions, auditAction: "criar_followup_proposta", resource: "proximasAcoes", afterData: followUp, auditMetadata: { orcamentoId: payload.id, oportunidadeId: payload.oportunidadeId } }));
-      if (results.some((result) => result.status === "conflict")) {
-        toast.error("Conflito ao confirmar envio. Atualize/recarregue os dados e tente novamente; o status local não foi alterado.");
-        return;
+      const results = [await saveEntityCloudFirst("orcamentos", payload, { ...persistenceOptions })];
+      if (results.some((result) => result.status === "conflict")) throw new Error("Conflito ao enviar proposta. Atualize/recarregue os dados e tente novamente; o status local não foi alterado.");
+      if (oportunidadeAtualizada) {
+        const result = await saveEntityCloudFirst("oportunidades", oportunidadeAtualizada, { ...persistenceOptions });
+        if (result.status === "conflict") throw new Error("Conflito ao atualizar oportunidade. Atualize/recarregue os dados e tente novamente; follow-up e auditoria não foram registrados.");
+        results.push(result);
+      }
+      if (followUp) {
+        const result = await saveEntityCloudFirst("proximasAcoes", followUp, { ...persistenceOptions });
+        if (result.status === "conflict") throw new Error("Conflito ao criar follow-up. Atualize/recarregue os dados e tente novamente; auditoria não foi registrada.");
+        results.push(result);
       }
       setOrcamentos((prev) => prev.map((o) => o.id === payload.id ? payload : o));
       if (oportunidadeAtualizada) setOportunidades((prev) => prev.map((o) => o.id === oportunidadeAtualizada.id ? oportunidadeAtualizada : o));
       if (followUp) setProximasAcoes((prev) => [followUp, ...prev]);
-      void recordAuditLog({ action: "confirmar_envio_proposta", resource: "orcamentos", entityId: payload.id, entityLabel: payload.codigo, metadata: { canalEnvio: sendProposalChannel, dataEnvio: payload.dataEnvio, followUpCriado: Boolean(followUp), persistencia: results.map((r) => r.status) } });
-      toast.success(results.some((r) => r.status === "pending-offline") ? "Envio confirmado localmente e pendente de sincronização." : "Envio da proposta confirmado.");
+      gerarPdfProposta(payload);
+      abrirCanalProposta(payload);
+      void recordAuditLog({ action: "enviar_proposta", resource: "orcamentos", entityId: payload.id, entityLabel: payload.codigo, beforeData: orcamento, afterData: payload, metadata: { canalEnvio: sendProposalChannel, dataEnvio: payload.dataEnvio, enviadoPorUserId: payload.enviadoPorUserId, enviadoPorNome: payload.enviadoPorNome, oportunidadeAtualizada: Boolean(oportunidadeAtualizada), followUpCriado: Boolean(followUp), persistencia: results.map((r) => r.status) } });
+      toast.success(results.some((r) => r.status === "pending-offline") ? "Proposta enviada localmente e pendente de sincronização. Anexe manualmente o PDF baixado no canal aberto." : "Proposta enviada. Anexe manualmente o PDF baixado no canal aberto.");
       setSendProposalTarget(null);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Falha ao confirmar envio da proposta.");
+      toast.error(error instanceof Error ? error.message : "Falha ao enviar proposta.");
     } finally {
       setConfirmingProposal(false);
     }
@@ -571,7 +579,7 @@ export default function Orcamentos() {
         {sendProposalChannel === "WhatsApp" && !cliente?.telefone && <Card className="border-amber-500 bg-amber-50 p-3 text-amber-900">Cliente sem telefone cadastrado. O WhatsApp será aberto sem destinatário.</Card>}
         {sendProposalChannel === "E-mail" && !cliente?.email && <Card className="border-amber-500 bg-amber-50 p-3 text-amber-900">Cliente sem e-mail cadastrado. O e-mail será aberto sem destinatário.</Card>}
       </div>; })()}
-      <DialogFooter><Button variant="outline" onClick={() => setSendProposalTarget(null)}>Cancelar</Button><Button variant="outline" onClick={() => sendProposalTarget && gerarPdfProposta(sendProposalTarget)}>Gerar/baixar PDF</Button><Button variant="secondary" onClick={abrirCanalProposta}>Abrir canal</Button><Button onClick={() => void confirmarEnvioProposta()} disabled={confirmingProposal}>{confirmingProposal ? "Confirmando..." : "Confirmar envio"}</Button></DialogFooter>
+      <DialogFooter><Button variant="outline" onClick={() => setSendProposalTarget(null)}>Cancelar</Button><Button onClick={() => void enviarProposta()} disabled={confirmingProposal}>{confirmingProposal ? "Enviando..." : "Enviar proposta"}</Button></DialogFooter>
     </DialogContent></Dialog>
 
     <Dialog open={!!closeSaleTarget} onOpenChange={(v) => !v && setCloseSaleTarget(null)}><DialogContent className="max-w-3xl"><DialogHeader><DialogTitle>Fechar venda</DialogTitle></DialogHeader>
