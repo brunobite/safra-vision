@@ -20,6 +20,7 @@ import { canCreate, canDelete, canEdit, canExport, canManage, canSaveBelowMinimu
 import { supabase } from "@/lib/supabase";
 import { recordAuditLog } from "@/lib/audit";
 import { deleteEntityCloudFirst, hydrateLocalCacheFromCloud, saveEntityCloudFirst } from "@/lib/operationalPersistence";
+import { aplicarReservaPedidoAprovado, agruparItensControlados, validarDisponibilidadeReserva } from "@/lib/estoqueWorkflow";
 
 const STATUS_OFICIAIS: OrcamentoStatus[] = [...PEDIDO_STATUS_OFICIAIS];
 const STATUS_LEGADO: OrcamentoStatus[] = ["Aberto", "Enviado", "Aprovado", "Recusado", "Convertido", "Em revisão", "Reenviado", "Vencido", "Reprovado", "Expirado"];
@@ -261,23 +262,21 @@ export default function Orcamentos() {
 
     if (edit && (!canEditOrcamentos || !canSeeOrcamento(edit))) return toast.error("Você não tem permissão para editar este orçamento.");
     if (!edit && !canCreateOrcamentos) return toast.error("Você não tem permissão para criar orçamentos.");
-    const shouldReserveOnApproval = normalizePedidoStatus(payload.status) === "Aprovado pelo gestor" && normalizePedidoStatus(edit?.status) !== "Aprovado pelo gestor" && !payload.estoqueReservado;
+    const shouldReserveOnApproval = normalizePedidoStatus(payload.status) === "Aprovado pelo gestor" && !payload.estoqueReservado;
+    const faltasReserva = shouldReserveOnApproval ? validarDisponibilidadeReserva(payload, produtos) : [];
+    if (faltasReserva.length) return toast.error(`Estoque insuficiente para aprovar: ${faltasReserva.map((entry) => `${entry.produto.nome} (disp. ${entry.disponivel}, pedido ${entry.quantidade})`).join(", ")}`);
     const currentApproval = new Date().toISOString();
-    const reservasAprovacao = shouldReserveOnApproval ? produtosComReserva(payload) : [];
-    const produtosComReservaAprovacao = reservasAprovacao.length
-      ? produtos.map((produto) => {
-        const totalReservar = reservasAprovacao.filter((entry) => entry.produto.id === produto.id).reduce((sum, entry) => sum + entry.item.quantidadeTotal, 0);
-        return totalReservar > 0 ? { ...produto, estoqueReservado: (produto.estoqueReservado || 0) + totalReservar, updatedAt: currentApproval, ultimaAtualizacao: currentApproval, updatedByUserId: user?.id } : produto;
-      })
-      : produtos;
-    const payloadPersistido: Orcamento = reservasAprovacao.length ? { ...payload, estoqueReservado: true, estoqueReservadoAt: currentApproval } : payload;
+    const reservaAplicada = shouldReserveOnApproval ? aplicarReservaPedidoAprovado(payload, produtos, user?.id, currentApproval) : { agrupados: [], produtosAtualizados: produtos };
+    const reservasAprovacao = reservaAplicada.agrupados;
+    const produtosComReservaAprovacao = reservaAplicada.produtosAtualizados;
+    const payloadPersistido: Orcamento = reservasAprovacao.length ? { ...payload, estoqueReservado: true, estoqueReservadoAt: currentApproval, estoqueReservadoPorUserId: user?.id } : payload;
 
     let result: Awaited<ReturnType<typeof saveEntityCloudFirst<Orcamento>>>;
     try {
       result = await saveEntityCloudFirst("orcamentos", payloadPersistido, { ...persistenceOptions, auditAction: edit ? "editar_orcamento" : "criar_orcamento", resource: "orcamentos", beforeData: edit || null, afterData: payloadPersistido });
       for (const reserva of reservasAprovacao) {
         const produtoAtualizado = produtosComReservaAprovacao.find((p) => p.id === reserva.produto.id)!;
-        await saveEntityCloudFirst("produtos", produtoAtualizado, { ...persistenceOptions, auditAction: "reservar_estoque_orcamento_aprovado", resource: "produtos", beforeData: reserva.produto, afterData: produtoAtualizado, auditMetadata: { orcamentoId: payloadPersistido.id, quantidadeReservada: reserva.item.quantidadeTotal } });
+        await saveEntityCloudFirst("produtos", produtoAtualizado, { ...persistenceOptions, auditAction: "reservar_estoque_pedido_aprovado", resource: "produtos", beforeData: reserva.produto, afterData: produtoAtualizado, auditMetadata: { orcamentoId: payloadPersistido.id, quantidadeReservada: reserva.quantidade } });
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Falha ao salvar orçamento.");
@@ -383,13 +382,7 @@ export default function Orcamentos() {
 
   const negocioVinculado = (orcamento: Orcamento) => negocios.find((negocio) => negocio.orcamentoId === orcamento.id || negocio.id === orcamento.negocioId);
 
-  const produtosComReserva = (orcamento: Orcamento) => orcamento.itens
-    .filter((item) => {
-      const produto = produtos.find((p) => p.id === item.produtoId);
-      return Boolean(item.produtoId && item.quantidadeTotal > 0 && (item.controlaEstoque || produto?.controlaEstoque) && !(item.representacaoComissionado || produto?.representacaoComissionado));
-    })
-    .map((item) => ({ item, produto: produtos.find((p) => p.id === item.produtoId)! }))
-    .filter((entry): entry is { item: OrcamentoItem; produto: Produto } => Boolean(entry.produto));
+  const produtosComReserva = (orcamento: Orcamento) => agruparItensControlados(orcamento, produtos).flatMap((entry) => entry.itens.map((item) => ({ item, produto: entry.produto })));
 
   const confirmarFecharVenda = async () => {
     const orcamento = closeSaleTarget;
@@ -497,7 +490,7 @@ export default function Orcamentos() {
     if (!canTransitionPedidoStatus(origem, destino, normalizedRole)) return toast.error("Ação não permitida para seu papel ou status atual.");
     if (!canEditOrcamentos || !canSeeOrcamento(orcamento)) return toast.error("Você não tem permissão para editar este orçamento.");
     const current = new Date().toISOString();
-    const payload: Orcamento = recalc({
+    const payloadBase: Orcamento = recalc({
       ...orcamento,
       status: destino,
       canalEnvio: destino === "Enviado ao cliente" ? (orcamento.canalEnvio || "WhatsApp") : orcamento.canalEnvio,
@@ -505,12 +498,22 @@ export default function Orcamentos() {
       updatedAt: current,
       updatedByUserId: user?.id || orcamento.updatedByUserId,
     });
+    const shouldReserveOnApproval = destino === "Aprovado pelo gestor" && !orcamento.estoqueReservado;
+    const faltasReserva = shouldReserveOnApproval ? validarDisponibilidadeReserva(payloadBase, produtos) : [];
+    if (faltasReserva.length) return toast.error(`Estoque insuficiente para aprovar: ${faltasReserva.map((entry) => `${entry.produto.nome} (disp. ${entry.disponivel}, pedido ${entry.quantidade})`).join(", ")}`);
+    const reservaAplicada = shouldReserveOnApproval ? aplicarReservaPedidoAprovado(payloadBase, produtos, user?.id, current) : { agrupados: [], produtosAtualizados: produtos };
+    const payload: Orcamento = reservaAplicada.agrupados.length ? { ...payloadBase, estoqueReservado: true, estoqueReservadoAt: current, estoqueReservadoPorUserId: user?.id } : payloadBase;
     try {
       const result = await saveEntityCloudFirst("orcamentos", payload, { ...persistenceOptions, auditAction: "editar_status_orcamento", resource: "orcamentos", beforeData: orcamento, afterData: payload });
+      for (const reserva of reservaAplicada.agrupados) {
+        const produtoAtualizado = reservaAplicada.produtosAtualizados.find((p) => p.id === reserva.produto.id)!;
+        await saveEntityCloudFirst("produtos", produtoAtualizado, { ...persistenceOptions, auditAction: "reservar_estoque_pedido_aprovado", resource: "produtos", beforeData: reserva.produto, afterData: produtoAtualizado, auditMetadata: { orcamentoId: payload.id, quantidadeReservada: reserva.quantidade } });
+      }
       if (result.status === "conflict") {
         toast.error("Conflito ao alterar status. Atualize/recarregue os dados e tente novamente para evitar sobrescrever alterações mais recentes.");
         return;
       }
+      if (reservaAplicada.agrupados.length) setProdutos(reservaAplicada.produtosAtualizados);
       setOrcamentos((prev) => prev.map((o) => o.id === orcamento.id ? payload : o));
       void recordAuditLog({ action: "alterar_status_orcamento", resource: "orcamentos", entityId: orcamento.id, entityLabel: orcamento.codigo, metadata: { de: origem, para: destino, persistencia: result.status } });
       if (payload.oportunidadeId) {
