@@ -8,6 +8,7 @@ import { useAppStore } from "@/store/AppStore";
 import { useAuth } from "@/store/AuthStore";
 import { canDelete, canEdit, canManage, canView, isAdminRole, normalizeRole } from "@/lib/permissions";
 import { saveEntityCloudFirst } from "@/lib/operationalPersistence";
+import { aplicarBaixaVendaFaturada, aplicarLiberacaoReserva } from "@/lib/estoqueWorkflow";
 import { recordAuditLog } from "@/lib/audit";
 import { fmtBRL } from "@/utils/calculations";
 import { formatDateBR } from "@/utils/dateUtils";
@@ -55,15 +56,10 @@ export default function NegociosPage() {
   const ajustarEstoque = async (negocio: Negocio, modo: "cancelar" | "faturar") => {
     const itens = negocio.itens || [];
     const current = new Date().toISOString();
-    const produtosAtualizados = produtos.map((produto) => {
-      const item = itens.find((i) => i.produtoId === produto.id && i.controlaEstoque && !i.representacaoComissionado);
-      if (!item) return produto;
-      if (modo === "cancelar") return { ...produto, estoqueReservado: Math.max(0, (produto.estoqueReservado || 0) - item.quantidadeTotal), updatedAt: current, ultimaAtualizacao: current };
-      return { ...produto, estoqueAtual: Math.max(0, (produto.estoqueAtual || 0) - item.quantidadeTotal), estoqueReservado: Math.max(0, (produto.estoqueReservado || 0) - item.quantidadeTotal), updatedAt: current, ultimaAtualizacao: current };
-    });
+    const produtosAtualizados = modo === "cancelar" ? aplicarLiberacaoReserva(itens, produtos, current) : aplicarBaixaVendaFaturada(itens, produtos, current);
     for (const produto of produtosAtualizados.filter((produto) => produtos.some((original) => original.id === produto.id && original !== produto))) {
       const before = produtos.find((p) => p.id === produto.id);
-      await saveEntityCloudFirst("produtos", produto, { ...persistenceOptions, auditAction: modo === "cancelar" ? "liberar_reserva_negocio" : "baixar_estoque_negocio", resource: "produtos", beforeData: before, afterData: produto, auditMetadata: { negocioId: negocio.id, orcamentoId: negocio.orcamentoId } });
+      await saveEntityCloudFirst("produtos", produto, { ...persistenceOptions, auditAction: modo === "cancelar" ? "liberar_reserva_negocio" : "baixar_estoque_venda_faturada", resource: "produtos", beforeData: before, afterData: produto, auditMetadata: { negocioId: negocio.id, orcamentoId: negocio.orcamentoId } });
     }
     setProdutos(produtosAtualizados);
   };
@@ -78,7 +74,8 @@ export default function NegociosPage() {
   const faturar = async (negocio: Negocio) => {
     if (!canEditNegocios) return toast.error("Você não tem permissão para faturar negócios.");
     try { if (negocio.estoqueReservado && !negocio.estoqueBaixado) await ajustarEstoque(negocio, "faturar"); } catch (error) { return toast.error(error instanceof Error ? error.message : "Falha ao baixar estoque."); }
-    await updateNegocio(negocio, { status: "Faturado", estoqueReservado: false, estoqueBaixado: true }, "faturar_negocio");
+    await updateNegocio(negocio, { status: "Faturado", estoqueReservado: false, estoqueBaixado: true, estoqueBaixadoAt: new Date().toISOString() }, "faturar_negocio");
+    void recordAuditLog({ action: "baixar_estoque_venda_faturada", resource: "negocios", entityId: negocio.id, entityLabel: negocio.codigo, metadata: { orcamentoId: negocio.orcamentoId } });
   };
 
   if (!canViewNegocios) return <Card className="p-4">Você não tem permissão para visualizar negócios.</Card>;
