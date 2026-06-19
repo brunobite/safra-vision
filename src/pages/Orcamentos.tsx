@@ -19,13 +19,49 @@ import { useAuth } from "@/store/AuthStore";
 import { canCreate, canDelete, canEdit, canExport, canManage, canSaveBelowMinimumPrice, canView, isAdminRole, normalizeRole } from "@/lib/permissions";
 import { supabase } from "@/lib/supabase";
 import { recordAuditLog } from "@/lib/audit";
-import { deleteEntityCloudFirst, hydrateLocalCacheFromCloud, saveEntityCloudFirst } from "@/lib/operationalPersistence";
+import { deleteEntityCloudFirst, fetchCloudSnapshot, hydrateLocalCacheFromCloud, saveEntityCloudFirst } from "@/lib/operationalPersistence";
 import { aplicarReservaPedidoAprovado, agruparItensControlados, validarDisponibilidadeReserva } from "@/lib/estoqueWorkflow";
 
 const STATUS_OFICIAIS: OrcamentoStatus[] = [...PEDIDO_STATUS_OFICIAIS];
 const STATUS_LEGADO: OrcamentoStatus[] = ["Aberto", "Enviado", "Aprovado", "Recusado", "Convertido", "Em revisão", "Reenviado", "Vencido", "Reprovado", "Expirado"];
 const CANAIS_ENVIO = ["WhatsApp", "E-mail", "Presencial", "Ligação", "Outro"] as const;
 const validade7 = (base: string) => new Date(new Date(base).getTime() + 7 * 86400000).toISOString().slice(0, 10);
+
+
+type OrcamentoComSync = Orcamento & { __syncRemoteUpdatedAt?: string | null; __syncAccountOwnerUserId?: string | null };
+const ORCAMENTO_CONFLICT_MESSAGE = "Conflito real detectado. Atualize o pedido e tente novamente para evitar sobrescrever itens, valores, cliente ou responsável/vendedor alterados em outro dispositivo.";
+const getSyncRemoteUpdatedAt = (orcamento: Orcamento) => (orcamento as OrcamentoComSync).__syncRemoteUpdatedAt;
+const normalizeComparable = (value: unknown) => JSON.stringify(value ?? null);
+const hasCriticalOrcamentoChange = (local: Orcamento, remote: Orcamento) => {
+  const localCritical = {
+    clienteId: local.clienteId,
+    valorTotal: local.valorTotal,
+    itens: local.itens,
+    vendedor: local.vendedor,
+    vendedorId: local.vendedorId,
+    vendedorUserId: local.vendedorUserId,
+    vendedorNome: local.vendedorNome,
+    responsavel: local.responsavel,
+    responsavelId: local.responsavelId,
+    responsavelUserId: local.responsavelUserId,
+    responsavelNome: local.responsavelNome,
+  };
+  const remoteCritical = {
+    clienteId: remote.clienteId,
+    valorTotal: remote.valorTotal,
+    itens: remote.itens,
+    vendedor: remote.vendedor,
+    vendedorId: remote.vendedorId,
+    vendedorUserId: remote.vendedorUserId,
+    vendedorNome: remote.vendedorNome,
+    responsavel: remote.responsavel,
+    responsavelId: remote.responsavelId,
+    responsavelUserId: remote.responsavelUserId,
+    responsavelNome: remote.responsavelNome,
+  };
+  return normalizeComparable(localCritical) !== normalizeComparable(remoteCritical);
+};
+
 
 type CommercialAgent = { user_id: string; nome: string; papel: "vendedor" | "gestor" | "administrador" | "visualizador"; status: string; superior_user_id?: string | null };
 const sameText = (a?: string | null, b?: string | null) => Boolean(a && b && a.trim().toLowerCase() === b.trim().toLowerCase());
@@ -483,35 +519,99 @@ export default function Orcamentos() {
     { label: "Cancelar/Perder", status: "Perdido" },
   ];
 
+  const buscarOrcamentoRemotoAtual = async (orcamento: Orcamento) => {
+    const snapshot = await fetchCloudSnapshot<OrcamentoComSync>("orcamentos", persistenceOptions);
+    const remoto = snapshot.active.find((item) => item.id === orcamento.id);
+    if (remoto) {
+      setOrcamentos((prev) => prev.map((item) => item.id === remoto.id ? remoto : item));
+    }
+    return remoto;
+  };
+
+  const obterBaseStatusGuiado = async (orcamento: Orcamento) => {
+    const baseLocalValida = getSyncRemoteUpdatedAt(orcamento) !== undefined;
+    if (baseLocalValida) return orcamento;
+    try {
+      const remoto = await buscarOrcamentoRemotoAtual(orcamento);
+      return remoto ?? orcamento;
+    } catch {
+      return orcamento;
+    }
+  };
+
   const persistirStatusGuiado = async (orcamento: Orcamento, status: OrcamentoStatus) => {
-    const destino = normalizePedidoStatus(status);
-    const origem = normalizePedidoStatus(orcamento.status);
-    if (origem === destino) return toast.error("O orçamento já está neste status.");
-    if (!canTransitionPedidoStatus(origem, destino, normalizedRole)) return toast.error("Ação não permitida para seu papel ou status atual.");
     if (!canEditOrcamentos || !canSeeOrcamento(orcamento)) return toast.error("Você não tem permissão para editar este orçamento.");
+    const destino = normalizePedidoStatus(status);
+    let base = await obterBaseStatusGuiado(orcamento);
+    let origem = normalizePedidoStatus(base.status);
+    if (origem === destino) return toast.error("O orçamento já está neste status.");
+    if (!canTransitionPedidoStatus(origem, destino, normalizedRole)) {
+      const origemLocal = normalizePedidoStatus(orcamento.status);
+      if (!canTransitionPedidoStatus(origemLocal, destino, normalizedRole)) return toast.error("Ação não permitida para seu papel ou status atual.");
+      try {
+        const remoto = await buscarOrcamentoRemotoAtual(orcamento);
+        if (remoto) {
+          if (hasCriticalOrcamentoChange(orcamento, remoto)) return toast.error(ORCAMENTO_CONFLICT_MESSAGE);
+          base = remoto;
+          origem = normalizePedidoStatus(base.status);
+        }
+      } catch {
+        return toast.error("Atualize o pedido e tente novamente.");
+      }
+      if (origem === destino) return toast.error("O orçamento já está neste status.");
+      if (!canTransitionPedidoStatus(origem, destino, normalizedRole)) return toast.error("Atualize o pedido e tente novamente.");
+    }
     const current = new Date().toISOString();
-    const payloadBase: Orcamento = recalc({
-      ...orcamento,
+    const payloadBase: OrcamentoComSync = recalc({
+      ...base,
       status: destino,
-      canalEnvio: destino === "Enviado ao cliente" ? (orcamento.canalEnvio || "WhatsApp") : orcamento.canalEnvio,
-      dataEnvio: destino === "Enviado ao cliente" ? (orcamento.dataEnvio || current.slice(0, 10)) : orcamento.dataEnvio,
+      canalEnvio: destino === "Enviado ao cliente" ? (base.canalEnvio || "WhatsApp") : base.canalEnvio,
+      dataEnvio: destino === "Enviado ao cliente" ? (base.dataEnvio || current.slice(0, 10)) : base.dataEnvio,
       updatedAt: current,
-      updatedByUserId: user?.id || orcamento.updatedByUserId,
-    });
-    const shouldReserveOnApproval = destino === "Aprovado pelo gestor" && !orcamento.estoqueReservado;
+      updatedByUserId: user?.id || base.updatedByUserId,
+    }) as OrcamentoComSync;
+    const shouldReserveOnApproval = destino === "Aprovado pelo gestor" && !base.estoqueReservado;
     const faltasReserva = shouldReserveOnApproval ? validarDisponibilidadeReserva(payloadBase, produtos) : [];
     if (faltasReserva.length) return toast.error(`Estoque insuficiente para aprovar: ${faltasReserva.map((entry) => `${entry.produto.nome} (disp. ${entry.disponivel}, pedido ${entry.quantidade})`).join(", ")}`);
     const reservaAplicada = shouldReserveOnApproval ? aplicarReservaPedidoAprovado(payloadBase, produtos, user?.id, current) : { agrupados: [], produtosAtualizados: produtos };
-    const payload: Orcamento = reservaAplicada.agrupados.length ? { ...payloadBase, estoqueReservado: true, estoqueReservadoAt: current, estoqueReservadoPorUserId: user?.id } : payloadBase;
+    const payload: OrcamentoComSync = reservaAplicada.agrupados.length ? { ...payloadBase, estoqueReservado: true, estoqueReservadoAt: current, estoqueReservadoPorUserId: user?.id } : payloadBase;
     try {
-      const result = await saveEntityCloudFirst("orcamentos", payload, { ...persistenceOptions, auditAction: "editar_status_orcamento", resource: "orcamentos", beforeData: orcamento, afterData: payload });
+      let result = await saveEntityCloudFirst("orcamentos", payload, { ...persistenceOptions, auditAction: "editar_status_orcamento", resource: "orcamentos", beforeData: base, afterData: payload });
+      if (result.status === "conflict") {
+        const remoto = await buscarOrcamentoRemotoAtual(orcamento);
+        if (!remoto || hasCriticalOrcamentoChange(base, remoto)) {
+          toast.error(ORCAMENTO_CONFLICT_MESSAGE);
+          return;
+        }
+        const origemRemota = normalizePedidoStatus(remoto.status);
+        if (origemRemota === destino) return toast.error("O orçamento remoto já está neste status. Atualize o pedido para visualizar a versão mais recente.");
+        if (!canTransitionPedidoStatus(origemRemota, destino, normalizedRole)) {
+          toast.error("Atualize o pedido e tente novamente.");
+          return;
+        }
+        const payloadReaplicado: OrcamentoComSync = recalc({
+          ...remoto,
+          status: destino,
+          canalEnvio: destino === "Enviado ao cliente" ? (remoto.canalEnvio || "WhatsApp") : remoto.canalEnvio,
+          dataEnvio: destino === "Enviado ao cliente" ? (remoto.dataEnvio || current.slice(0, 10)) : remoto.dataEnvio,
+          estoqueReservado: payload.estoqueReservado,
+          estoqueReservadoAt: payload.estoqueReservadoAt,
+          estoqueReservadoPorUserId: payload.estoqueReservadoPorUserId,
+          updatedAt: current,
+          updatedByUserId: user?.id || remoto.updatedByUserId,
+        }) as OrcamentoComSync;
+        result = await saveEntityCloudFirst("orcamentos", payloadReaplicado, { ...persistenceOptions, auditAction: "editar_status_orcamento", resource: "orcamentos", beforeData: remoto, afterData: payloadReaplicado });
+        if (result.status === "conflict") {
+          toast.error(ORCAMENTO_CONFLICT_MESSAGE);
+          return;
+        }
+        Object.assign(payload, payloadReaplicado);
+        base = remoto;
+        origem = origemRemota;
+      }
       for (const reserva of reservaAplicada.agrupados) {
         const produtoAtualizado = reservaAplicada.produtosAtualizados.find((p) => p.id === reserva.produto.id)!;
         await saveEntityCloudFirst("produtos", produtoAtualizado, { ...persistenceOptions, auditAction: "reservar_estoque_pedido_aprovado", resource: "produtos", beforeData: reserva.produto, afterData: produtoAtualizado, auditMetadata: { orcamentoId: payload.id, quantidadeReservada: reserva.quantidade } });
-      }
-      if (result.status === "conflict") {
-        toast.error("Conflito ao alterar status. Atualize/recarregue os dados e tente novamente para evitar sobrescrever alterações mais recentes.");
-        return;
       }
       if (reservaAplicada.agrupados.length) setProdutos(reservaAplicada.produtosAtualizados);
       setOrcamentos((prev) => prev.map((o) => o.id === orcamento.id ? payload : o));
