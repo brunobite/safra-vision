@@ -21,6 +21,7 @@ import { supabase } from "@/lib/supabase";
 import { recordAuditLog } from "@/lib/audit";
 import { deleteEntityCloudFirst, fetchCloudSnapshot, hydrateLocalCacheFromCloud, saveEntityCloudFirst } from "@/lib/operationalPersistence";
 import { aplicarReservaPedidoAprovado, agruparItensControlados, validarDisponibilidadeReserva } from "@/lib/estoqueWorkflow";
+import { buildNegocioFromOrcamento, buildOportunidadeGanha } from "@/lib/negocioWorkflow";
 
 const STATUS_OFICIAIS: OrcamentoStatus[] = [...PEDIDO_STATUS_OFICIAIS];
 const STATUS_LEGADO: OrcamentoStatus[] = ["Aberto", "Enviado", "Aprovado", "Recusado", "Convertido", "Em revisão", "Reenviado", "Vencido", "Reprovado", "Expirado"];
@@ -364,7 +365,15 @@ export default function Orcamentos() {
       }
     }
 
-    if (normalizePedidoStatus(payloadPersistido.status) === "Aprovado pelo gestor") toast.message("Orçamento aprovado. Use Fechar venda para criar o negócio operacional.");
+    if (normalizePedidoStatus(payloadPersistido.status) === "Aprovado pelo gestor") {
+      try {
+        await consolidarVendaAprovada(payloadPersistido, "criar_negocio_aprovacao_automatica");
+        toast.message("Orçamento aprovado, estoque reservado e venda operacional criada para faturamento.");
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Falha ao consolidar venda operacional.");
+        return;
+      }
+    }
     if (normalizePedidoStatus(payload.status) === "Perdido") toast.message("Orçamento perdido. Feche a oportunidade como Perdida e informe motivo.");
     setOpen(false);
     toast.success(result.status === "pending-offline" ? "Orçamento salvo localmente e pendente de sincronização" : "Orçamento salvo");
@@ -409,6 +418,32 @@ export default function Orcamentos() {
     toast.success("Orçamento convertido em oportunidade.");
   };
 
+
+
+  const consolidarVendaAprovada = async (orcamento: Orcamento, auditAction: string) => {
+    const current = new Date().toISOString();
+    const existente = negocioVinculado(orcamento);
+    const cliente = clientes.find((c) => c.id === orcamento.clienteId);
+    const empresa = empresas.find((e) => e.id === orcamento.empresaId);
+    const negocio = buildNegocioFromOrcamento({ orcamento, negocioExistente: existente, clienteNome: cliente?.nome, empresaNome: empresa?.nomeFantasia, actorUserId: user?.id, now: current });
+    const orcamentoAtualizado: Orcamento = { ...orcamento, negocioId: negocio.id, updatedAt: current, updatedByUserId: user?.id };
+    const oportunidadeAtual = orcamento.oportunidadeId ? oportunidades.find((o) => o.id === orcamento.oportunidadeId) : undefined;
+    const oportunidadeGanha = buildOportunidadeGanha({ oportunidade: oportunidadeAtual, orcamento, negocio, clienteNome: cliente?.nome, actorUserId: user?.id, now: current });
+    const historicoGanho = oportunidadeGanha && oportunidadeAtual?.etapa !== "Ganha" ? { id: `hf-${oportunidadeGanha.id}-${negocio.id}-ganha`, oportunidadeId: oportunidadeGanha.id, clienteId: oportunidadeGanha.clienteId, etapaAnterior: oportunidadeAtual?.etapa, etapaNova: "Ganha" as EtapaOportunidade, dataMovimento: current, vendedor: negocio.vendedor, observacao: `Venda ${negocio.codigo} criada/confirmada automaticamente após aprovação do orçamento ${orcamento.codigo}.`, createdAt: current } : undefined;
+
+    const negocioResult = await saveEntityCloudFirst("negocios", negocio, { ...persistenceOptions, auditAction: existente ? "confirmar_negocio_aprovacao" : auditAction, resource: "negocios", beforeData: existente || null, afterData: negocio, auditMetadata: { orcamentoId: orcamento.id, oportunidadeId: orcamento.oportunidadeId, clienteId: orcamento.clienteId, valor: negocio.valorTotal, estoqueReservado: negocio.estoqueReservado, entradaMetas: "venda_aprovada_pendente_faturamento" } });
+    const orcamentoResult = await saveEntityCloudFirst("orcamentos", orcamentoAtualizado, { ...persistenceOptions, auditAction: "vincular_negocio_orcamento_aprovado", resource: "orcamentos", beforeData: orcamento, afterData: orcamentoAtualizado, auditMetadata: { negocioId: negocio.id } });
+    const oportunidadeResult = oportunidadeGanha ? await saveEntityCloudFirst("oportunidades", oportunidadeGanha, { ...persistenceOptions, auditAction: "oportunidade_ganha_por_aprovacao", resource: "oportunidades", beforeData: oportunidadeAtual || null, afterData: oportunidadeGanha, auditMetadata: { orcamentoId: orcamento.id, negocioId: negocio.id } }) : null;
+    const historicoResult = historicoGanho ? await saveEntityCloudFirst("historicoFunil", historicoGanho, { ...persistenceOptions, auditAction: "registrar_historico_funil_ganho", resource: "historicoFunil", afterData: historicoGanho, auditMetadata: { orcamentoId: orcamento.id, negocioId: negocio.id, oportunidadeId: oportunidadeGanha?.id } }) : null;
+    if ([negocioResult, orcamentoResult, oportunidadeResult, historicoResult].some((result) => result?.status === "conflict")) throw new Error("Conflito ao consolidar venda operacional. Atualize/recarregue os dados e tente novamente.");
+
+    setNegocios((prev) => [negocio, ...prev.filter((n) => n.id !== negocio.id && n.orcamentoId !== orcamento.id)]);
+    setOrcamentos((prev) => prev.map((o) => o.id === orcamento.id ? orcamentoAtualizado : o));
+    if (oportunidadeGanha) setOportunidades((prev) => [oportunidadeGanha, ...prev.filter((o) => o.id !== oportunidadeGanha.id)]);
+    if (historicoGanho) setHistoricoFunil((prev) => [historicoGanho, ...prev.filter((h) => h.id !== historicoGanho.id)]);
+    void recordAuditLog({ action: "consolidar_venda_aprovada", resource: "negocios", entityId: negocio.id, entityLabel: negocio.codigo, metadata: { orcamentoId: orcamento.id, oportunidadeId: orcamento.oportunidadeId, clienteId: orcamento.clienteId, valor: negocio.valorTotal, entradaMetas: "venda_aprovada_pendente_faturamento" } });
+    return { negocio, orcamento: orcamentoAtualizado };
+  };
 
   const canConvertOrcamentoToSale = (orcamento: Orcamento) => {
     if (!canCreateNegocios && !canManageNegocios) return false;
@@ -620,7 +655,10 @@ export default function Orcamentos() {
         const etapaNova = pedidoStatusToEtapa(destino);
         setOportunidades((prev) => prev.map((o) => o.id === payload.oportunidadeId ? { ...o, etapa: etapaNova, orcamentoId: payload.id, valorEstimado: payload.valorTotal || o.valorEstimado, updatedAt: current } : o));
       }
-      toast.success(result.status === "pending-offline" ? "Status salvo localmente e pendente de sincronização" : "Status do orçamento salvo");
+      if (destino === "Aprovado pelo gestor") {
+        await consolidarVendaAprovada(payload, "criar_negocio_aprovacao_automatica");
+      }
+      toast.success(result.status === "pending-offline" ? "Status salvo localmente e pendente de sincronização" : destino === "Aprovado pelo gestor" ? "Pedido aprovado, reservado e venda criada para faturamento" : "Status do orçamento salvo");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Falha ao alterar status do orçamento.");
     }
