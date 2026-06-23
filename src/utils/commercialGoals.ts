@@ -1,8 +1,10 @@
-import type { Cliente, Lancamento, MetaCategoria, MetaEmpresa, MetaVendedor, OportunidadeComercial, Orcamento, ProximaAcao, StatusProximaAcao, TipoProximaAcao } from "@/types";
+import type { Cliente, Lancamento, MetaCategoria, MetaEmpresa, MetaVendedor, OportunidadeComercial, Orcamento, ProximaAcao, StatusProximaAcao, TipoProximaAcao, Negocio } from "@/types";
 
 export const OPEN_ACTION_STATUSES: StatusProximaAcao[] = ["Pendente", "Em andamento", "Reagendada"];
 export const CLOSED_OPPORTUNITY_STAGES = ["Ganha", "Perdida", "Cancelada"];
 export const STUCK_OPPORTUNITY_DAYS = 30;
+const META_NEGOCIO_STATUSES = new Set(["Pendente de faturamento", "Faturado", "Entregue", "Fechado", "Fechado ganho"]);
+const valorMetaNegocio = (negocio: Negocio) => negocio.valorTotal || negocio.valorFechado || negocio.valorPotencial || 0;
 export const QUOTE_WITHOUT_RETURN_DAYS = 10;
 
 type ScopeFilters = {
@@ -137,21 +139,28 @@ export function calculateSellerGoalRows(params: {
   metasVendedor: MetaVendedor[];
   lancamentos: Lancamento[];
   oportunidades: OportunidadeComercial[];
+  negocios?: Negocio[];
   clientesById: Map<string, Cliente>;
   filters: ScopeFilters;
 }) {
-  const { metasVendedor, lancamentos, oportunidades, clientesById, filters } = params;
+  const { metasVendedor, lancamentos, oportunidades, negocios = [], clientesById, filters } = params;
   return metasVendedor
     .filter((meta) => meta.ativo !== false)
     .filter((meta) => !filters.vendedor || meta.vendedor === filters.vendedor)
     .filter((meta) => inMonthRange(meta.mes || filters.dataInicial.slice(0, 7), filters.dataInicial, filters.dataFinal))
     .map((meta) => {
       const valorMeta = meta.metaManual || meta.meta || meta.metaCalculada || 0;
-      const realizado = lancamentos
+      const realizadoLancamentos = lancamentos
         .filter((lancamento) => (lancamento.tipo === "Venda" || lancamento.status === "Concluído") && inDateRange(lancamento.data, filters.dataInicial, filters.dataFinal))
         .filter((lancamento) => (lancamento.vendedor || clientesById.get(lancamento.clienteId)?.vendedor) === meta.vendedor)
         .filter((lancamento) => clienteMatches(clientesById.get(lancamento.clienteId), filters))
         .reduce((sum, lancamento) => sum + (lancamento.vendaRs || 0), 0);
+      const realizadoNegocios = negocios
+        .filter((negocio) => META_NEGOCIO_STATUSES.has(String(negocio.status)) && inDateRange(negocio.dataFechamento || negocio.ultimaAtualizacao || negocio.dataCriacao, filters.dataInicial, filters.dataFinal))
+        .filter((negocio) => (negocio.vendedorNome || negocio.vendedor || negocio.responsavelNome || negocio.responsavel || clientesById.get(negocio.clienteId)?.vendedor) === meta.vendedor)
+        .filter((negocio) => clienteMatches(clientesById.get(negocio.clienteId), filters))
+        .reduce((sum, negocio) => sum + valorMetaNegocio(negocio), 0);
+      const realizado = realizadoLancamentos + realizadoNegocios;
       const previstoPonderado = oportunidades
         .filter(isOpenOpportunity)
         .filter((oportunidade) => inDateRange(oportunidade.previsaoFechamento || oportunidade.updatedAt || oportunidade.createdAt, filters.dataInicial, filters.dataFinal))
@@ -167,6 +176,7 @@ export function calculateCategoryGoalRows(params: {
   metasCategoria: MetaCategoria[];
   orcamentos: Orcamento[];
   oportunidades: OportunidadeComercial[];
+  negocios?: Negocio[];
   clientesById: Map<string, Cliente>;
   filters: ScopeFilters;
 }) {
@@ -212,20 +222,26 @@ export function calculateGoalSummary(params: {
   oportunidades: OportunidadeComercial[];
   orcamentos: Orcamento[];
   proximasAcoes: ProximaAcao[];
+  negocios?: Negocio[];
   filters: ScopeFilters;
   today?: string;
 }): GoalSummary {
-  const { metasEmpresa, lancamentos, clientes, oportunidades, orcamentos, proximasAcoes, filters } = params;
+  const { metasEmpresa, lancamentos, clientes, oportunidades, orcamentos, proximasAcoes, negocios = [], filters } = params;
   const today = params.today || isoToday();
   const clientesById = new Map(clientes.map((cliente) => [cliente.id, cliente]));
   const clientesFiltrados = clientes.filter((cliente) => clienteMatches(cliente, filters) && cliente.statusAtual !== "Inativo");
   const metaTotal = metasEmpresa
     .filter((meta) => inMonthRange(meta.mes, filters.dataInicial, filters.dataFinal))
     .reduce((sum, meta) => sum + effectiveCompanyGoal(meta), 0);
-  const realizado = lancamentos
+  const realizadoLancamentos = lancamentos
     .filter((lancamento) => (lancamento.tipo === "Venda" || lancamento.status === "Concluído") && inDateRange(lancamento.data, filters.dataInicial, filters.dataFinal))
     .filter((lancamento) => clienteMatches(clientesById.get(lancamento.clienteId), filters))
     .reduce((sum, lancamento) => sum + (lancamento.vendaRs || 0), 0);
+  const realizadoNegocios = negocios
+    .filter((negocio) => META_NEGOCIO_STATUSES.has(String(negocio.status)) && inDateRange(negocio.dataFechamento || negocio.ultimaAtualizacao || negocio.dataCriacao, filters.dataInicial, filters.dataFinal))
+    .filter((negocio) => clienteMatches(clientesById.get(negocio.clienteId), filters))
+    .reduce((sum, negocio) => sum + valorMetaNegocio(negocio), 0);
+  const realizado = realizadoLancamentos + realizadoNegocios;
   const oportunidadesAbertas = oportunidades
     .filter(isOpenOpportunity)
     .filter((oportunidade) => inDateRange(oportunidade.previsaoFechamento || oportunidade.updatedAt || oportunidade.createdAt, filters.dataInicial, filters.dataFinal))
