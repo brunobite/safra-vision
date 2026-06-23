@@ -82,8 +82,8 @@ export default function Metas() {
   const updateFilter = (key: keyof GoalFilters, value: string) => setFilters((prev) => ({ ...prev, [key]: value === ALL ? "" : value }));
   const resetFilters = () => setFilters({ dataInicial: monthStart(hoje), dataFinal: hoje, vendedor: "", clienteId: "", rota: "", categoria: "" });
 
-  const summary = useMemo(() => calculateGoalSummary({ metasEmpresa, lancamentos, clientes, oportunidades, orcamentos, proximasAcoes, filters, today: hoje }), [clientes, filters, hoje, lancamentos, metasEmpresa, oportunidades, orcamentos, proximasAcoes]);
-  const sellerRows = useMemo(() => calculateSellerGoalRows({ metasVendedor, lancamentos, oportunidades, clientesById: clienteMap, filters }), [clienteMap, filters, lancamentos, metasVendedor, oportunidades]);
+  const summary = useMemo(() => calculateGoalSummary({ metasEmpresa, lancamentos, clientes, oportunidades, orcamentos, proximasAcoes, negocios, filters, today: hoje }), [clientes, filters, hoje, lancamentos, metasEmpresa, negocios, oportunidades, orcamentos, proximasAcoes]);
+  const sellerRows = useMemo(() => calculateSellerGoalRows({ metasVendedor, lancamentos, oportunidades, negocios, clientesById: clienteMap, filters }), [clienteMap, filters, lancamentos, metasVendedor, negocios, oportunidades]);
   const categoryRows = useMemo(() => calculateCategoryGoalRows({ metasCategoria, orcamentos, oportunidades, clientesById: clienteMap, filters }), [clienteMap, filters, metasCategoria, oportunidades, orcamentos]);
 
   const realizadoPorFrente = useMemo(() => {
